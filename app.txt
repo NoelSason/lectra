@@ -1,0 +1,67 @@
+App Idea (iOS): Capture-first smart organizer
+
+Core concept:
+- Every time the app opens, the first screen is a blank full-page input.
+- User writes anything (task, reminder, note, emotion log, shopping item, etc.).
+- A `Done` button at the bottom saves the entry instantly.
+- After saving, the app auto-categorizes the entry.
+- User can always manually override the category if classification is wrong.
+
+Main user flow:
+1. Open app -> blank page ready to type.
+2. Write natural language entry.
+3. Tap `Done`.
+4. App classifies entry and routes it to the correct section.
+5. User can confirm/edit category and metadata.
+
+Information architecture (best-practice for this idea):
+- Keep the capture experience unified (single input-first flow).
+- Store and display items in specialized sections:
+  - Tasks
+  - Reminders
+  - Grocery
+  - Emotion Tracker
+  - Notes/Journal
+- Also keep an `All` timeline so users can see everything in one place.
+
+Default smart categories at launch:
+- Grocery (e.g., "get eggs from store")
+- Reminders (time-based or repeating)
+- Tasks / To-do
+- Work / School
+- Health / Fitness
+- Finance / Bills
+- Notes / Ideas
+- Emotion Tracker (personal mood/life logs)
+
+Reminder behavior:
+- Default reminder rule: daily recurring notifications until marked complete.
+- Advanced reminder settings:
+  - Custom schedule (specific days/times)
+  - Location-based triggers
+  - Reminder frequency and snooze controls
+
+Emotion tracker requirements:
+- Free-text journal entry
+- Mood score (1-10)
+- Emotion tags (e.g., happy, anxious, tired, calm, stressed)
+- Optional trends view over time (weekly/monthly mood patterns)
+
+Sync and account:
+- Cloud sync across devices is required.
+- iCloud-first sync for iOS, with account backup and restore support.
+
+Design direction:
+- Dark mode-first UI.
+- Primary accent color: red.
+- Clean, minimal layout.
+- Smooth, subtle animations (screen transitions, save confirmation, list movement).
+- Fast, distraction-free writing experience with focus on instant capture.
+
+MVP definition:
+- Input-first home screen
+- Auto-categorization + manual override
+- Core category sections + All timeline
+- Daily reminders by default + advanced reminder options
+- Emotion logging (text + score + tags)
+- Cloud sync across iOS devices
