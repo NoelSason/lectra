@@ -1,0 +1,23 @@
+Database Unification Prompt: Canvascope + Lectra (iPad Notes Pivot)
+
+You are a senior systems architect. Design the database migration and architecture to support the Canvascope -> Lectra -> Canvascope PDF handoff flow.
+
+Current state:
+- Canvascope uses `public.users` and `public.synced_items` in Supabase.
+- Documents are currently stored locally in Chrome extension storage.
+
+Goal:
+Support moving heavy PDF blobs across devices.
+
+Hard requirements:
+1) Provision a private Supabase Storage bucket (`lectra_documents`).
+2) Enforce strict Row Level Security (RLS) on the bucket so users can only read/write their own PDFs.
+3) Standardize a JSON schema inside the `public.synced_items` table specifically for `item_type = 'pdf_document'`. 
+   Required fields: `title`, `courseId`, `storagePath` (raw), `annotatedStoragePath` (flattened), `status` (pending_annotation, annotated).
+4) Extension (Chrome) is responsible for uploading the raw PDF and creating the row.
+5) iPad app (Lectra) is responsible for downloading, annotating, uploading the new PDF, and updating the row.
+
+What to produce:
+A) SQL migration files (Bucket creation + RLS policies).
+B) API wrapper functions for interacting with the Storage buckets.
+C) Error handling strategies for large file uploads on unstable mobile connections.

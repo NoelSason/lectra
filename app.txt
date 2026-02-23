@@ -1,67 +1,29 @@
-App Idea (iOS): Capture-first smart organizer
+App Idea (iPadOS): Premium Apple Pencil PDF Annotator (Lectra companion to Canvascope)
+
+Canonical product blueprint reference:
+- `docs/lectra-spec.md`
 
 Core concept:
-- Every time the app opens, the first screen is a blank full-page input.
-- User writes anything (task, reminder, note, emotion log, shopping item, etc.).
-- A `Done` button at the bottom saves the entry instantly.
-- After saving, the app auto-categorizes the entry.
-- User can always manually override the category if classification is wrong.
+- An iPad-first application designed for heavy Apple Pencil usage.
+- Users send PDFs from the Canvascope Chrome extension to their iPad.
+- Opening the app shows a grid of available PDFs fetched via Supabase.
+- User annotates the PDF with low latency using native PencilKit + PDFKit integration.
+- Tapping "Back" or "Done" flattens the strokes onto the PDF and uploads the final version back to Canvascope.
 
 Main user flow:
-1. Open app -> blank page ready to type.
-2. Write natural language entry.
-3. Tap `Done`.
-4. App classifies entry and routes it to the correct section.
-5. User can confirm/edit category and metadata.
-
-Information architecture (best-practice for this idea):
-- Keep the capture experience unified (single input-first flow).
-- Store and display items in specialized sections:
-  - Tasks
-  - Reminders
-  - Grocery
-  - Emotion Tracker
-  - Notes/Journal
-- Also keep an `All` timeline so users can see everything in one place.
-
-Default smart categories at launch:
-- Grocery (e.g., "get eggs from store")
-- Reminders (time-based or repeating)
-- Tasks / To-do
-- Work / School
-- Health / Fitness
-- Finance / Bills
-- Notes / Ideas
-- Emotion Tracker (personal mood/life logs)
-
-Reminder behavior:
-- Default reminder rule: daily recurring notifications until marked complete.
-- Advanced reminder settings:
-  - Custom schedule (specific days/times)
-  - Location-based triggers
-  - Reminder frequency and snooze controls
-
-Emotion tracker requirements:
-- Free-text journal entry
-- Mood score (1-10)
-- Emotion tags (e.g., happy, anxious, tired, calm, stressed)
-- Optional trends view over time (weekly/monthly mood patterns)
-
-Sync and account:
-- Cloud sync across devices is required.
-- iCloud-first sync for iOS, with account backup and restore support.
+1. User receives Push/Realtime db update that a new document arrived.
+2. User taps the document in the Home Grid. It downloads the raw PDF from Supabase Storage.
+3. User annotates heavily (Highlighter, Pen, Eraser).
+4. User taps "Sync". App flattens the PKDrawing vectors to the PDF pages.
+5. App uploads the overlaid PDF to Supabase Storage and updates the db status to `annotated`.
 
 Design direction:
-- Dark mode-first UI.
-- Primary accent color: red.
-- Clean, minimal layout.
-- Smooth, subtle animations (screen transitions, save confirmation, list movement).
-- Fast, distraction-free writing experience with focus on instant capture.
+- Premium Dark mode (or dynamic based on system text).
+- Minimalist, glassmorphic UI elements over the PDF to maximize screen real estate.
+- Red accent colors (`#E02520`) used sparingly for critical actions or selected tools.
 
 MVP definition:
-- Input-first home screen
-- Auto-categorization + manual override
-- Core category sections + All timeline
-- Daily reminders by default + advanced reminder options
-- Emotion logging (text + score + tags)
-- Cloud sync across iOS devices
+- Supabase Auth (Google OAuth).
+- Home Grid displaying `synced_items`.
+- PDFKit + PencilKit editor with accurate coordinate mapping.
+- Flatten & Upload background sync loop.
