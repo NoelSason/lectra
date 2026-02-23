@@ -2,6 +2,7 @@ name: Auto Triage
 
 permissions:
   issues: write
+  contents: read
 
 on:
   issues:
