@@ -1,5 +1,8 @@
 name: Auto Triage
 
+permissions:
+  issues: write
+
 on:
   issues:
     types: [opened, edited]
