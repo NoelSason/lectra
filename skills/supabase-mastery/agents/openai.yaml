@@ -1,0 +1,4 @@
+interface:
+  display_name: "Supabase Mastery"
+  short_description: "Production Supabase build and ops playbook."
+  default_prompt: "Use this skill to design, implement, and troubleshoot production Supabase systems across Auth, RLS, Data APIs, Storage, Realtime, Functions, and vector search."

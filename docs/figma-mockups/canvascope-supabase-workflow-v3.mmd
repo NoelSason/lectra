@@ -1,0 +1,50 @@
+sequenceDiagram
+    autonumber
+    participant Sender as "Sender Device (iPad or PC)"
+    participant Receiver as "Receiver Device (PC or iPad)"
+    participant Edge as "Edge Function API"
+    participant DB as "Postgres transfer_sessions"
+    participant ST as "Storage private bucket"
+    participant RT as "Realtime channel transfer:sessionId"
+    participant GC as "Cleanup worker"
+
+    Note over Sender,Receiver: Clients use publishable key + user JWT only
+
+    Sender->>Edge: create_transfer(receiverId fileName mime bytes sha256)
+    Edge->>DB: insert session status=created sender_id receiver_id
+    Edge-->>Sender: sessionId
+
+    Sender->>Edge: request_upload_url(sessionId)
+    Edge->>ST: create signed upload URL (short TTL)
+    Edge-->>Sender: signed upload URL
+    Sender->>ST: upload file object transfers/sessionId/file
+
+    Sender->>Edge: finalize_upload(sessionId bytes sha256)
+    Edge->>DB: update status=ready expected_bytes expected_sha256
+    Edge->>RT: broadcast FILE_READY to receiver channel
+
+    Receiver->>Edge: request_download_url(sessionId)
+    Edge->>DB: verify receiver owns session and status=ready
+    Edge->>ST: create signed download URL (short TTL)
+    Edge-->>Receiver: signed download URL
+    Receiver->>ST: download full object
+    Receiver->>Edge: confirm_receipt(sessionId bytes sha256)
+
+    Edge->>DB: verify bytes and sha256 match expected
+    alt receipt valid
+        Edge->>DB: update status=delivered delivered_at=now
+        Edge->>GC: enqueue delete_object(sessionId)
+        GC->>ST: delete transfers/sessionId/file
+        alt delete success
+            GC->>DB: update status=cleaned cleaned_at=now
+            Edge->>RT: broadcast TRANSFER_COMPLETE_CLEANED
+        else delete failed
+            GC->>DB: update status=cleanup_failed retry_count+1
+            GC->>GC: retry with backoff (idempotent)
+        end
+    else receipt invalid
+        Edge->>DB: update status=receipt_mismatch
+        Edge->>RT: broadcast RECEIPT_MISMATCH
+    end
+
+    Note over Edge,GC: Scheduled TTL cleanup removes stale unconfirmed objects

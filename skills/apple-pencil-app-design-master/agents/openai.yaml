@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apple Pencil App Design Master"
+  short_description: "Design iPad apps for Apple Pencil-first workflows"
+  default_prompt: "Design an iPad app experience centered on Apple Pencil workflows, including interaction specs, critique rubric scoring, and usability test planning."

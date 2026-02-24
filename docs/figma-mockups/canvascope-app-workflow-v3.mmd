@@ -1,0 +1,40 @@
+flowchart LR
+  subgraph SS["iPad Share Sheet State Flow"]
+    SS1["Tap Share in Lectra"]
+    SS2["Action: Send to Canvascope"]
+    SS3["Create transfer session via Edge Function"]
+    SS4["Upload to Supabase private bucket via signed URL"]
+    SS5["State: Uploading progress"]
+    SS6["State: Waiting for receiver receipt"]
+    SS7["State: Receipt verified"]
+    SS8["State: Supabase object deleted"]
+    SS9["UI: Delivered to PC Desktop"]
+    SS1 --> SS2 --> SS3 --> SS4 --> SS5 --> SS6 --> SS7 --> SS8 --> SS9
+  end
+
+  subgraph CE["Chrome Extension State Flow"]
+    CE1["Select tab file or drop file"]
+    CE2["Click Send to Canvascope"]
+    CE3["Create transfer session via Edge Function"]
+    CE4["Upload to Supabase private bucket via signed URL"]
+    CE5["State: Uploading progress"]
+    CE6["State: Waiting for iPad receipt"]
+    CE7["State: Receipt verified"]
+    CE8["State: Supabase object deleted"]
+    CE9["UI: Delivered to iPad"]
+    CE1 --> CE2 --> CE3 --> CE4 --> CE5 --> CE6 --> CE7 --> CE8 --> CE9
+  end
+
+  subgraph GUARD["Security and Reliability Guards"]
+    G1["Clients use publishable key only"]
+    G2["RLS on transfer_sessions and storage.objects"]
+    G3["Download only with short-lived signed URL"]
+    G4["Checksum and byte-size receipt validation"]
+    G5["Cleanup retries and TTL sweeper for stale objects"]
+    G1 --> G2 --> G3 --> G4 --> G5
+  end
+
+  SS3 -.applies.-> G1
+  CE3 -.applies.-> G1
+  SS8 -.verified by.-> G5
+  CE8 -.verified by.-> G5
