@@ -1,24 +1,22 @@
 #!/bin/bash
+set -e
 
-ISSUE=$(gh issue list \
-  --label ready \
-  --label "P1,P2,P3" \
+# Find first open, ready issue that is NOT in-progress
+ISSUE_NUMBER=$(gh issue list \
   --state open \
+  --label ready \
   --json number,labels \
-  --limit 20 \
-  --jq '.[] | select([.labels[].name] | index("in-progress") | not) | .number' \
+  --jq '.[] | select(.labels | all(.name != "in-progress")) | .number' \
   | head -n 1)
 
-if [ -z "$ISSUE" ]; then
+# If none found
+if [ -z "$ISSUE_NUMBER" ]; then
   echo "No tickets"
-  exit 1
+  exit 0
 fi
 
-gh issue edit $ISSUE \
-  --add-label in-progress \
-  --add-assignee @me
+# Mark as in-progress
+gh issue edit "$ISSUE_NUMBER" --add-label in-progress >/dev/null
 
-gh issue comment $ISSUE \
-  --body "Claimed by Antigravity 🚀"
-
-echo $ISSUE
+# Print URL (ONLY ONCE)
+echo "https://github.com/NoelSason/lectra/issues/$ISSUE_NUMBER"

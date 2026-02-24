@@ -75,8 +75,8 @@ final class LocalDocument: Identifiable, ObservableObject {
     }
 
     /// Convenience init for locally-imported PDFs (not from Supabase).
-    init(title: String, localURL: URL) {
-        self.id = UUID()
+    init(title: String, localURL: URL, id: UUID = UUID()) {
+        self.id = id
         self.title = title
         self.courseId = nil
         self.storagePath = ""
