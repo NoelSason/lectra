@@ -1,0 +1,224 @@
+openapi: 3.1.0
+info:
+  title: DropBridge Edge Functions API
+  version: 1.1.0
+  description: >-
+    Contract for pairing, upload queueing, and PC download acknowledgements.
+servers:
+  - url: https://{projectRef}.supabase.co
+    variables:
+      projectRef:
+        default: your_project_ref
+components:
+  securitySchemes:
+    apikeyHeader:
+      type: apiKey
+      in: header
+      name: apikey
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    RegisterDeviceRequest:
+      type: object
+      required: [deviceId, deviceToken]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        deviceToken:
+          type: string
+          minLength: 32
+        deviceName:
+          type: string
+          maxLength: 64
+    RegisterDeviceResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        deviceId:
+          type: string
+          format: uuid
+        deviceName:
+          type: string
+    UploadResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        uploadId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        sizeBytes:
+          type: integer
+        contentType:
+          type: string
+    PendingRequest:
+      type: object
+      required: [deviceId, deviceToken]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        deviceToken:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+    PendingUpload:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        mimeType:
+          type: string
+          nullable: true
+        sizeBytes:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        downloadUrl:
+          type: string
+          format: uri
+    PendingResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        uploads:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingUpload'
+    StatusUpdateRequest:
+      type: object
+      required: [deviceId, deviceToken, uploadId, status]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        deviceToken:
+          type: string
+        uploadId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, downloaded, canceled]
+    GenericError:
+      type: object
+      properties:
+        error:
+          type: string
+security:
+  - apikeyHeader: []
+    bearerAuth: []
+paths:
+  /functions/v1/register-device:
+    post:
+      summary: Register or refresh a receiver device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '200':
+          description: Device registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterDeviceResponse'
+        '409':
+          description: Device exists with different token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+  /functions/v1/upload-file:
+    post:
+      summary: Upload file from iOS app into private bucket and queue row
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [deviceId, deviceToken, file]
+              properties:
+                deviceId:
+                  type: string
+                  format: uuid
+                deviceToken:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: File queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '413':
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+  /functions/v1/list-pending:
+    post:
+      summary: Claim queued items and return signed URLs for extension
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PendingRequest'
+      responses:
+        '200':
+          description: Pending list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingResponse'
+  /functions/v1/update-upload-status:
+    post:
+      summary: Mark queue item state from extension
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusUpdateRequest'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  uploadId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [queued, downloaded, canceled]
+        '404':
+          description: Upload not found for device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'

@@ -1,0 +1,45 @@
+{
+  "package_name": "file-drop-installer",
+  "package_version": "1.1.0",
+  "created_at": "2026-02-25",
+  "purpose": "Install DropBridge backend and integrate native iOS uploader with existing Chrome extension receiver.",
+  "components": {
+    "supabase": {
+      "schema": "supabase/schema/install.sql",
+      "rollback": "supabase/schema/rollback.sql",
+      "functions": [
+        "register-device",
+        "upload-file",
+        "list-pending",
+        "update-upload-status"
+      ],
+      "function_source_root": "supabase/functions"
+    },
+    "ios": {
+      "setup_doc": "ios/IOS_SETUP.md",
+      "client_source": "ios/DropBridgeClient.swift",
+      "pairing_parser": "ios/PairingLink.swift"
+    },
+    "extension": {
+      "setup_doc": "extension/EXTENSION_SETUP.md",
+      "status_mapping": "docs/STATUS_MODEL.md"
+    }
+  },
+  "required_env": [
+    "SUPABASE_PROJECT_REF",
+    "SUPABASE_URL",
+    "SUPABASE_PUBLISHABLE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY"
+  ],
+  "security_assumptions": [
+    "Client apps only use publishable/anon key",
+    "Edge Functions enforce device authentication",
+    "Storage bucket is private",
+    "RLS is enabled on public tables with deny-by-default"
+  ],
+  "entrypoints": {
+    "human_readme": "README.md",
+    "agent_handoff": "AGENT_HANDOFF.md",
+    "api_contract": "contracts/openapi.yaml"
+  }
+}

@@ -1,0 +1,14 @@
+# Supabase local/dev configuration for DropBridge.
+# Set project_id after `supabase link --project-ref <your_ref>` if needed.
+
+[functions.register-device]
+verify_jwt = false
+
+[functions.upload-file]
+verify_jwt = false
+
+[functions.list-pending]
+verify_jwt = false
+
+[functions.update-upload-status]
+verify_jwt = false
