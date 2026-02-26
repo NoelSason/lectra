@@ -79,6 +79,12 @@ A new private bucket named `lectra_documents` will hold the binary `.pdf` files.
     - Top Right: `Export`, `Settings` (Optional for v1).
     - Floating (or standard `PKToolPicker`): Pen, Highlighter, Eraser, Lasso, Color Palette. This should seamlessly integrate with iOS standard behavior but must match a premium aesthetic.
 
+### Page Navigation & Auto-Append Behavior
+- **Primary Navigation**: In read/write mode, horizontal swipe gestures move between pages.
+- **End-of-Document Gesture**: If the user performs a left swipe while already on the final page, Lectra should append a new blank page and immediately navigate to it.
+- **Input Safety Rule**: Auto-append is only triggered by an intentional page-navigation swipe (not during an active Pencil stroke) so drawing gestures do not accidentally create pages.
+- **Feedback**: Show lightweight confirmation (for example, a subtle toast such as `New page added`) to preserve user confidence while keeping flow uninterrupted.
+
 ---
 
 ## 5. Major Engineering Risks (Crucial Considerations)
