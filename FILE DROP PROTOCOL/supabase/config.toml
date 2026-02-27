@@ -12,3 +12,21 @@ verify_jwt = false
 
 [functions.update-upload-status]
 verify_jwt = false
+
+[functions.register-device-v2]
+verify_jwt = false
+
+[functions.upload-file-v2]
+verify_jwt = false
+
+[functions.list-pending-v2]
+verify_jwt = false
+
+[functions.update-upload-status-v2]
+verify_jwt = false
+
+[functions.get-upload-status-v2]
+verify_jwt = false
+
+[functions.cleanup-expired-uploads]
+verify_jwt = true

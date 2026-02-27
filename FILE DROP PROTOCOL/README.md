@@ -1,7 +1,7 @@
 # File-Drop Installer Package
 
-Package version: `1.1.0`  
-Date: `February 25, 2026`
+Package version: `1.2.0`  
+Date: `February 27, 2026`
 
 This package is for integrating DropBridge into:
 
@@ -12,7 +12,7 @@ This package is for integrating DropBridge into:
 ## What this package gives you
 
 1. Supabase schema install/rollback SQL
-2. Edge Function source bundle (`register-device`, `upload-file`, `list-pending`, `update-upload-status`)
+2. Edge Function source bundle (`register-device`, `upload-file`, `list-pending`, `update-upload-status`) plus account-linked v2 endpoints
 3. iOS native starter client (`DropBridgeClient.swift`) and pairing parser
 4. extension integration contract and status rules
 5. machine-readable API contract (`contracts/openapi.yaml`)
@@ -22,10 +22,11 @@ This package is for integrating DropBridge into:
 
 1. Read `AGENT_HANDOFF.md`.
 2. Apply `supabase/schema/install.sql`.
-3. Deploy functions from `supabase/functions/*`.
-4. Integrate iOS with `ios/DropBridgeClient.swift` and `ios/PairingLink.swift`.
-5. Update extension with logic in `extension/EXTENSION_SETUP.md`.
-6. Run `qa/SMOKE_TEST.md`.
+3. Apply `supabase/schema/dropbridge_v2_account_link.sql` for account-linked routing.
+4. Deploy functions from `supabase/functions/*`.
+5. Integrate iOS with `ios/DropBridgeClient.swift` and `ios/PairingLink.swift` or call the v2 endpoints directly.
+6. Update extension with logic in `extension/EXTENSION_SETUP.md`.
+7. Run `qa/SMOKE_TEST.md`.
 
 ## Core Architecture Assumptions
 
@@ -33,7 +34,7 @@ This package is for integrating DropBridge into:
 2. Service role key exists only in Edge Function environment.
 3. `drops` storage bucket is private.
 4. RLS enabled with no public policies on app tables.
-5. Device auth is `deviceId + deviceToken` (hashed in DB).
+5. Device auth is `deviceId + deviceToken` (v1) or account-linked user JWT + `deviceId` (v2).
 
 ## Key Files
 
@@ -47,4 +48,4 @@ This package is for integrating DropBridge into:
 
 ## Date-sensitive note
 
-Supabase quotas, pricing, and runtime limits may change. Re-check your dashboard limits before production rollout (as of February 25, 2026).
+Supabase quotas, pricing, and runtime limits may change. Re-check your dashboard limits before production rollout (as of February 27, 2026).

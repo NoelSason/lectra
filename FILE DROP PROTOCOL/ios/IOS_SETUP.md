@@ -6,6 +6,8 @@ This package assumes you already have an iPad app and an existing extension.
 
 Use your iOS app as the uploader client while your extension acts as receiver.
 
+For zero-setup mode, prefer account-linked v2 endpoints so users only need to sign into both apps with the same Google account.
+
 ## Inputs your iOS app needs
 
 1. `supabaseURL` (for example `https://<ref>.supabase.co`)
@@ -14,6 +16,8 @@ Use your iOS app as the uploader client while your extension acts as receiver.
 4. `deviceToken`
 
 You can obtain `deviceID` and `deviceToken` from the extension pairing link.
+
+In v2 mode, `deviceID` and `deviceToken` are not required in iOS upload calls.
 
 ## Recommended UX in your iOS app
 
@@ -34,6 +38,15 @@ let receipt = try await client.uploadFile(fileURL: localFileURL)
 ```
 
 4. Show success if `receipt.ok == true`.
+
+### v2 account-linked integration
+
+1. Ensure user has active Supabase session JWT.
+2. Call `POST /functions/v1/upload-file-v2` with multipart field `file`.
+3. Include headers:
+   - `apikey: <publishable-or-anon-key>`
+   - `Authorization: Bearer <user access token>`
+4. Handle `404` as "no active receiver found" (prompt user to open extension).
 
 ## ATS / network notes
 

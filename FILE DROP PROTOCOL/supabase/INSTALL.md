@@ -18,12 +18,14 @@ supabase link --project-ref <YOUR_PROJECT_REF>
 Recommended path:
 
 1. Copy `supabase/schema/install.sql` into a migration file under your existing app repo.
-2. Run `supabase db push`.
+2. Copy `supabase/schema/dropbridge_v2_account_link.sql` into a second migration file.
+3. Run `supabase db push`.
 
 Alternative quick path for evaluation:
 
 ```bash
 supabase db execute --file supabase/schema/install.sql
+supabase db execute --file supabase/schema/dropbridge_v2_account_link.sql
 ```
 
 ## 3) Deploy functions
@@ -35,15 +37,21 @@ supabase functions deploy register-device
 supabase functions deploy upload-file
 supabase functions deploy list-pending
 supabase functions deploy update-upload-status
+supabase functions deploy register-device-v2
+supabase functions deploy upload-file-v2
+supabase functions deploy list-pending-v2
+supabase functions deploy update-upload-status-v2
+supabase functions deploy cleanup-expired-uploads
 ```
 
 ## 4) Verify function auth mode
 
 `supabase/config.toml` includes:
 
-- `verify_jwt = false` for all four functions.
+- `verify_jwt = false` for v1 pairing functions.
+- `verify_jwt = true` for v2 account-linked functions.
 
-Reason: function-level device token authentication is used instead of Supabase Auth user sessions.
+Reason: v1 uses device token auth, while v2 requires authenticated Supabase user JWTs.
 
 ## 5) Smoke test backend
 
@@ -51,5 +59,6 @@ Reason: function-level device token authentication is used instead of Supabase A
 2. Upload a file.
 3. Poll pending list from extension.
 4. Acknowledge status as `downloaded` or `canceled`.
+5. Run `cleanup-expired-uploads` (service role) and verify expired rows are canceled.
 
 See `../qa/SMOKE_TEST.md` for exact steps.

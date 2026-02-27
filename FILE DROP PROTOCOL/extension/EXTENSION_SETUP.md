@@ -17,6 +17,19 @@ This guide is for integrating DropBridge backend into an extension you already h
 - `apikey: <publishable-or-anon-key>`
 - `Authorization: Bearer <publishable-or-anon-key>`
 
+## v2 zero-pairing behavior (same-account routing)
+
+When both Lectra and the extension use the same Supabase-authenticated Google account:
+
+1. Persist a stable `deviceId` UUID.
+2. Call `register-device-v2` using user JWT (no `deviceToken`).
+3. Poll `list-pending-v2` with `{ deviceId, limit }`.
+4. Acknowledge with `update-upload-status-v2`:
+   - `downloaded` on success
+   - `canceled` on user cancellation
+   - `queued` on transient failure
+5. Refresh presence by calling `register-device-v2` on startup and periodically.
+
 ## Device bootstrap
 
 1. Generate `deviceId` (UUID).

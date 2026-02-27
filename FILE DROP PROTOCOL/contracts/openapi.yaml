@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: DropBridge Edge Functions API
-  version: 1.1.0
+  version: 1.2.0
   description: >-
-    Contract for pairing, upload queueing, and PC download acknowledgements.
+    Contract for v1 pairing flows and v2 account-linked queueing for Lectra <-> Canvascope delivery.
 servers:
   - url: https://{projectRef}.supabase.co
     variables:
@@ -112,6 +112,112 @@ components:
         status:
           type: string
           enum: [queued, downloaded, canceled]
+
+    RegisterDeviceV2Request:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        deviceName:
+          type: string
+          maxLength: 64
+    RegisterDeviceV2Response:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        deviceId:
+          type: string
+          format: uuid
+        deviceName:
+          type: string
+        userId:
+          type: string
+          format: uuid
+        lastSeenAt:
+          type: string
+          format: date-time
+    UploadV2Response:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        uploadId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        sizeBytes:
+          type: integer
+        contentType:
+          type: string
+        receiverId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+    PendingV2Request:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+    PendingV2Upload:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        uploadId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        mimeType:
+          type: string
+          nullable: true
+        sizeBytes:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        downloadUrl:
+          type: string
+          format: uri
+    PendingV2Response:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        uploads:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingV2Upload'
+    StatusUpdateV2Request:
+      type: object
+      required: [deviceId, uploadId, status]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        uploadId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, downloaded, canceled]
+
     GenericError:
       type: object
       properties:
@@ -123,7 +229,7 @@ security:
 paths:
   /functions/v1/register-device:
     post:
-      summary: Register or refresh a receiver device
+      summary: Register or refresh a receiver device (v1 pairing)
       requestBody:
         required: true
         content:
@@ -145,7 +251,7 @@ paths:
                 $ref: '#/components/schemas/GenericError'
   /functions/v1/upload-file:
     post:
-      summary: Upload file from iOS app into private bucket and queue row
+      summary: Upload file from iOS app into private bucket and queue row (v1 pairing)
       requestBody:
         required: true
         content:
@@ -177,7 +283,7 @@ paths:
                 $ref: '#/components/schemas/GenericError'
   /functions/v1/list-pending:
     post:
-      summary: Claim queued items and return signed URLs for extension
+      summary: Claim queued items and return signed URLs for extension (v1 pairing)
       requestBody:
         required: true
         content:
@@ -193,7 +299,7 @@ paths:
                 $ref: '#/components/schemas/PendingResponse'
   /functions/v1/update-upload-status:
     post:
-      summary: Mark queue item state from extension
+      summary: Mark queue item state from extension (v1 pairing)
       requestBody:
         required: true
         content:
@@ -218,6 +324,142 @@ paths:
                     enum: [queued, downloaded, canceled]
         '404':
           description: Upload not found for device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+
+  /functions/v1/register-device-v2:
+    post:
+      summary: Register extension receiver for authenticated account (v2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceV2Request'
+      responses:
+        '200':
+          description: Device registered for account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterDeviceV2Response'
+        '401':
+          description: Missing or invalid user session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+
+  /functions/v1/upload-file-v2:
+    post:
+      summary: Upload file from Lectra and route to most-recent receiver (v2)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: File queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadV2Response'
+        '404':
+          description: No active receiver for user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+        '413':
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+
+  /functions/v1/list-pending-v2:
+    post:
+      summary: Claim queued uploads for receiver device under user account (v2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PendingV2Request'
+      responses:
+        '200':
+          description: Pending list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingV2Response'
+        '403':
+          description: Device does not belong to user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+
+  /functions/v1/update-upload-status-v2:
+    post:
+      summary: Mark queue item state from extension (v2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusUpdateV2Request'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  uploadId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [queued, downloaded, canceled]
+        '404':
+          description: Upload not found for device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+
+  /functions/v1/cleanup-expired-uploads:
+    post:
+      summary: Cancel and clean up expired queue entries (service role only)
+      responses:
+        '200':
+          description: Cleanup summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  canceledCount:
+                    type: integer
+                  removedObjectCount:
+                    type: integer
+        '403':
+          description: Service-role authorization required
           content:
             application/json:
               schema:

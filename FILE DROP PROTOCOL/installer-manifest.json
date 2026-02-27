@@ -1,17 +1,23 @@
 {
   "package_name": "file-drop-installer",
-  "package_version": "1.1.0",
+  "package_version": "1.2.0",
   "created_at": "2026-02-25",
   "purpose": "Install DropBridge backend and integrate native iOS uploader with existing Chrome extension receiver.",
   "components": {
     "supabase": {
       "schema": "supabase/schema/install.sql",
+      "v2_migration": "supabase/schema/dropbridge_v2_account_link.sql",
       "rollback": "supabase/schema/rollback.sql",
       "functions": [
         "register-device",
         "upload-file",
         "list-pending",
-        "update-upload-status"
+        "update-upload-status",
+        "register-device-v2",
+        "upload-file-v2",
+        "list-pending-v2",
+        "update-upload-status-v2",
+        "cleanup-expired-uploads"
       ],
       "function_source_root": "supabase/functions"
     },

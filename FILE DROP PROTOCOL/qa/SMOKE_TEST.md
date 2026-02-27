@@ -29,3 +29,23 @@
 
 1. Tamper one character in `deviceToken` on iOS side.
 2. Verify upload fails with auth error.
+
+## Test D: v2 zero-pairing happy path
+
+1. Sign into Lectra and Canvascope extension with the same Google account.
+2. Call `register-device-v2` from extension startup.
+3. Upload small PDF via `upload-file-v2` from Lectra.
+4. Verify DB row includes `user_id`, receiver `device_id`, and `expires_at`.
+5. Verify row transitions `queued` -> `downloading` -> `downloaded`.
+
+## Test E: v2 no receiver path
+
+1. Sign into Lectra account but stop extension polling.
+2. Upload via `upload-file-v2`.
+3. Verify `404` no-receiver response and user-facing prompt to open extension.
+
+## Test F: v2 expiration cleanup path
+
+1. Insert or wait for expired queued row (`expires_at < now()`).
+2. Invoke `cleanup-expired-uploads` with service role.
+3. Verify row is marked `canceled` and object removed from storage.
