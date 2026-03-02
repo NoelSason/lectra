@@ -17,6 +17,7 @@
         "upload-file-v2",
         "list-pending-v2",
         "update-upload-status-v2",
+        "get-upload-status-v2",
         "cleanup-expired-uploads"
       ],
       "function_source_root": "supabase/functions"

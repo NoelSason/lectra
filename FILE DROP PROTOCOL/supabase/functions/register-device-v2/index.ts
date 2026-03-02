@@ -5,6 +5,7 @@ import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 type RegisterDeviceV2Payload = {
   deviceId?: string;
   deviceName?: string;
+  clientKind?: "canvascope_extension" | "lectra_ipad";
 };
 
 Deno.serve(async (request) => {
@@ -20,9 +21,11 @@ Deno.serve(async (request) => {
     const user = await requireAuthUser(request);
     const payload = (await request.json()) as RegisterDeviceV2Payload;
     const deviceId = String(payload.deviceId ?? "").trim();
-    const deviceName = String(payload.deviceName ?? "Canvascope Receiver")
+    const clientKind = payload.clientKind === "lectra_ipad" ? "lectra_ipad" : "canvascope_extension";
+    const defaultName = clientKind === "lectra_ipad" ? "Lectra iPad" : "Canvascope Receiver";
+    const deviceName = String(payload.deviceName ?? defaultName)
       .trim()
-      .slice(0, 64) || "Canvascope Receiver";
+      .slice(0, 64) || defaultName;
 
     requireUuid(deviceId, "deviceId");
 
@@ -46,7 +49,7 @@ Deno.serve(async (request) => {
         id: deviceId,
         user_id: user.id,
         name: deviceName,
-        client_kind: "canvascope_extension",
+        client_kind: clientKind,
         revoked_at: null,
         last_seen_at: now,
       },

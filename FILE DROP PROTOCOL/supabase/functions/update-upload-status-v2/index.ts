@@ -6,6 +6,7 @@ type StatusV2Payload = {
   deviceId?: string;
   uploadId?: string;
   status?: "queued" | "downloaded" | "canceled";
+  clientKind?: "canvascope_extension" | "lectra_ipad";
 };
 
 Deno.serve(async (request) => {
@@ -23,6 +24,7 @@ Deno.serve(async (request) => {
     const deviceId = String(payload.deviceId ?? "").trim();
     const uploadId = String(payload.uploadId ?? "").trim();
     const status = payload.status;
+    const requestedClientKind = payload.clientKind === "lectra_ipad" ? "lectra_ipad" : "canvascope_extension";
 
     requireUuid(deviceId, "deviceId");
     requireUuid(uploadId, "uploadId");
@@ -45,7 +47,7 @@ Deno.serve(async (request) => {
       return json({ error: "Device not found" }, 404);
     }
 
-    if (device.user_id !== user.id || device.client_kind !== "canvascope_extension" || device.revoked_at) {
+    if (device.user_id !== user.id || device.client_kind !== requestedClientKind || device.revoked_at) {
       return json({ error: "Device does not belong to this account" }, 403);
     }
 

@@ -4,6 +4,7 @@ import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const ACTIVE_RECEIVER_WINDOW_MS = 12 * 60 * 1000;
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -18,6 +19,11 @@ Deno.serve(async (request) => {
     const user = await requireAuthUser(request);
     const formData = await request.formData();
     const file = formData.get("file");
+    const receiverKindField = String(formData.get("receiverKind") ?? "canvascope_extension").trim();
+    const receiverKind = receiverKindField === "lectra_ipad" ? "lectra_ipad" : "canvascope_extension";
+    const senderKindField = String(formData.get("senderKind") ?? "").trim();
+    const senderKind = senderKindField === "lectra_ipad" ? "lectra_ipad" : senderKindField === "canvascope_extension" ? "canvascope_extension" : "";
+    const senderDeviceId = String(formData.get("senderDeviceId") ?? "").trim();
 
     if (!(file instanceof File)) {
       return json({ error: "Missing file field" }, 400);
@@ -30,16 +36,44 @@ Deno.serve(async (request) => {
     if (file.size > MAX_FILE_BYTES) {
       return json({ error: `File exceeds ${MAX_FILE_BYTES} byte limit` }, 413);
     }
+    const activeReceiverCutoff = new Date(Date.now() - ACTIVE_RECEIVER_WINDOW_MS).toISOString();
 
-    const { data: receiver, error: receiverError } = await admin
+    let receiverQuery = admin
       .from("devices")
       .select("id, last_seen_at")
       .eq("user_id", user.id)
-      .eq("client_kind", "canvascope_extension")
+      .eq("client_kind", receiverKind)
       .is("revoked_at", null)
+      .gt("last_seen_at", activeReceiverCutoff)
       .order("last_seen_at", { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+
+    // Prevent loopback routing when sender and receiver are same kind and sender device is known.
+    if (senderDeviceId && senderKind && senderKind === receiverKind) {
+      receiverQuery = receiverQuery.neq("id", senderDeviceId);
+    }
+
+    let { data: receiver, error: receiverError } = await receiverQuery.maybeSingle();
+
+    // Fallback to the most recently seen receiver when heartbeat is stale/missing.
+    if (!receiver && !receiverError) {
+      let fallbackQuery = admin
+        .from("devices")
+        .select("id, last_seen_at")
+        .eq("user_id", user.id)
+        .eq("client_kind", receiverKind)
+        .is("revoked_at", null)
+        .order("last_seen_at", { ascending: false, nullsFirst: false })
+        .limit(1);
+
+      if (senderDeviceId && senderKind && senderKind === receiverKind) {
+        fallbackQuery = fallbackQuery.neq("id", senderDeviceId);
+      }
+
+      const fallback = await fallbackQuery.maybeSingle();
+      receiver = fallback.data;
+      receiverError = fallback.error;
+    }
 
     if (receiverError) {
       throw new Error(`Receiver lookup failed: ${receiverError.message}`);
@@ -48,7 +82,9 @@ Deno.serve(async (request) => {
     if (!receiver) {
       return json(
         {
-          error: "No active Canvascope receiver found. Open the Canvascope extension and try again.",
+          error: receiverKind === "lectra_ipad"
+            ? "No active Lectra receiver found. Open Lectra on iPad and try again."
+            : "No active Canvascope receiver found. Open the Canvascope extension and try again.",
         },
         404,
       );

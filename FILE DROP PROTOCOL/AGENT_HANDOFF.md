@@ -12,8 +12,9 @@
 1. Backend install
 - Execute `supabase/schema/install.sql`.
 - Execute `supabase/schema/dropbridge_v2_account_link.sql`.
+- Execute `supabase/migrations/20260302005800_dropbridge_v2_client_kind_lectra_ipad.sql`.
 - Deploy all functions in `supabase/functions/`.
-- Confirm v1 functions keep `verify_jwt = false` and v2 functions use `verify_jwt = true`.
+- Confirm v1 and v2 functions keep `verify_jwt = false` (JWT validated in function code), and only `cleanup-expired-uploads` uses `verify_jwt = true`.
 
 2. iOS integration
 - Add `ios/DropBridgeClient.swift`.
@@ -33,6 +34,7 @@
   - `register-device-v2`
   - `list-pending-v2`
   - `update-upload-status-v2`
+  - `get-upload-status-v2`
 
 4. Acceptance checks
 - Run `qa/SMOKE_TEST.md` end-to-end.

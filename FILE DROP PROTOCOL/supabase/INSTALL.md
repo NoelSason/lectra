@@ -19,13 +19,15 @@ Recommended path:
 
 1. Copy `supabase/schema/install.sql` into a migration file under your existing app repo.
 2. Copy `supabase/schema/dropbridge_v2_account_link.sql` into a second migration file.
-3. Run `supabase db push`.
+3. Ensure `supabase/migrations/20260302005800_dropbridge_v2_client_kind_lectra_ipad.sql` is included.
+4. Run `supabase db push`.
 
 Alternative quick path for evaluation:
 
 ```bash
 supabase db execute --file supabase/schema/install.sql
 supabase db execute --file supabase/schema/dropbridge_v2_account_link.sql
+supabase db execute --file supabase/migrations/20260302005800_dropbridge_v2_client_kind_lectra_ipad.sql
 ```
 
 ## 3) Deploy functions
@@ -41,6 +43,7 @@ supabase functions deploy register-device-v2
 supabase functions deploy upload-file-v2
 supabase functions deploy list-pending-v2
 supabase functions deploy update-upload-status-v2
+supabase functions deploy get-upload-status-v2
 supabase functions deploy cleanup-expired-uploads
 ```
 
@@ -49,9 +52,10 @@ supabase functions deploy cleanup-expired-uploads
 `supabase/config.toml` includes:
 
 - `verify_jwt = false` for v1 pairing functions.
-- `verify_jwt = true` for v2 account-linked functions.
+- `verify_jwt = false` for v2 account-linked functions.
+- `verify_jwt = true` for service-role-only cleanup function.
 
-Reason: v1 uses device token auth, while v2 requires authenticated Supabase user JWTs.
+Reason: v1 uses device token auth, while v2 validates Supabase user JWTs inside the function via `_shared/auth-user.ts`.
 
 ## 5) Smoke test backend
 
