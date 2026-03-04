@@ -57,3 +57,17 @@ enum AnnotationTool: Equatable {
         }
     }
 }
+
+enum EraserMode: String, CaseIterable, Hashable {
+    case stroke
+    case classic
+
+    var title: String {
+        switch self {
+        case .stroke:
+            return "Stroke"
+        case .classic:
+            return "Classic"
+        }
+    }
+}

@@ -162,6 +162,9 @@ struct DocumentBrowserView: View {
     @State private var sharePayload: SharePayload?
 
     @State private var featureNotice: String?
+    @State private var backgroundSyncToast: String?
+    @State private var backgroundSyncToastTask: Task<Void, Never>? = nil
+    @State private var hasPendingBackgroundSyncToast = false
     @State private var documentFolderMap: [String: String] = [:]
     @State private var recentlyOpenedDocumentIds: [UUID] = []
 
@@ -307,6 +310,28 @@ struct DocumentBrowserView: View {
                     }
                 )
             }
+
+            if let message = backgroundSyncToast {
+                VStack {
+                    Spacer()
+                    Text(message)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(LectraColor.success.opacity(0.92))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        )
+                        .padding(.bottom, 26)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .allowsHitTesting(false)
+            }
         }
         .sheet(isPresented: $showFilePicker) {
             DocumentPickerView(contentTypes: filePickerContentTypes) { url in
@@ -389,6 +414,20 @@ struct DocumentBrowserView: View {
                 )
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .lectraBackgroundSyncCompleted)) { _ in
+            guard activeSection == .documents else { return }
+            if editorDocumentId == nil {
+                showBackgroundSyncToast("Sync complete ✓")
+            } else {
+                hasPendingBackgroundSyncToast = true
+            }
+        }
+        .onChange(of: editorDocumentId) { _, newValue in
+            if newValue == nil, hasPendingBackgroundSyncToast {
+                hasPendingBackgroundSyncToast = false
+                showBackgroundSyncToast("Sync complete ✓")
+            }
+        }
         .task {
             guard !hasLoaded else { return }
             hasLoaded = true
@@ -399,11 +438,29 @@ struct DocumentBrowserView: View {
                 await runCloudSync(triggeredByUser: false)
             }
         }
+        .onDisappear {
+            backgroundSyncToastTask?.cancel()
+        }
         .preferredColorScheme(.dark)
     }
 
+    private func showBackgroundSyncToast(_ message: String) {
+        backgroundSyncToastTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.18)) {
+            backgroundSyncToast = message
+        }
+
+        backgroundSyncToastTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_300_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                backgroundSyncToast = nil
+            }
+        }
+    }
+
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: isSidebarCollapsed ? 12 : 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.22)) {
                     isSidebarCollapsed.toggle()
@@ -451,8 +508,8 @@ struct DocumentBrowserView: View {
                 selectSection(section)
             }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: isSidebarCollapsed ? 0 : 2) {
+                HStack(spacing: isSidebarCollapsed ? 0 : 12) {
                     Image(systemName: section.icon)
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 28)
@@ -463,8 +520,11 @@ struct DocumentBrowserView: View {
                             .lineLimit(1)
                     }
 
-                    Spacer(minLength: 0)
+                    if !isSidebarCollapsed {
+                        Spacer(minLength: 0)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
 
                 if section == .marketplace && !isSidebarCollapsed {
                     Text("500+ Items for Essential")
@@ -474,14 +534,17 @@ struct DocumentBrowserView: View {
                 }
             }
             .foregroundColor(Color.white.opacity(0.95))
-            .padding(.horizontal, isSidebarCollapsed ? 4 : 10)
-            .padding(.vertical, 10)
+            .padding(.horizontal, isSidebarCollapsed ? 0 : 10)
+            .padding(.vertical, isSidebarCollapsed ? 8 : 10)
+            .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(activeSection == section ? Color(hex: 0x4A222A) : Color.clear)
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
     }
 
     @ViewBuilder

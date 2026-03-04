@@ -75,6 +75,7 @@ struct PDFAnnotationView: View {
     @State private var selectedTool: AnnotationTool = .pen
     @State private var selectedColor: AnnotationInkColor = .accent
     @State private var selectedStrokeWidth: CGFloat = 2.0
+    @State private var selectedEraserMode: EraserMode = .stroke
     @State private var toolbarDockEdge: ToolbarDockEdge = .bottom
     @State private var toolbarSize: CGSize = .zero
     @State private var isToolbarDragging = false
@@ -101,6 +102,7 @@ struct PDFAnnotationView: View {
                             selectedTool: $selectedTool,
                             selectedColor: $selectedColor,
                             selectedStrokeWidth: $selectedStrokeWidth,
+                            selectedEraserMode: $selectedEraserMode,
                             onScroll: { triggerPageIndicator() }
                         )
                         .ignoresSafeArea(.keyboard)
@@ -195,6 +197,7 @@ struct PDFAnnotationView: View {
             selectedTool: $selectedTool,
             selectedColor: $selectedColor,
             selectedStrokeWidth: $selectedStrokeWidth,
+            selectedEraserMode: $selectedEraserMode,
             isVertical: toolbarDockEdge.isVertical
         )
         .background(
@@ -307,7 +310,7 @@ struct PDFAnnotationView: View {
         case .highlighter:
             return "Highlighter"
         case .eraser:
-            return "Eraser"
+            return selectedEraserMode == .stroke ? "Stroke Eraser" : "Classic Eraser"
         case .lasso:
             return "Lasso"
         }
@@ -515,16 +518,14 @@ struct PDFAnnotationView: View {
     }
 
     @MainActor
-    private func saveLocally() async {
-        await MainActor.run {
+    private func saveLocally(showBlockingOverlay: Bool = true) async {
+        if showBlockingOverlay {
             withAnimation(LectraMotion.quick) {
                 isSaving = true
             }
         }
-        NotificationCenter.default.post(name: .lectraSaveRequested, object: nil)
-        // Give UIKit time to flatten and dump to disk
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        await MainActor.run {
+        NotificationCenter.default.post(name: .lectraSaveRequested, object: document.id)
+        if showBlockingOverlay {
             withAnimation(LectraMotion.quick) {
                 isSaving = false
             }
@@ -533,11 +534,14 @@ struct PDFAnnotationView: View {
 
     @MainActor
     private func saveAndSync() async {
-        await saveLocally()
-        setToast("Saved ✓", style: .success, autoHideAfter: 2.0)
+        await saveLocally(showBlockingOverlay: false)
+        let documentId = document.id
 
-        await MainActor.run {
-            dismiss()
+        dismiss()
+
+        // Emit completion after returning to Vault so the browser can show a lightweight toast.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            NotificationCenter.default.post(name: .lectraBackgroundSyncCompleted, object: documentId)
         }
     }
     
@@ -545,7 +549,7 @@ struct PDFAnnotationView: View {
     
     private func shareDocument() {
         Task { @MainActor in
-            await saveLocally()
+            await saveLocally(showBlockingOverlay: true)
 
             guard let finalURL = preferredExportURL() else { return }
             
@@ -578,7 +582,7 @@ struct PDFAnnotationView: View {
         isExportingToCanvascope = true
         defer { isExportingToCanvascope = false }
 
-        await saveLocally()
+        await saveLocally(showBlockingOverlay: false)
 
         guard let exportURL = preferredExportURL() else {
             setToast("PDF not available for export.", style: .error, autoHideAfter: 2.6)
@@ -668,6 +672,7 @@ struct PDFAnnotationView: View {
 // MARK: - Notification Name
 extension Notification.Name {
     static let lectraSaveRequested = Notification.Name("lectraSaveRequested")
+    static let lectraBackgroundSyncCompleted = Notification.Name("lectraBackgroundSyncCompleted")
 }
 
 // MARK: - PDFEditorRepresentable (UIKit Bridge)
@@ -681,6 +686,7 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
     @Binding var selectedTool: AnnotationTool
     @Binding var selectedColor: AnnotationInkColor
     @Binding var selectedStrokeWidth: CGFloat
+    @Binding var selectedEraserMode: EraserMode
     var onScroll: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -702,7 +708,8 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
         vc.setTool(
             selectedTool,
             color: selectedColor,
-            width: selectedStrokeWidth
+            width: selectedStrokeWidth,
+            eraserMode: selectedEraserMode
         )
     }
 
@@ -896,10 +903,11 @@ private struct InkToolDescriptor {
     var width: CGFloat
     var blendMode: InkBlendMode
     var eraserRadius: CGFloat
+    var eraserMode: EraserMode
 
     static let `default` = InkToolDescriptor(annotationTool: .pen, inkColor: .black, width: 2.0)
 
-    init(annotationTool: AnnotationTool, inkColor: AnnotationInkColor, width: CGFloat) {
+    init(annotationTool: AnnotationTool, inkColor: AnnotationInkColor, width: CGFloat, eraserMode: EraserMode = .stroke) {
         switch annotationTool {
         case .pen:
             mode = .pen
@@ -907,24 +915,28 @@ private struct InkToolDescriptor {
             self.width = min(max(width, 0.5), 2.0)
             blendMode = .normal
             eraserRadius = 0
+            self.eraserMode = .stroke
         case .highlighter:
             mode = .highlighter
             color = inkColor.inkUIColor.withAlphaComponent(0.35)
             self.width = min(max(width * 1.8, 1.5), 20.0)
             blendMode = .multiply
             eraserRadius = 0
+            self.eraserMode = .stroke
         case .eraser:
             mode = .eraser
             color = .clear
-            self.width = min(max(width, 2.0), 24.0)
+            self.width = min(max(width, 0.8), 12.0)
             blendMode = .normal
-            eraserRadius = max(self.width * 5.0, 14.0)
+            self.eraserMode = eraserMode
+            eraserRadius = max(self.width * 1.2, 2.0)
         case .lasso:
             mode = .lasso
             color = .clear
             self.width = min(max(width, 2.0), 24.0)
             blendMode = .normal
             eraserRadius = 0
+            self.eraserMode = .stroke
         }
     }
 }
@@ -977,7 +989,19 @@ private final class PencilStrokeGestureRecognizer: UIGestureRecognizer {
 
 private final class VectorInkCanvasView: UIView {
     var onDrawingChanged: ((InkPageDrawing) -> Void)?
-    var tool: InkToolDescriptor = .default
+    var tool: InkToolDescriptor = .default {
+        didSet {
+            if tool.mode == .eraser {
+                if let center = eraserPreviewCenter {
+                    updateEraserPreview(at: center)
+                } else {
+                    configureEraserPreviewAppearance()
+                }
+            } else {
+                hideEraserPreview()
+            }
+        }
+    }
 
     private(set) var drawing = InkPageDrawing()
 
@@ -987,6 +1011,8 @@ private final class VectorInkCanvasView: UIView {
     private var activeStrokeColor = InkColorComponents(red: 0, green: 0, blue: 0, alpha: 1)
     private var activeBlendMode: InkBlendMode = .normal
     private var activeStrokeLayer: CAShapeLayer?
+    private let eraserPreviewLayer = CAShapeLayer()
+    private var eraserPreviewCenter: CGPoint?
 
     private lazy var pencilGesture: PencilStrokeGestureRecognizer = {
         let gesture = PencilStrokeGestureRecognizer(target: self, action: #selector(handlePencilGesture(_:)))
@@ -997,6 +1023,13 @@ private final class VectorInkCanvasView: UIView {
         return gesture
     }()
 
+    private lazy var pencilHoverGesture: UIHoverGestureRecognizer = {
+        let gesture = UIHoverGestureRecognizer(target: self, action: #selector(handlePencilHoverGesture(_:)))
+        gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        gesture.cancelsTouchesInView = false
+        return gesture
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
@@ -1004,7 +1037,9 @@ private final class VectorInkCanvasView: UIView {
         clipsToBounds = true
         layer.shouldRasterize = false
         layer.drawsAsynchronously = false
+        configureEraserPreviewLayer()
         addGestureRecognizer(pencilGesture)
+        addGestureRecognizer(pencilHoverGesture)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -1012,6 +1047,9 @@ private final class VectorInkCanvasView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         rebuildStrokePaths()
+        if tool.mode == .eraser, let center = eraserPreviewCenter {
+            updateEraserPreview(at: center)
+        }
     }
 
     func setDrawing(_ drawing: InkPageDrawing) {
@@ -1045,24 +1083,33 @@ private final class VectorInkCanvasView: UIView {
         case .began:
             guard let first = samples.first else { return }
             if tool.mode == .eraser {
+                updateEraserPreview(at: first.point)
                 erase(at: first.point)
             } else if tool.mode != .lasso {
+                hideEraserPreview()
                 beginStroke(at: first.point, force: first.force)
                 for sample in samples.dropFirst() {
                     appendStroke(at: sample.point, force: sample.force)
                 }
+            } else {
+                hideEraserPreview()
             }
         case .changed:
             if tool.mode == .eraser {
                 for sample in samples {
+                    updateEraserPreview(at: sample.point)
                     erase(at: sample.point)
                 }
             } else if tool.mode != .lasso {
+                hideEraserPreview()
                 for sample in samples {
                     appendStroke(at: sample.point, force: sample.force)
                 }
+            } else {
+                hideEraserPreview()
             }
         case .ended:
+            hideEraserPreview()
             if tool.mode != .eraser && tool.mode != .lasso {
                 for sample in samples {
                     appendStroke(at: sample.point, force: sample.force)
@@ -1070,10 +1117,86 @@ private final class VectorInkCanvasView: UIView {
                 finishStroke()
             }
         case .cancelled, .failed:
+            hideEraserPreview()
             discardActiveStroke()
         default:
             break
         }
+    }
+
+    @objc
+    private func handlePencilHoverGesture(_ gesture: UIHoverGestureRecognizer) {
+        guard tool.mode == .eraser else {
+            hideEraserPreview()
+            return
+        }
+
+        switch gesture.state {
+        case .began, .changed:
+            updateEraserPreview(at: gesture.location(in: self))
+        case .ended, .cancelled, .failed:
+            hideEraserPreview()
+        default:
+            break
+        }
+    }
+
+    private func configureEraserPreviewLayer() {
+        eraserPreviewLayer.fillColor = UIColor(white: 0.45, alpha: 0.26).cgColor
+        eraserPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.98).cgColor
+        eraserPreviewLayer.lineWidth = eraserPreviewStrokeWidth(for: 8.0)
+        eraserPreviewLayer.shadowColor = UIColor.black.withAlphaComponent(0.55).cgColor
+        eraserPreviewLayer.shadowOffset = .zero
+        eraserPreviewLayer.shadowRadius = 1.6
+        eraserPreviewLayer.shadowOpacity = 1.0
+        eraserPreviewLayer.isHidden = true
+        eraserPreviewLayer.zPosition = 10_000
+        eraserPreviewLayer.contentsScale = UIScreen.main.scale
+        layer.addSublayer(eraserPreviewLayer)
+    }
+
+    private func configureEraserPreviewAppearance() {
+        guard tool.mode == .eraser else { return }
+        eraserPreviewLayer.fillColor = UIColor(white: 0.45, alpha: 0.26).cgColor
+        eraserPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.98).cgColor
+        let currentRadius = max(tool.eraserRadius, 2.0)
+        eraserPreviewLayer.lineWidth = eraserPreviewStrokeWidth(for: currentRadius)
+        eraserPreviewLayer.shadowColor = UIColor.black.withAlphaComponent(0.55).cgColor
+        eraserPreviewLayer.shadowOffset = .zero
+        eraserPreviewLayer.shadowRadius = 1.6
+        eraserPreviewLayer.shadowOpacity = 1.0
+    }
+
+    private func updateEraserPreview(at point: CGPoint) {
+        guard tool.mode == .eraser else {
+            hideEraserPreview()
+            return
+        }
+        eraserPreviewCenter = point
+        configureEraserPreviewAppearance()
+
+        let radius = max(tool.eraserRadius, 2.0)
+        eraserPreviewLayer.lineWidth = eraserPreviewStrokeWidth(for: radius)
+        let diameter = radius * 2.0
+        let rect = CGRect(
+            x: point.x - radius,
+            y: point.y - radius,
+            width: diameter,
+            height: diameter
+        )
+        eraserPreviewLayer.path = UIBezierPath(ovalIn: rect).cgPath
+        eraserPreviewLayer.isHidden = false
+    }
+
+    private func hideEraserPreview() {
+        eraserPreviewCenter = nil
+        eraserPreviewLayer.path = nil
+        eraserPreviewLayer.isHidden = true
+    }
+
+    private func eraserPreviewStrokeWidth(for radius: CGFloat) -> CGFloat {
+        // Keep small eraser rings visually light while preserving visibility for larger sizes.
+        min(max(radius * 0.16, 0.9), 2.0)
     }
 
     private func pencilSamples(from gesture: PencilStrokeGestureRecognizer) -> [(point: CGPoint, force: CGFloat)] {
@@ -1158,6 +1281,15 @@ private final class VectorInkCanvasView: UIView {
     }
 
     private func erase(at point: CGPoint) {
+        switch tool.eraserMode {
+        case .stroke:
+            eraseByStroke(at: point)
+        case .classic:
+            eraseByClassic(at: point)
+        }
+    }
+
+    private func eraseByStroke(at point: CGPoint) {
         guard !drawing.strokes.isEmpty, drawing.strokes.count == strokeLayers.count else { return }
 
         let radius = tool.eraserRadius
@@ -1180,6 +1312,75 @@ private final class VectorInkCanvasView: UIView {
         drawing.strokes = keptStrokes
         strokeLayers = keptLayers
         onDrawingChanged?(drawing)
+    }
+
+    private func eraseByClassic(at point: CGPoint) {
+        guard !drawing.strokes.isEmpty else { return }
+
+        let radius = tool.eraserRadius
+        var updatedStrokes: [InkStroke] = []
+        updatedStrokes.reserveCapacity(drawing.strokes.count)
+        var removedAny = false
+
+        for stroke in drawing.strokes {
+            let segments = strokeSegments(afterErasing: stroke, at: point, radius: radius)
+            if segments.count != 1 || segments.first?.points.count != stroke.points.count {
+                removedAny = true
+            }
+            updatedStrokes.append(contentsOf: segments)
+        }
+
+        guard removedAny else { return }
+
+        drawing.strokes = updatedStrokes
+        rebuildStrokeLayers()
+        onDrawingChanged?(drawing)
+    }
+
+    private func strokeSegments(afterErasing stroke: InkStroke, at point: CGPoint, radius: CGFloat) -> [InkStroke] {
+        guard !stroke.points.isEmpty else { return [] }
+
+        let threshold = max(radius + stroke.width * 0.5, radius)
+        let thresholdSquared = threshold * threshold
+
+        var segments: [InkStroke] = []
+        var segmentPoints: [InkPoint] = []
+
+        for sample in stroke.points {
+            let candidate = denormalizedPoint(for: sample)
+            let dx = candidate.x - point.x
+            let dy = candidate.y - point.y
+            let shouldErase = (dx * dx) + (dy * dy) <= thresholdSquared
+
+            if shouldErase {
+                if !segmentPoints.isEmpty {
+                    segments.append(
+                        InkStroke(
+                            points: segmentPoints,
+                            width: stroke.width,
+                            color: stroke.color,
+                            blendMode: stroke.blendMode
+                        )
+                    )
+                    segmentPoints.removeAll(keepingCapacity: true)
+                }
+            } else {
+                segmentPoints.append(sample)
+            }
+        }
+
+        if !segmentPoints.isEmpty {
+            segments.append(
+                InkStroke(
+                    points: segmentPoints,
+                    width: stroke.width,
+                    color: stroke.color,
+                    blendMode: stroke.blendMode
+                )
+            )
+        }
+
+        return segments
     }
 
     private func strokeIntersectsEraser(_ stroke: InkStroke, point: CGPoint, radius: CGFloat) -> Bool {
@@ -1603,8 +1804,8 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         scrollView.contentSize = containerView.bounds.size
     }
 
-    func setTool(_ tool: AnnotationTool, color: AnnotationInkColor, width: CGFloat) {
-        currentTool = InkToolDescriptor(annotationTool: tool, inkColor: color, width: width)
+    func setTool(_ tool: AnnotationTool, color: AnnotationInkColor, width: CGFloat, eraserMode: EraserMode) {
+        currentTool = InkToolDescriptor(annotationTool: tool, inkColor: color, width: width, eraserMode: eraserMode)
         pageViews.forEach { $0.canvasView.tool = currentTool }
     }
 

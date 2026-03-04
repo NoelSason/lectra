@@ -11,19 +11,23 @@ struct FloatingToolPickerView: View {
     @Binding var selectedTool: AnnotationTool
     @Binding var selectedColor: AnnotationInkColor
     @Binding var selectedStrokeWidth: CGFloat
+    @Binding var selectedEraserMode: EraserMode
     var isVertical: Bool = false
 
     private let colors: [AnnotationInkColor] = [.black, .white, .accent, .blue, .green]
 
     @State private var penStrokeWidths: [CGFloat] = [0.5, 1.0, 2.0]
     @State private var highlighterStrokeWidths: [CGFloat] = [2.0, 4.0, 7.0]
+    @State private var eraserStrokeWidths: [CGFloat] = [1.5, 3.0, 6.0]
     @State private var activeWidthEditorIndex: Int? = nil
 
     private var strokeWidths: [CGFloat] {
         switch selectedTool {
         case .highlighter:
             return highlighterStrokeWidths
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            return eraserStrokeWidths
+        case .pen, .lasso:
             return penStrokeWidths
         }
     }
@@ -32,7 +36,9 @@ struct FloatingToolPickerView: View {
         switch selectedTool {
         case .highlighter:
             return 1.0...14.0
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            return 0.8...12.0
+        case .pen, .lasso:
             return 0.2...6.0
         }
     }
@@ -41,7 +47,9 @@ struct FloatingToolPickerView: View {
         switch selectedTool {
         case .highlighter:
             return "HIGHLIGHTER THICKNESS"
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            return "ERASER SIZE"
+        case .pen, .lasso:
             return "PEN THICKNESS"
         }
     }
@@ -143,11 +151,19 @@ struct FloatingToolPickerView: View {
         Group {
             if isVertical {
                 VStack(spacing: 12) {
-                    colorButtons
+                    if selectedTool == .eraser {
+                        eraserModeButtons
+                    } else {
+                        colorButtons
+                    }
                 }
             } else {
                 HStack(spacing: 12) {
-                    colorButtons
+                    if selectedTool == .eraser {
+                        eraserModeButtons
+                    } else {
+                        colorButtons
+                    }
                 }
             }
         }
@@ -197,7 +213,7 @@ struct FloatingToolPickerView: View {
                 ) {
                     withAnimation(LectraMotion.quick) {
                         selectedStrokeWidth = width
-                        if selectedTool == .eraser || selectedTool == .lasso {
+                        if selectedTool == .lasso {
                             selectedTool = .pen
                         }
                         activeWidthEditorIndex = activeWidthEditorIndex == index ? nil : index
@@ -232,6 +248,34 @@ struct FloatingToolPickerView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(color.accessibilityLabel)
                 .accessibilityHint("Select ink color")
+            }
+        }
+    }
+
+    private var eraserModeButtons: some View {
+        Group {
+            ForEach(EraserMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(LectraMotion.quick) {
+                        selectedEraserMode = mode
+                    }
+                } label: {
+                    Text(mode.title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(selectedEraserMode == mode ? .white : Color.white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(selectedEraserMode == mode ? Color(hex: 0xD13C35) : Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(Color.white.opacity(selectedEraserMode == mode ? 0.0 : 0.18), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(mode.title) eraser")
             }
         }
     }
@@ -278,7 +322,10 @@ struct FloatingToolPickerView: View {
         case .highlighter:
             guard highlighterStrokeWidths.indices.contains(index) else { return selectedStrokeWidth }
             return highlighterStrokeWidths[index]
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            guard eraserStrokeWidths.indices.contains(index) else { return selectedStrokeWidth }
+            return eraserStrokeWidths[index]
+        case .pen, .lasso:
             guard penStrokeWidths.indices.contains(index) else { return selectedStrokeWidth }
             return penStrokeWidths[index]
         }
@@ -292,7 +339,10 @@ struct FloatingToolPickerView: View {
         case .highlighter:
             guard highlighterStrokeWidths.indices.contains(index) else { return }
             highlighterStrokeWidths[index] = clamped
-        case .pen, .eraser, .lasso:
+        case .eraser:
+            guard eraserStrokeWidths.indices.contains(index) else { return }
+            eraserStrokeWidths[index] = clamped
+        case .pen, .lasso:
             guard penStrokeWidths.indices.contains(index) else { return }
             penStrokeWidths[index] = clamped
         }
@@ -304,7 +354,8 @@ struct FloatingToolPickerView: View {
         guard !strokeWidths.isEmpty else { return }
         let isValid = strokeWidths.contains { abs($0 - selectedStrokeWidth) < 0.1 }
         if !isValid {
-            selectedStrokeWidth = strokeWidths.last ?? selectedStrokeWidth
+            let nearest = strokeWidths.min { abs($0 - selectedStrokeWidth) < abs($1 - selectedStrokeWidth) }
+            selectedStrokeWidth = nearest ?? selectedStrokeWidth
         }
     }
 }
