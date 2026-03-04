@@ -929,42 +929,47 @@ private struct InkToolDescriptor {
     }
 }
 
-private final class PencilPanGestureRecognizer: UIPanGestureRecognizer {
+private final class PencilStrokeGestureRecognizer: UIGestureRecognizer {
     private(set) var sampledTouches: [UITouch] = []
     private(set) var latestTouch: UITouch?
+    private var activeTouch: UITouch?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        super.touchesBegan(touches, with: event)
-        captureSamples(from: touches, event: event)
+        guard let touch = touches.first(where: { $0.type == .pencil }) else { return }
+        if let activeTouch, activeTouch !== touch { return }
+        activeTouch = touch
+        captureSamples(for: touch, event: event)
+        state = .began
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        super.touchesMoved(touches, with: event)
-        captureSamples(from: touches, event: event)
+        guard let activeTouch, touches.contains(where: { $0 === activeTouch }) else { return }
+        captureSamples(for: activeTouch, event: event)
+        state = .changed
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        super.touchesEnded(touches, with: event)
-        captureSamples(from: touches, event: event)
+        guard let activeTouch, touches.contains(where: { $0 === activeTouch }) else { return }
+        captureSamples(for: activeTouch, event: event)
+        state = .ended
+        self.activeTouch = nil
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        super.touchesCancelled(touches, with: event)
-        captureSamples(from: touches, event: event)
+        guard let activeTouch, touches.contains(where: { $0 === activeTouch }) else { return }
+        captureSamples(for: activeTouch, event: event)
+        state = .cancelled
+        self.activeTouch = nil
     }
 
     override func reset() {
         super.reset()
         sampledTouches.removeAll(keepingCapacity: true)
         latestTouch = nil
+        activeTouch = nil
     }
 
-    private func captureSamples(from touches: Set<UITouch>, event: UIEvent) {
-        guard let touch = touches.first(where: { $0.type == .pencil }) else {
-            sampledTouches = []
-            latestTouch = nil
-            return
-        }
+    private func captureSamples(for touch: UITouch, event: UIEvent) {
         latestTouch = touch
         sampledTouches = event.coalescedTouches(for: touch) ?? [touch]
     }
@@ -983,12 +988,12 @@ private final class VectorInkCanvasView: UIView {
     private var activeBlendMode: InkBlendMode = .normal
     private var activeStrokeLayer: CAShapeLayer?
 
-    private lazy var pencilGesture: PencilPanGestureRecognizer = {
-        let gesture = PencilPanGestureRecognizer(target: self, action: #selector(handlePencilGesture(_:)))
-        gesture.minimumNumberOfTouches = 1
-        gesture.maximumNumberOfTouches = 1
+    private lazy var pencilGesture: PencilStrokeGestureRecognizer = {
+        let gesture = PencilStrokeGestureRecognizer(target: self, action: #selector(handlePencilGesture(_:)))
         gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
         gesture.cancelsTouchesInView = true
+        gesture.delaysTouchesBegan = false
+        gesture.delaysTouchesEnded = false
         return gesture
     }()
 
@@ -1034,7 +1039,7 @@ private final class VectorInkCanvasView: UIView {
     }
 
     @objc
-    private func handlePencilGesture(_ gesture: PencilPanGestureRecognizer) {
+    private func handlePencilGesture(_ gesture: PencilStrokeGestureRecognizer) {
         let samples = pencilSamples(from: gesture)
         switch gesture.state {
         case .began:
@@ -1071,13 +1076,13 @@ private final class VectorInkCanvasView: UIView {
         }
     }
 
-    private func pencilSamples(from gesture: PencilPanGestureRecognizer) -> [(point: CGPoint, force: CGFloat)] {
+    private func pencilSamples(from gesture: PencilStrokeGestureRecognizer) -> [(point: CGPoint, force: CGFloat)] {
         let touches = gesture.sampledTouches.isEmpty
             ? (gesture.latestTouch.map { [$0] } ?? [])
             : gesture.sampledTouches
         return touches.map { touch in
             let force = touch.type == .pencil ? max(touch.force, 0.0) : 1.0
-            return (touch.location(in: self), force)
+            return (touch.preciseLocation(in: self), force)
         }
     }
 

@@ -26,19 +26,39 @@ struct SavedLocalDocument: Codable {
 
 struct SavedLocalFolder: Codable {
     let id: UUID
-    let name: String
-    let createdAt: Date
+    var name: String
+    var createdAt: Date
+    var colorHex: Int?
+    var iconSystemName: String?
 }
 
 struct LocalFolder: Identifiable {
     let id: UUID
-    let name: String
-    let createdAt: Date
+    var name: String
+    var createdAt: Date
+    var colorHex: Int?
+    var iconSystemName: String?
 }
 
 struct SharePayload: Identifiable {
     let id = UUID()
-    let url: URL
+    let urls: [URL]
+}
+
+private struct LibraryBackupSnapshot: Codable {
+    struct Item: Codable {
+        let id: UUID
+        let title: String
+        let createdAt: Date
+        let updatedAt: Date
+        let relativePDFPath: String?
+        let folderId: UUID?
+    }
+
+    let createdAt: Date
+    let source: String
+    let folders: [SavedLocalFolder]
+    let items: [Item]
 }
 
 private enum LibrarySection: String, CaseIterable, Identifiable {
@@ -118,8 +138,10 @@ struct DocumentBrowserView: View {
     @State private var documentFilter: LibraryFilter = .all
     @State private var viewMode: BrowserViewMode = .grid
     @State private var sortMode: LibrarySortMode = .lastModified
+    @State private var isSidebarCollapsed = false
 
     @State private var showFilePicker = false
+    @State private var filePickerContentTypes: [UTType] = [.pdf]
     @State private var showCreateMenu = false
     @State private var showViewMenu = false
     @State private var showCloudStatus = false
@@ -132,6 +154,7 @@ struct DocumentBrowserView: View {
     @State private var showSettingsModal = false
     @State private var showSearchOverlay = false
     @State private var searchText = ""
+    @State private var activeFolderOptionsID: UUID?
 
     @State private var selectedDocumentForOptions: LocalDocument?
     @State private var moveDocumentId: UUID?
@@ -143,6 +166,10 @@ struct DocumentBrowserView: View {
     @State private var recentlyOpenedDocumentIds: [UUID] = []
 
     @State private var hasLoaded = false
+    @State private var isCloudSyncEnabled = false
+    @State private var isAutoBackupEnabled = true
+    @State private var isSyncingCloud = false
+    @State private var isICloudAvailable = false
     @State private var lastCloudSyncDate = Date()
     @State private var lastBackupDate = Date().addingTimeInterval(-20 * 60)
 
@@ -153,8 +180,14 @@ struct DocumentBrowserView: View {
     private let documentFolderMapDefaultsKey = "lectra_document_folder_map"
     private let titleOverridesDefaultsKey = "lectra_document_title_overrides"
     private let recentDocumentsDefaultsKey = "lectra_recently_opened_documents"
+    private let cloudSyncEnabledDefaultsKey = "lectra_cloud_sync_enabled"
+    private let autoBackupEnabledDefaultsKey = "lectra_auto_backup_enabled"
+    private let lastCloudSyncDefaultsKey = "lectra_last_cloud_sync"
+    private let lastBackupDefaultsKey = "lectra_last_backup"
 
-    private let sidebarWidth: CGFloat = 292
+    private var sidebarWidth: CGFloat {
+        isSidebarCollapsed ? 86 : 292
+    }
 
     private var currentFolder: LocalFolder? {
         guard let currentFolderId else { return nil }
@@ -200,9 +233,12 @@ struct DocumentBrowserView: View {
         }
     }
 
+    private var libraryCardWidth: CGFloat {
+        currentFolderId == nil ? 220 : 202
+    }
+
     private var gridColumns: [GridItem] {
-        let minWidth: CGFloat = currentFolderId == nil ? 196 : 176
-        return [GridItem(.adaptive(minimum: minWidth, maximum: 220), spacing: 26, alignment: .top)]
+        [GridItem(.adaptive(minimum: libraryCardWidth, maximum: libraryCardWidth), spacing: 26, alignment: .top)]
     }
 
     private var searchResults: [LocalDocument] {
@@ -252,14 +288,29 @@ struct DocumentBrowserView: View {
                     showCloudSettingsModal = false
                 }
 
-                CloudBackupSettingsModalView {
+                CloudBackupSettingsModalView(
+                    isCloudSyncEnabled: isCloudSyncEnabled,
+                    isAutoBackupEnabled: isAutoBackupEnabled,
+                    onSetCloudSyncEnabled: { isEnabled in
+                        setCloudSyncEnabled(isEnabled)
+                    },
+                    onSetAutoBackupEnabled: { isEnabled in
+                        setAutoBackupEnabled(isEnabled)
+                    },
+                    onManualBackup: {
+                        Task {
+                            await runManualBackup()
+                        }
+                    },
+                    onClose: {
                     showCloudSettingsModal = false
-                }
+                    }
+                )
             }
         }
         .sheet(isPresented: $showFilePicker) {
-            DocumentPickerView { url in
-                importLocalPDF(from: url, folderId: currentFolderId)
+            DocumentPickerView(contentTypes: filePickerContentTypes) { url in
+                importPickedFile(from: url, folderId: currentFolderId)
             }
         }
         .sheet(isPresented: $showAccountSheet) {
@@ -296,7 +347,7 @@ struct DocumentBrowserView: View {
             }
         }
         .sheet(item: $sharePayload) { payload in
-            ShareSheetView(items: [payload.url])
+            ShareSheetView(items: payload.urls)
         }
         .alert("Create Folder", isPresented: $showCreateFolderAlert) {
             TextField("Folder name", text: $newFolderName)
@@ -342,7 +393,11 @@ struct DocumentBrowserView: View {
             guard !hasLoaded else { return }
             hasLoaded = true
             loadRecentDocuments()
+            loadCloudPreferences()
             await loadDocuments()
+            if isCloudSyncEnabled {
+                await runCloudSync(triggeredByUser: false)
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -350,9 +405,11 @@ struct DocumentBrowserView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                featureNotice = "Sidebar collapse is coming soon."
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    isSidebarCollapsed.toggle()
+                }
             } label: {
-                Image(systemName: "sidebar.left")
+                Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(Color(hex: 0xE84D4D))
                     .frame(width: 42, height: 42)
@@ -360,13 +417,15 @@ struct DocumentBrowserView: View {
             .buttonStyle(.plain)
             .padding(.top, 8)
 
-            Text("Lectra")
-                .font(.system(size: 34, weight: .semibold))
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
-                .foregroundStyle(Color.white.opacity(0.95))
-                .padding(.top, 8)
-                .padding(.bottom, 10)
+            if !isSidebarCollapsed {
+                Text("Lectra")
+                    .font(.system(size: 34, weight: .semibold))
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .foregroundStyle(Color.white.opacity(0.95))
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
+            }
 
             ForEach(LibrarySection.allCases) { section in
                 sidebarRow(for: section)
@@ -374,7 +433,7 @@ struct DocumentBrowserView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, isSidebarCollapsed ? 10 : 16)
         .padding(.vertical, 16)
         .background(
             LinearGradient(
@@ -398,14 +457,16 @@ struct DocumentBrowserView: View {
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 28)
 
-                    Text(section.title)
-                        .font(.system(size: 18, weight: .regular))
-                        .lineLimit(1)
+                    if !isSidebarCollapsed {
+                        Text(section.title)
+                            .font(.system(size: 18, weight: .regular))
+                            .lineLimit(1)
+                    }
 
                     Spacer(minLength: 0)
                 }
 
-                if section == .marketplace {
+                if section == .marketplace && !isSidebarCollapsed {
                     Text("500+ Items for Essential")
                         .font(.system(size: 12, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.72))
@@ -413,7 +474,7 @@ struct DocumentBrowserView: View {
                 }
             }
             .foregroundColor(Color.white.opacity(0.95))
-            .padding(.horizontal, 10)
+            .padding(.horizontal, isSidebarCollapsed ? 4 : 10)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -717,12 +778,71 @@ struct DocumentBrowserView: View {
 
     @ViewBuilder
     private func folderGridCard(for folder: LocalFolder) -> some View {
-        Button {
-            openFolder(folder)
-        } label: {
-            GoodnotesFolderCardView(folderName: folder.name, subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened), accent: folderAccentColor(for: folder))
+        GoodnotesFolderCardView(
+            folderName: folder.name,
+            subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
+            accent: folderAccentColor(for: folder),
+            iconSystemName: folder.iconSystemName,
+            isOptionsVisible: activeFolderOptionsID == folder.id,
+            onOpen: {
+                openFolder(folder)
+            },
+            onOptionsTap: {
+                if activeFolderOptionsID == folder.id {
+                    activeFolderOptionsID = nil
+                } else {
+                    activeFolderOptionsID = folder.id
+                }
+            }
+        )
+        .frame(width: libraryCardWidth, alignment: .leading)
+        .popover(
+            isPresented: Binding(
+                get: { activeFolderOptionsID == folder.id },
+                set: { isPresented in
+                    if !isPresented && activeFolderOptionsID == folder.id {
+                        activeFolderOptionsID = nil
+                    }
+                }
+            ),
+            arrowEdge: .top
+        ) {
+            if let activeFolder = folders.first(where: { $0.id == folder.id }) {
+                FolderOptionsPopoverView(
+                    folderName: activeFolder.name,
+                    selectedColorHex: activeFolder.colorHex,
+                    selectedIcon: activeFolder.iconSystemName ?? "folder",
+                    onClose: {
+                        activeFolderOptionsID = nil
+                    },
+                    onRename: { newName in
+                        renameFolder(folderId: activeFolder.id, to: newName)
+                    },
+                    onSelectColor: { colorHex in
+                        updateFolderColor(folderId: activeFolder.id, colorHex: colorHex)
+                    },
+                    onSelectIcon: { iconSystemName in
+                        updateFolderIcon(folderId: activeFolder.id, iconSystemName: iconSystemName)
+                    },
+                    onMove: {
+                        moveFolderToTop(folderId: activeFolder.id)
+                    },
+                    onOpenInWindow: {
+                        openFolder(activeFolder)
+                        activeFolderOptionsID = nil
+                    },
+                    onExport: {
+                        exportFolder(activeFolder)
+                        activeFolderOptionsID = nil
+                    },
+                    onMoveToTrash: {
+                        deleteFolder(folderId: activeFolder.id)
+                        activeFolderOptionsID = nil
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+            }
         }
-        .buttonStyle(.plain)
         .dropDestination(for: String.self) { items, _ in
             handleDrop(items: items, into: folder.id)
         }
@@ -737,6 +857,7 @@ struct DocumentBrowserView: View {
                 selectedDocumentForOptions = doc
             }
         )
+        .frame(width: libraryCardWidth, alignment: .leading)
         .onTapGesture {
             handleDocumentTap(doc)
         }
@@ -837,17 +958,11 @@ struct DocumentBrowserView: View {
                         showAccountMenu = false
                         showCloudSettingsModal = true
                     },
-                    onManageTemplates: {
+                    onSignOut: {
                         showAccountMenu = false
-                        featureNotice = "Manage Notebook Templates is coming soon."
-                    },
-                    onTrash: {
-                        showAccountMenu = false
-                        featureNotice = "Trash is coming soon."
-                    },
-                    onExternalLink: {
-                        showAccountMenu = false
-                        featureNotice = "External links are coming soon."
+                        Task { @MainActor in
+                            await authManager.signOut()
+                        }
                     }
                 )
                 .presentationCompactAdaptation(.popover)
@@ -928,15 +1043,39 @@ struct DocumentBrowserView: View {
                 },
                 onImport: {
                     showCreateMenu = false
+                    filePickerContentTypes = [.pdf]
                     showFilePicker = true
                 },
                 onFolder: {
                     showCreateMenu = false
                     showCreateFolderAlert = true
                 },
-                onUnavailableAction: {
+                onQuickRecord: {
                     showCreateMenu = false
-                    featureNotice = "That option is coming soon."
+                    createBlankLocalDocument(title: "Quick Record")
+                },
+                onQuickNote: {
+                    showCreateMenu = false
+                    createBlankLocalDocument(title: "QuickNote")
+                },
+                onScanDocuments: {
+                    showCreateMenu = false
+                    filePickerContentTypes = [.pdf, .image]
+                    showFilePicker = true
+                },
+                onStudySet: {
+                    showCreateMenu = false
+                    createFolder(named: "Study Set")
+                },
+                onImage: {
+                    showCreateMenu = false
+                    filePickerContentTypes = [.image]
+                    showFilePicker = true
+                },
+                onTakePhoto: {
+                    showCreateMenu = false
+                    filePickerContentTypes = [.image]
+                    showFilePicker = true
                 }
             )
             .presentationCompactAdaptation(.popover)
@@ -967,6 +1106,7 @@ struct DocumentBrowserView: View {
                 },
                 onSelectSort: { mode in
                     sortMode = mode
+                    showViewMenu = false
                 }
             )
             .presentationCompactAdaptation(.popover)
@@ -985,10 +1125,20 @@ struct DocumentBrowserView: View {
         .buttonStyle(.plain)
         .popover(isPresented: $showCloudStatus, arrowEdge: .top) {
             CloudStatusPopoverView(
+                isCloudSyncEnabled: isCloudSyncEnabled,
+                isICloudAvailable: isICloudAvailable,
+                isSyncInProgress: isSyncingCloud,
                 lastSyncDate: lastCloudSyncDate,
                 lastBackupDate: lastBackupDate,
                 onSyncNow: {
-                    lastCloudSyncDate = Date()
+                    Task {
+                        await runCloudSync(triggeredByUser: true)
+                    }
+                },
+                onBackupNow: {
+                    Task {
+                        await runManualBackup()
+                    }
                 },
                 onOpenSettings: {
                     showCloudStatus = false
@@ -1145,6 +1295,10 @@ struct DocumentBrowserView: View {
     }
 
     private func folderAccentColor(for folder: LocalFolder) -> Color {
+        if let customHex = folder.colorHex {
+            return Color(hex: UInt(customHex))
+        }
+
         let palette: [Color] = [
             Color(hex: 0xC95E5E),
             Color(hex: 0xCC6F5A),
@@ -1194,6 +1348,191 @@ struct DocumentBrowserView: View {
     private func clearRecentDocuments() {
         recentlyOpenedDocumentIds = []
         saveRecentDocuments()
+    }
+
+    private func loadCloudPreferences() {
+        let defaults = UserDefaults.standard
+        isICloudAvailable = FileManager.default.url(forUbiquityContainerIdentifier: nil) != nil
+        if defaults.object(forKey: cloudSyncEnabledDefaultsKey) != nil {
+            isCloudSyncEnabled = defaults.bool(forKey: cloudSyncEnabledDefaultsKey)
+        } else {
+            isCloudSyncEnabled = false
+        }
+
+        if defaults.object(forKey: autoBackupEnabledDefaultsKey) != nil {
+            isAutoBackupEnabled = defaults.bool(forKey: autoBackupEnabledDefaultsKey)
+        } else {
+            isAutoBackupEnabled = true
+        }
+
+        if let storedLastSync = defaults.object(forKey: lastCloudSyncDefaultsKey) as? Date {
+            lastCloudSyncDate = storedLastSync
+        }
+
+        if let storedLastBackup = defaults.object(forKey: lastBackupDefaultsKey) as? Date {
+            lastBackupDate = storedLastBackup
+        }
+    }
+
+    private func setCloudSyncEnabled(_ isEnabled: Bool) {
+        isCloudSyncEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: cloudSyncEnabledDefaultsKey)
+
+        if isEnabled {
+            Task {
+                await runCloudSync(triggeredByUser: false)
+            }
+        }
+    }
+
+    private func setAutoBackupEnabled(_ isEnabled: Bool) {
+        isAutoBackupEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: autoBackupEnabledDefaultsKey)
+    }
+
+    private func runCloudSync(triggeredByUser: Bool) async {
+        await MainActor.run {
+            isICloudAvailable = FileManager.default.url(forUbiquityContainerIdentifier: nil) != nil
+        }
+
+        if !isCloudSyncEnabled {
+            if triggeredByUser {
+                await MainActor.run {
+                    featureNotice = "Enable Cloud Sync in Cloud & Backup Settings first."
+                }
+            }
+            return
+        }
+
+        guard !isSyncingCloud else { return }
+
+        await MainActor.run {
+            isSyncingCloud = true
+        }
+        defer {
+            Task { @MainActor in
+                isSyncingCloud = false
+            }
+        }
+
+        await refreshRemoteDocuments()
+
+        await MainActor.run {
+            lastCloudSyncDate = Date()
+            UserDefaults.standard.set(lastCloudSyncDate, forKey: lastCloudSyncDefaultsKey)
+        }
+
+        guard isAutoBackupEnabled || triggeredByUser else { return }
+
+        do {
+            let backupTarget = try createLibraryBackupSnapshot()
+            await MainActor.run {
+                lastBackupDate = Date()
+                UserDefaults.standard.set(lastBackupDate, forKey: lastBackupDefaultsKey)
+                if triggeredByUser {
+                    featureNotice = "Sync complete. Backup saved to \(backupTarget)."
+                }
+            }
+        } catch {
+            await MainActor.run {
+                featureNotice = "Sync finished, but backup failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func runManualBackup() async {
+        do {
+            let backupTarget = try createLibraryBackupSnapshot()
+            await MainActor.run {
+                lastBackupDate = Date()
+                UserDefaults.standard.set(lastBackupDate, forKey: lastBackupDefaultsKey)
+                featureNotice = "Backup saved to \(backupTarget)."
+            }
+        } catch {
+            await MainActor.run {
+                featureNotice = "Manual backup failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func createLibraryBackupSnapshot() throws -> String {
+        let fileManager = FileManager.default
+        let backupRoot = backupRootURL()
+        try fileManager.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
+        let timestamp = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let snapshotFolder = backupRoot.appendingPathComponent("snapshot-\(timestamp)", isDirectory: true)
+        try fileManager.createDirectory(at: snapshotFolder, withIntermediateDirectories: true)
+
+        var snapshotItems: [LibraryBackupSnapshot.Item] = []
+        snapshotItems.reserveCapacity(documents.count)
+
+        for doc in documents {
+            var relativePDFPath: String?
+
+            if let localURL = doc.localPDFURL,
+               fileManager.fileExists(atPath: localURL.path) {
+                let docBackupFolder = snapshotFolder.appendingPathComponent(doc.id.uuidString, isDirectory: true)
+                try fileManager.createDirectory(at: docBackupFolder, withIntermediateDirectories: true)
+
+                let destination = docBackupFolder.appendingPathComponent("document.pdf")
+                try? fileManager.removeItem(at: destination)
+                try fileManager.copyItem(at: localURL, to: destination)
+                relativePDFPath = "\(doc.id.uuidString)/document.pdf"
+            }
+
+            snapshotItems.append(
+                .init(
+                    id: doc.id,
+                    title: doc.title,
+                    createdAt: doc.createdAt,
+                    updatedAt: doc.updatedAt,
+                    relativePDFPath: relativePDFPath,
+                    folderId: folderId(for: doc)
+                )
+            )
+        }
+
+        let snapshot = LibraryBackupSnapshot(
+            createdAt: Date(),
+            source: backupRoot.path.contains("/Mobile Documents/") ? "iCloud Drive" : "On Device",
+            folders: folders.map {
+                SavedLocalFolder(
+                    id: $0.id,
+                    name: $0.name,
+                    createdAt: $0.createdAt,
+                    colorHex: $0.colorHex,
+                    iconSystemName: $0.iconSystemName
+                )
+            },
+            items: snapshotItems
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(snapshot)
+
+        try data.write(to: snapshotFolder.appendingPathComponent("manifest.json"), options: [.atomic])
+        try data.write(to: backupRoot.appendingPathComponent("latest-manifest.json"), options: [.atomic])
+
+        return snapshot.source
+    }
+
+    private func backupRootURL() -> URL {
+        let fileManager = FileManager.default
+        if isCloudSyncEnabled,
+           let ubiquitousRoot = fileManager.url(forUbiquityContainerIdentifier: nil) {
+            let iCloudBackupRoot = ubiquitousRoot
+                .appendingPathComponent("Documents", isDirectory: true)
+                .appendingPathComponent("LectraBackups", isDirectory: true)
+            return iCloudBackupRoot
+        }
+
+        return fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LectraBackups", isDirectory: true)
     }
 
     private func handleDrop(items: [String], into folderId: UUID) -> Bool {
@@ -1355,7 +1694,35 @@ struct DocumentBrowserView: View {
         editorDocumentId = doc.id
     }
 
-    // MARK: - Import Local PDF
+    // MARK: - Import
+
+    private func importPickedFile(from url: URL, folderId: UUID? = nil) {
+        if let contentType = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType {
+            if contentType.conforms(to: .pdf) {
+                importLocalPDF(from: url, folderId: folderId)
+                return
+            }
+
+            if contentType.conforms(to: .image) {
+                importImageAsPDF(from: url, folderId: folderId)
+                return
+            }
+        }
+
+        if let fallbackType = UTType(filenameExtension: url.pathExtension.lowercased()) {
+            if fallbackType.conforms(to: .pdf) {
+                importLocalPDF(from: url, folderId: folderId)
+                return
+            }
+
+            if fallbackType.conforms(to: .image) {
+                importImageAsPDF(from: url, folderId: folderId)
+                return
+            }
+        }
+
+        featureNotice = "Unsupported file type. Please choose a PDF or image."
+    }
 
     private func importLocalPDF(from url: URL, folderId: UUID? = nil) {
         let title = url.deletingPathExtension().lastPathComponent
@@ -1392,6 +1759,70 @@ struct DocumentBrowserView: View {
         } catch {
             featureNotice = "Could not import PDF: \(error.localizedDescription)"
         }
+    }
+
+    private func importImageAsPDF(from url: URL, folderId: UUID? = nil) {
+        guard let image = UIImage(contentsOfFile: url.path) ?? (try? Data(contentsOf: url)).flatMap(UIImage.init(data:)) else {
+            featureNotice = "Could not load image for import."
+            return
+        }
+
+        let title = url.deletingPathExtension().lastPathComponent
+        let doc = LocalDocument(title: title, localURL: URL(fileURLWithPath: "/tmp/placeholder.pdf"))
+        let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pdfs", isDirectory: true)
+            .appendingPathComponent(doc.id.uuidString, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: localFolder, withIntermediateDirectories: true)
+
+            let destination = localFolder.appendingPathComponent("original.pdf")
+            let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
+            let renderRect = aspectFitRect(for: image.size, in: pageRect.insetBy(dx: 24, dy: 24))
+            let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+
+            let pdfData = renderer.pdfData { context in
+                context.beginPage()
+                UIColor.white.setFill()
+                context.cgContext.fill(pageRect)
+                image.draw(in: renderRect)
+            }
+
+            try? FileManager.default.removeItem(at: destination)
+            try pdfData.write(to: destination, options: [.atomic])
+
+            doc.localPDFURL = destination
+            documents = [doc] + documents
+
+            let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
+            storeLocalDocumentMetadata(
+                docId: doc.id,
+                title: title,
+                relativePath: relativePath,
+                folderId: folderId,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt
+            )
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                markDocumentAsRecentlyOpened(doc.id)
+                editorDocumentId = doc.id
+            }
+        } catch {
+            featureNotice = "Could not convert image to PDF: \(error.localizedDescription)"
+        }
+    }
+
+    private func aspectFitRect(for size: CGSize, in bounds: CGRect) -> CGRect {
+        guard size.width > 0, size.height > 0 else { return bounds }
+        let scale = min(bounds.width / size.width, bounds.height / size.height)
+        let fittedSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let origin = CGPoint(
+            x: bounds.midX - fittedSize.width / 2,
+            y: bounds.midY - fittedSize.height / 2
+        )
+        return CGRect(origin: origin, size: fittedSize)
     }
 
     private func createBlankLocalDocument(title: String) {
@@ -1439,7 +1870,13 @@ struct DocumentBrowserView: View {
         let trimmed = named.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let folder = LocalFolder(id: UUID(), name: trimmed, createdAt: Date())
+        let folder = LocalFolder(
+            id: UUID(),
+            name: trimmed,
+            createdAt: Date(),
+            colorHex: nil,
+            iconSystemName: nil
+        )
         folders = [folder] + folders
         saveFolders()
     }
@@ -1452,14 +1889,74 @@ struct DocumentBrowserView: View {
         }
 
         folders = saved
-            .map { LocalFolder(id: $0.id, name: $0.name, createdAt: $0.createdAt) }
+            .map {
+                LocalFolder(
+                    id: $0.id,
+                    name: $0.name,
+                    createdAt: $0.createdAt,
+                    colorHex: $0.colorHex,
+                    iconSystemName: $0.iconSystemName
+                )
+            }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
     private func saveFolders() {
-        let saved = folders.map { SavedLocalFolder(id: $0.id, name: $0.name, createdAt: $0.createdAt) }
+        let saved = folders.map {
+            SavedLocalFolder(
+                id: $0.id,
+                name: $0.name,
+                createdAt: $0.createdAt,
+                colorHex: $0.colorHex,
+                iconSystemName: $0.iconSystemName
+            )
+        }
         if let encoded = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(encoded, forKey: localFoldersDefaultsKey)
+        }
+    }
+
+    private func renameFolder(folderId: UUID, to proposedName: String) {
+        let trimmed = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        guard folders[idx].name != trimmed else { return }
+        folders[idx].name = trimmed
+        saveFolders()
+    }
+
+    private func updateFolderColor(folderId: UUID, colorHex: Int) {
+        guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        folders[idx].colorHex = colorHex
+        folders[idx].createdAt = Date()
+        saveFolders()
+    }
+
+    private func updateFolderIcon(folderId: UUID, iconSystemName: String) {
+        guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        folders[idx].iconSystemName = iconSystemName
+        saveFolders()
+    }
+
+    private func moveFolderToTop(folderId: UUID) {
+        guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        folders[idx].createdAt = Date()
+        folders.sort { $0.createdAt > $1.createdAt }
+        saveFolders()
+    }
+
+    private func deleteFolder(folderId: UUID) {
+        folders.removeAll { $0.id == folderId }
+
+        for (docID, mappedFolderID) in documentFolderMap where mappedFolderID == folderId.uuidString {
+            documentFolderMap.removeValue(forKey: docID)
+        }
+        saveDocumentFolderMap()
+        saveFolders()
+
+        if currentFolderId == folderId {
+            currentFolderId = nil
         }
     }
 
@@ -1585,7 +2082,19 @@ struct DocumentBrowserView: View {
             featureNotice = "Open this file once, then export it."
             return
         }
-        sharePayload = SharePayload(url: localURL)
+        sharePayload = SharePayload(urls: [localURL])
+    }
+
+    private func exportFolder(_ folder: LocalFolder) {
+        let folderDocs = documents.filter { folderId(for: $0) == folder.id }
+        let exportableURLs = folderDocs.compactMap(\.localPDFURL)
+
+        guard !exportableURLs.isEmpty else {
+            featureNotice = "No local documents available in this folder to export yet."
+            return
+        }
+
+        sharePayload = SharePayload(urls: exportableURLs)
     }
 
     private func removeDocument(_ doc: LocalDocument) {
@@ -1683,6 +2192,10 @@ private struct GoodnotesFolderCardView: View {
     let folderName: String
     let subtitle: String
     let accent: Color
+    let iconSystemName: String?
+    let isOptionsVisible: Bool
+    let onOpen: () -> Void
+    let onOptionsTap: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1702,26 +2215,217 @@ private struct GoodnotesFolderCardView: View {
                             .frame(height: 34)
                             .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                     }
+                    .overlay {
+                        if let iconSystemName {
+                            Image(systemName: iconSystemName)
+                                .font(.system(size: 26, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.58))
+                        }
+                    }
 
                 Image(systemName: "star")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.8))
                     .padding(10)
             }
+            .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .onTapGesture(perform: onOpen)
 
             HStack(spacing: 4) {
                 Text(folderName)
                     .font(.system(size: 16, weight: .regular))
                     .foregroundColor(.white)
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .onTapGesture(perform: onOpen)
+
+                Button(action: onOptionsTap) {
+                    Image(systemName: isOptionsVisible ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
             }
 
             Text(subtitle)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundColor(Color.white.opacity(0.58))
+        }
+    }
+}
+
+private struct FolderOptionsPopoverView: View {
+    private enum PickerMode: String, CaseIterable, Identifiable {
+        case color = "Color"
+        case icon = "Icon"
+
+        var id: String { rawValue }
+    }
+
+    private struct ColorOption: Identifiable {
+        let id = UUID()
+        let hex: Int
+    }
+
+    private let colorOptions: [ColorOption] = [
+        .init(hex: 0xD44D4D),
+        .init(hex: 0xD97A44),
+        .init(hex: 0xD3B03C),
+        .init(hex: 0x4FA46F),
+        .init(hex: 0x3F9AA5),
+        .init(hex: 0x7D65B7),
+        .init(hex: 0xBE6EA9),
+        .init(hex: 0xB0B0B0)
+    ]
+
+    private let iconOptions: [String] = [
+        "folder",
+        "graduationcap",
+        "briefcase",
+        "book.closed",
+        "chart.bar.doc.horizontal",
+        "pencil.and.scribble"
+    ]
+
+    let folderName: String
+    let selectedColorHex: Int?
+    let selectedIcon: String
+    let onClose: () -> Void
+    let onRename: (String) -> Void
+    let onSelectColor: (Int) -> Void
+    let onSelectIcon: (String) -> Void
+    let onMove: () -> Void
+    let onOpenInWindow: () -> Void
+    let onExport: () -> Void
+    let onMoveToTrash: () -> Void
+
+    @State private var mode: PickerMode = .color
+    @State private var draftName: String = ""
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                TextField("Folder name", text: $draftName)
+                    .textInputAutocapitalization(.words)
+                    .disableAutocorrection(true)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.45))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 48)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            Picker("Folder Options", selection: $mode) {
+                ForEach(PickerMode.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if mode == .color {
+                HStack(spacing: 12) {
+                    ForEach(colorOptions) { option in
+                        Button {
+                            onSelectColor(option.hex)
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(hex: UInt(option.hex)))
+                                    .frame(width: 20, height: 20)
+                                if option.hex == selectedColorHex {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(iconOptions, id: \.self) { icon in
+                        Button {
+                            onSelectIcon(icon)
+                        } label: {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(icon == selectedIcon ? 0.2 : 0.08))
+                                    .frame(width: 38, height: 34)
+                                Image(systemName: icon)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: 0) {
+                FolderMenuActionRow(title: "Move", icon: "arrow.right.square", action: onMove)
+                FolderMenuActionRow(title: "Open in New Window", icon: "menubar.dock.rectangle", action: onOpenInWindow)
+                FolderMenuActionRow(title: "Export", icon: "square.and.arrow.up", action: onExport)
+                FolderMenuActionRow(title: "Move to Trash", icon: "trash", isDestructive: true, showDivider: false, action: onMoveToTrash)
+            }
+            .background(Color.white.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .padding(12)
+        .frame(width: 320)
+        .background(Color(hex: 0x1F2024, opacity: 0.97))
+        .onAppear {
+            draftName = folderName
+        }
+        .onChange(of: folderName) { _, newValue in
+            draftName = newValue
+        }
+        .onSubmit {
+            onRename(draftName)
+        }
+        .onDisappear {
+            onRename(draftName)
+        }
+    }
+}
+
+private struct FolderMenuActionRow: View {
+    let title: String
+    let icon: String
+    var isDestructive: Bool = false
+    var showDivider: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .regular))
+                    .frame(width: 24)
+                Text(title)
+                    .font(.system(size: 15, weight: .regular))
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(isDestructive ? Color(hex: 0xE84D4D) : .white)
+            .padding(.horizontal, 12)
+            .frame(height: 44)
+        }
+        .buttonStyle(.plain)
+
+        if showDivider {
+            Divider()
+                .background(Color.white.opacity(0.12))
+                .padding(.leading, 12)
         }
     }
 }
@@ -1824,139 +2528,56 @@ private struct CreateMenuPopoverView: View {
     let onWhiteboard: () -> Void
     let onImport: () -> Void
     let onFolder: () -> Void
-    let onUnavailableAction: () -> Void
+    let onQuickRecord: () -> Void
+    let onQuickNote: () -> Void
+    let onScanDocuments: () -> Void
+    let onStudySet: () -> Void
+    let onImage: () -> Void
+    let onTakePhoto: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                CreateMenuTopTile(title: "Notebook", icon: "book.closed", badge: nil, action: onNotebook)
-                CreateMenuTopTile(title: "Text Doc", icon: "doc.text", badge: "NEW", action: onTextDoc)
-                CreateMenuTopTile(title: "Whiteboard", icon: "square.grid.3x3", badge: "NEW", action: onWhiteboard)
-            }
-
-            HStack(spacing: 10) {
-                CreateMenuWideTile(title: "Import", icon: "square.and.arrow.down", action: onImport)
-                CreateMenuWideTile(title: "Quick Record", icon: "mic.badge.plus", action: onUnavailableAction)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Create")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(.white)
 
             VStack(spacing: 0) {
-                CreateMenuRow(title: "QuickNote", icon: "square.and.pencil", action: onUnavailableAction)
-                CreateMenuRow(title: "Scan Documents", icon: "doc.viewfinder", action: onUnavailableAction)
-                CreateMenuRow(title: "Study Set", icon: "rectangle.stack.badge.play", action: onUnavailableAction)
-                CreateMenuRow(title: "Image", icon: "photo", action: onUnavailableAction)
-                CreateMenuRow(title: "Take Photo", icon: "camera", showDivider: false, action: onUnavailableAction)
+                PopoverActionRow(title: "Notebook", icon: "book.closed", action: onNotebook)
+                PopoverActionRow(title: "Text Doc", icon: "doc.text", action: onTextDoc)
+                PopoverActionRow(title: "Whiteboard", icon: "square.grid.3x3", action: onWhiteboard)
+                PopoverActionRow(title: "Folder", icon: "folder", showDivider: false, action: onFolder)
             }
-            .background(Color.white.opacity(0.05))
+            .background(Color.white.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Button(action: onFolder) {
-                HStack {
-                    Image(systemName: "folder")
-                    Text("Folder")
-                    Spacer(minLength: 0)
-                }
-                .font(.system(size: 16, weight: .regular))
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(Color.white.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Text("Import")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.58))
+
+            VStack(spacing: 0) {
+                PopoverActionRow(title: "Import PDF", icon: "square.and.arrow.down", action: onImport)
+                PopoverActionRow(title: "Scan Documents", icon: "doc.viewfinder", action: onScanDocuments)
+                PopoverActionRow(title: "Image", icon: "photo", action: onImage)
+                PopoverActionRow(title: "Take Photo", icon: "camera", showDivider: false, action: onTakePhoto)
             }
-            .buttonStyle(.plain)
-        }
-        .padding(12)
-        .frame(width: 350)
-        .background(Color(hex: 0x1E1E23, opacity: 0.96))
-    }
-}
+            .background(Color.white.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-private struct CreateMenuTopTile: View {
-    let title: String
-    let icon: String
-    let badge: String?
-    let action: () -> Void
+            Text("Quick Actions")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.58))
 
-    var body: some View {
-        Button(action: action) {
-            ZStack(alignment: .topTrailing) {
-                VStack(spacing: 5) {
-                    Image(systemName: icon)
-                        .font(.system(size: 18, weight: .medium))
-                    Text(title)
-                        .font(.system(size: 15, weight: .regular))
-                }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity, minHeight: 84)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                if let badge {
-                    Text(badge)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.9))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color(hex: 0x5E6E20))
-                        .clipShape(Capsule())
-                        .offset(x: -5, y: 5)
-                }
+            VStack(spacing: 0) {
+                PopoverActionRow(title: "QuickNote", icon: "square.and.pencil", action: onQuickNote)
+                PopoverActionRow(title: "Quick Record", icon: "mic.badge.plus", action: onQuickRecord)
+                PopoverActionRow(title: "Study Set", icon: "rectangle.stack.badge.play", showDivider: false, action: onStudySet)
             }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct CreateMenuWideTile: View {
-    let title: String
-    let icon: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
-                Text(title)
-                    .font(.system(size: 15, weight: .regular))
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 14)
-            .frame(maxWidth: .infinity, minHeight: 70)
-            .background(Color.white.opacity(0.08))
+            .background(Color.white.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct CreateMenuRow: View {
-    let title: String
-    let icon: String
-    var showDivider: Bool = true
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .regular))
-                    .frame(width: 28)
-                Text(title)
-                    .font(.system(size: 15, weight: .regular))
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-        }
-        .buttonStyle(.plain)
-
-        if showDivider {
-            Divider()
-                .background(Color.white.opacity(0.12))
-                .padding(.leading, 14)
-        }
+        .padding(14)
+        .frame(width: 322)
+        .background(Color(hex: 0x1E1F23, opacity: 0.97))
     }
 }
 
@@ -1968,164 +2589,161 @@ private struct ViewAndSortPopoverView: View {
     let onSelectSort: (LibrarySortMode) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Select Items")
-                Spacer(minLength: 0)
-                Image(systemName: "checkmark.circle")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Layout")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.58))
+
+            HStack(spacing: 8) {
+                layoutPill(
+                    title: "Grid",
+                    icon: "square.grid.2x2",
+                    isSelected: viewMode == .grid,
+                    action: onSelectGrid
+                )
+                layoutPill(
+                    title: "List",
+                    icon: "list.bullet",
+                    isSelected: viewMode == .list,
+                    action: onSelectList
+                )
             }
-            .font(.system(size: 15, weight: .regular))
-            .padding(.horizontal, 14)
-            .frame(height: 46)
 
-            Divider().background(Color.white.opacity(0.12))
+            Text("Sort By")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.58))
 
-            Button(action: onSelectGrid) {
-                HStack {
-                    if viewMode == .grid {
-                        Image(systemName: "checkmark")
-                    } else {
-                        Color.clear.frame(width: 16, height: 16)
-                    }
-                    Text("Grid")
-                    Spacer(minLength: 0)
-                    Image(systemName: "square.grid.2x2")
-                }
-                .font(.system(size: 15, weight: .regular))
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 46)
-            }
-            .buttonStyle(.plain)
-
-            Divider().background(Color.white.opacity(0.12))
-
-            Button(action: onSelectList) {
-                HStack {
-                    if viewMode == .list {
-                        Image(systemName: "checkmark")
-                    } else {
-                        Color.clear.frame(width: 16, height: 16)
-                    }
-                    Text("List")
-                    Spacer(minLength: 0)
-                    Image(systemName: "list.bullet")
-                }
-                .font(.system(size: 15, weight: .regular))
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 46)
-            }
-            .buttonStyle(.plain)
-
-            Divider().background(Color.white.opacity(0.12))
-
-            ForEach(LibrarySortMode.allCases, id: \.self) { mode in
-                Button {
-                    onSelectSort(mode)
-                } label: {
-                    HStack {
-                        Text(mode.title)
-                        Spacer(minLength: 0)
-                        if mode == sortMode {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 42)
-                }
-                .buttonStyle(.plain)
-
-                if mode != LibrarySortMode.allCases.last {
-                    Divider().background(Color.white.opacity(0.12))
+            VStack(spacing: 0) {
+                ForEach(LibrarySortMode.allCases, id: \.self) { mode in
+                    PopoverActionRow(
+                        title: mode.title,
+                        icon: mode == sortMode ? "checkmark.circle.fill" : "circle",
+                        showDivider: mode != LibrarySortMode.allCases.last,
+                        action: { onSelectSort(mode) }
+                    )
                 }
             }
+            .background(Color.white.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .frame(width: 300)
-        .background(Color(hex: 0x1F1F22, opacity: 0.96))
+        .padding(14)
+        .frame(width: 286)
+        .background(Color(hex: 0x1E1F23, opacity: 0.97))
+    }
+
+    private func layoutPill(title: String, icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundColor(isSelected ? .white : Color.white.opacity(0.72))
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? Color(hex: 0xE84D4D) : Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 
 private struct CloudStatusPopoverView: View {
+    let isCloudSyncEnabled: Bool
+    let isICloudAvailable: Bool
+    let isSyncInProgress: Bool
     let lastSyncDate: Date
     let lastBackupDate: Date
     let onSyncNow: () -> Void
+    let onBackupNow: () -> Void
     let onOpenSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Cloud & Backup Status")
-                .font(.system(size: 16, weight: .semibold))
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Cloud")
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(.white)
-                .frame(maxWidth: .infinity, alignment: .center)
-
-            Text("CLOUD SYNC")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.55))
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(Color(hex: 0x35B77A))
-                    Text("Library synced with iCloud")
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundColor(.white)
-                }
-
-                Text("Last sync: \(lastSyncDate.formatted(date: .omitted, time: .shortened))")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.6))
-
-                Button("Sync Now", action: onSyncNow)
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(Color(hex: 0xE84D4D))
-                    .padding(.top, 6)
-            }
-            .padding(12)
-            .background(Color.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            Text("AUTO BACKUP")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.55))
 
             HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(Color(hex: 0x35B77A))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Library Backed Up")
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundColor(.white)
-                    Text("Last backup: \(lastBackupDate.formatted(date: .omitted, time: .shortened))")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.6))
-                }
+                Image(systemName: isCloudSyncEnabled ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundColor(isCloudSyncEnabled ? Color(hex: 0x35B77A) : Color(hex: 0xC45454))
+                Text(
+                    isCloudSyncEnabled
+                    ? (isICloudAvailable ? "Enabled (iCloud available)" : "Enabled (local fallback)")
+                    : "Disabled"
+                )
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white)
             }
-            .padding(12)
-            .background(Color.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Last sync: \(lastSyncDate.formatted(date: .omitted, time: .shortened))")
+                Text("Last backup: \(lastBackupDate.formatted(date: .omitted, time: .shortened))")
+            }
+            .font(.system(size: 12, weight: .regular))
+            .foregroundColor(Color.white.opacity(0.62))
+
+            HStack(spacing: 8) {
+                actionPill(
+                    title: isSyncInProgress ? "Syncing..." : "Sync Now",
+                    icon: "arrow.clockwise",
+                    isDisabled: isSyncInProgress,
+                    action: onSyncNow
+                )
+
+                actionPill(
+                    title: "Backup Now",
+                    icon: "externaldrive",
+                    isDisabled: false,
+                    action: onBackupNow
+                )
+            }
 
             Button(action: onOpenSettings) {
-                HStack {
-                    Text("Cloud & Backup Settings")
+                HStack(spacing: 8) {
+                    Image(systemName: "gearshape")
+                    Text("Open Cloud & Backup Settings")
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
-                        .foregroundColor(Color.white.opacity(0.4))
                 }
-                .font(.system(size: 15, weight: .regular))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundColor(.white)
                 .padding(.horizontal, 12)
-                .frame(height: 46)
+                .frame(height: 42)
                 .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
         }
-        .padding(16)
-        .frame(width: 360)
-        .background(Color(hex: 0x1E1F23, opacity: 0.96))
+        .padding(14)
+        .frame(width: 320)
+        .background(Color(hex: 0x1E1F23, opacity: 0.97))
+    }
+
+    private func actionPill(
+        title: String,
+        icon: String,
+        isDisabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .frame(maxWidth: .infinity)
+            .background(isDisabled ? Color.white.opacity(0.06) : Color(hex: 0xE84D4D))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 }
 
@@ -2134,12 +2752,10 @@ private struct AccountMenuPopoverView: View {
     let onViewAccount: () -> Void
     let onSettings: () -> Void
     let onCloudBackup: () -> Void
-    let onManageTemplates: () -> Void
-    let onTrash: () -> Void
-    let onExternalLink: () -> Void
+    let onSignOut: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Circle()
                     .fill(Color(hex: 0xA88F63))
@@ -2166,7 +2782,7 @@ private struct AccountMenuPopoverView: View {
                 Spacer(minLength: 0)
 
                 Button("View Account", action: onViewAccount)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.7))
             }
             .padding(10)
@@ -2174,26 +2790,22 @@ private struct AccountMenuPopoverView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(spacing: 0) {
-                AccountMenuRow(title: "Settings", icon: "slider.horizontal.3", action: onSettings)
-                AccountMenuRow(title: "Manage Notebook Templates", icon: "doc", action: onManageTemplates)
-                AccountMenuRow(title: "Cloud & Backup", icon: "icloud", action: onCloudBackup)
-                AccountMenuRow(title: "Trash", icon: "trash", showDivider: false, isDestructive: true, action: onTrash)
-            }
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            VStack(spacing: 0) {
-                AccountMenuRow(title: "User Guide", icon: "book", trailingIcon: "arrow.up.right.square", action: onExternalLink)
-                AccountMenuRow(title: "Report an Issue", icon: "exclamationmark.bubble", trailingIcon: "arrow.up.right.square", action: onExternalLink)
-                AccountMenuRow(title: "Rate on App Store", icon: "star", trailingIcon: "arrow.up.right.square", action: onExternalLink)
-                AccountMenuRow(title: "About", icon: "checkmark.seal", showDivider: false, action: onExternalLink)
+                PopoverActionRow(title: "Settings", icon: "slider.horizontal.3", action: onSettings)
+                PopoverActionRow(title: "Cloud & Backup", icon: "icloud", action: onCloudBackup)
+                PopoverActionRow(
+                    title: "Sign Out",
+                    icon: "rectangle.portrait.and.arrow.right",
+                    showDivider: false,
+                    isDestructive: true,
+                    action: onSignOut
+                )
             }
             .background(Color.white.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .padding(12)
-        .frame(width: 380)
-        .background(Color(hex: 0x1F2024, opacity: 0.96))
+        .frame(width: 320)
+        .background(Color(hex: 0x1F2024, opacity: 0.97))
     }
 
     private var initials: String {
@@ -2204,10 +2816,9 @@ private struct AccountMenuPopoverView: View {
     }
 }
 
-private struct AccountMenuRow: View {
+private struct PopoverActionRow: View {
     let title: String
     let icon: String
-    var trailingIcon: String? = nil
     var showDivider: Bool = true
     var isDestructive: Bool = false
     let action: () -> Void
@@ -2216,20 +2827,15 @@ private struct AccountMenuRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .regular))
+                    .font(.system(size: 15, weight: .regular))
                     .frame(width: 24)
                 Text(title)
                     .font(.system(size: 15, weight: .regular))
                 Spacer(minLength: 0)
-                if let trailingIcon {
-                    Image(systemName: trailingIcon)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                }
             }
             .foregroundColor(isDestructive ? Color(hex: 0xE84D4D) : .white)
             .padding(.horizontal, 12)
-            .frame(height: 46)
+            .frame(height: 44)
         }
         .buttonStyle(.plain)
 
@@ -2302,6 +2908,11 @@ private struct AppSettingsModalView: View {
 }
 
 private struct CloudBackupSettingsModalView: View {
+    let isCloudSyncEnabled: Bool
+    let isAutoBackupEnabled: Bool
+    let onSetCloudSyncEnabled: (Bool) -> Void
+    let onSetAutoBackupEnabled: (Bool) -> Void
+    let onManualBackup: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -2321,18 +2932,43 @@ private struct CloudBackupSettingsModalView: View {
 
             Divider().background(Color.white.opacity(0.12))
 
-            VStack(spacing: 0) {
-                cloudRow(title: "Cloud Sync", value: "iCloud Enabled")
-                Divider().background(Color.white.opacity(0.1)).padding(.leading, 12)
-                cloudRow(title: "Manual Backup Documents")
-                Divider().background(Color.white.opacity(0.1)).padding(.leading, 12)
-                cloudRow(title: "Automatic Backup", value: "Enabled")
+            VStack(spacing: 12) {
+                cloudToggleRow(
+                    title: "Cloud Sync",
+                    subtitle: "Explicit opt-in only",
+                    isOn: isCloudSyncEnabled,
+                    onToggle: onSetCloudSyncEnabled
+                )
+
+                Button(action: onManualBackup) {
+                    HStack {
+                        Text("Manual Backup Documents")
+                            .font(.system(size: 16, weight: .regular))
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundColor(Color(hex: 0xE84D4D))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 44)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                cloudToggleRow(
+                    title: "Automatic Backup",
+                    subtitle: "Run backup after successful sync",
+                    isOn: isAutoBackupEnabled,
+                    onToggle: onSetAutoBackupEnabled
+                )
             }
+            .padding(14)
             .background(Color.white.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(14)
 
-            Text("When Enabled, data will automatically create a copy and sync to your preferred cloud service.")
+            Text("Cloud sync stays off until you explicitly enable it. Manual backup always keeps a local snapshot and uses iCloud Drive when available.")
                 .font(.system(size: 13, weight: .regular))
                 .foregroundColor(Color.white.opacity(0.65))
                 .padding(.horizontal, 20)
@@ -2345,19 +2981,24 @@ private struct CloudBackupSettingsModalView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func cloudRow(title: String, value: String? = nil) -> some View {
+    private func cloudToggleRow(
+        title: String,
+        subtitle: String,
+        isOn: Bool,
+        onToggle: @escaping (Bool) -> Void
+    ) -> some View {
         HStack {
-            Text(title)
-                .font(.system(size: 16, weight: .regular))
-                .foregroundColor(.white)
-            Spacer(minLength: 0)
-            if let value {
-                Text(value)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
                     .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.72))
+                    .foregroundColor(.white)
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.6))
             }
-            Image(systemName: "chevron.right")
-                .foregroundColor(Color.white.opacity(0.35))
+            Spacer(minLength: 0)
+            Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
+                .labelsHidden()
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
@@ -2744,13 +3385,14 @@ struct AccountSheetView: View {
 // MARK: - Document Picker (Files app)
 
 struct DocumentPickerView: UIViewControllerRepresentable {
+    let contentTypes: [UTType]
     let onPick: (URL) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: [UTType.pdf],
+            forOpeningContentTypes: contentTypes,
             asCopy: true
         )
         picker.delegate = context.coordinator

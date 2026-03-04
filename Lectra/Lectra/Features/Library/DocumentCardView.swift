@@ -18,9 +18,11 @@ struct DocumentCardView: View {
             ZStack(alignment: .topTrailing) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.white)
+                    .frame(maxWidth: .infinity)
                     .frame(height: 178)
                     .overlay {
                         cardContents
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .overlay(
@@ -56,6 +58,7 @@ struct DocumentCardView: View {
                 .foregroundColor(Color.white.opacity(0.58))
                 .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -93,7 +96,7 @@ struct PDFThumbnailRepresentable: UIViewRepresentable {
     let page: PDFPage
 
     func makeUIView(context: Context) -> UIImageView {
-        let imageView = UIImageView()
+        let imageView = NonIntrinsicImageView()
         imageView.contentMode = .scaleAspectFill
         imageView.backgroundColor = .white
         imageView.clipsToBounds = true
@@ -102,8 +105,15 @@ struct PDFThumbnailRepresentable: UIViewRepresentable {
 
     func updateUIView(_ imageView: UIImageView, context: Context) {
         let bounds = page.bounds(for: .mediaBox)
-        let size = CGSize(width: 360, height: 360 * bounds.height / bounds.width)
+        let width = max(imageView.bounds.width, 220)
+        let height = max(imageView.bounds.height, 220)
+        let targetWidth = max(width, height * bounds.width / max(bounds.height, 1))
+        let size = CGSize(width: targetWidth, height: targetWidth * bounds.height / max(bounds.width, 1))
         let thumbnail = page.thumbnail(of: size, for: .mediaBox)
         imageView.image = thumbnail
     }
+}
+
+private final class NonIntrinsicImageView: UIImageView {
+    override var intrinsicContentSize: CGSize { .zero }
 }
