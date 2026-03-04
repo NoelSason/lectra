@@ -1,0 +1,16 @@
+name: Repo Hygiene
+
+on:
+  push:
+    branches: [ main, claw ]
+  pull_request:
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure machine-specific artifacts are not tracked
+        run: |
+          ! git ls-files | grep -E '(^|/)\.DS_Store$'
+          ! git ls-files | grep -E 'xcuserdata|xcuserstate'

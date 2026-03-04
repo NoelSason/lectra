@@ -1,0 +1,4 @@
+interface:
+  display_name: "Xcode TestFlight & App Store Publishing"
+  short_description: "Ship iOS/iPadOS builds from Xcode to TestFlight and App Store"
+  default_prompt: "Guide me through uploading an app from Xcode, configuring TestFlight testing, and submitting/releasing on the App Store with the exact required clicks and checks."

@@ -64,6 +64,20 @@ final class LocalDocument: Identifiable, ObservableObject {
     let supabaseRowId: UUID
     @Published var status: DocumentStatus
     @Published var localPDFURL: URL?
+    let createdAt: Date
+    @Published var updatedAt: Date
+
+    private static let isoParserWithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let isoParser: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 
     init(from item: SyncedItem) {
         self.id = item.id
@@ -72,10 +86,19 @@ final class LocalDocument: Identifiable, ObservableObject {
         self.storagePath = item.itemData.storagePath
         self.supabaseRowId = item.id
         self.status = DocumentStatus(rawValue: item.itemData.status) ?? .pendingAnnotation
+        let created = Self.parseISODate(item.createdAt) ?? Date()
+        self.createdAt = created
+        self.updatedAt = Self.parseISODate(item.updatedAt) ?? created
     }
 
     /// Convenience init for locally-imported PDFs (not from Supabase).
-    init(title: String, localURL: URL, id: UUID = UUID()) {
+    init(
+        title: String,
+        localURL: URL,
+        id: UUID = UUID(),
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
         self.id = id
         self.title = title
         self.courseId = nil
@@ -83,6 +106,15 @@ final class LocalDocument: Identifiable, ObservableObject {
         self.supabaseRowId = UUID()
         self.status = .local
         self.localPDFURL = localURL
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    private static func parseISODate(_ raw: String) -> Date? {
+        if let parsed = isoParserWithFractionalSeconds.date(from: raw) {
+            return parsed
+        }
+        return isoParser.date(from: raw)
     }
 }
 
