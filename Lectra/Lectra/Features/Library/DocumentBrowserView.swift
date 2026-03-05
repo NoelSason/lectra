@@ -67,7 +67,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case documents
     case favorites
     case shared
-    case marketplace
+    case courseBrain
 
     var id: String { rawValue }
 
@@ -76,7 +76,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .documents: return "Documents"
         case .favorites: return "Favorites"
         case .shared: return "Shared"
-        case .marketplace: return "Marketplace"
+        case .courseBrain: return "Course Brain"
         }
     }
 
@@ -85,7 +85,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .documents: return "folder"
         case .favorites: return "bookmark"
         case .shared: return "person.2"
-        case .marketplace: return "storefront"
+        case .courseBrain: return "brain.head.profile"
         }
     }
 }
@@ -163,6 +163,11 @@ struct DocumentBrowserView: View {
     @State private var moveDocumentId: UUID?
     @State private var editorDocumentId: UUID?
     @State private var sharePayload: SharePayload?
+    @State private var isSelectionMode = false
+    @State private var selectedFolderIDs: Set<UUID> = []
+    @State private var selectedDocumentIDs: Set<UUID> = []
+    @State private var showBulkDeleteConfirm = false
+    @State private var showBulkMoveSheet = false
 
     @State private var featureNotice: String?
     @State private var backgroundSyncToast: String?
@@ -274,6 +279,76 @@ struct DocumentBrowserView: View {
         recentlyOpenedDocumentIds.compactMap { id in
             documents.first(where: { $0.id == id })
         }
+    }
+
+    private var activeSelectedFolderIDs: Set<UUID> {
+        let valid = Set(folders.map(\.id))
+        return selectedFolderIDs.intersection(valid)
+    }
+
+    private var selectedDocumentsOnly: [LocalDocument] {
+        selectedDocumentIDs.compactMap { document(for: $0) }
+    }
+
+    private var selectedDocumentsInSelectedFolders: [LocalDocument] {
+        guard !activeSelectedFolderIDs.isEmpty else { return [] }
+        return documents.filter { doc in
+            guard let folderID = folderId(for: doc) else { return false }
+            return activeSelectedFolderIDs.contains(folderID)
+        }
+    }
+
+    private var resolvedSelectedDocuments: [LocalDocument] {
+        var seen: Set<UUID> = []
+        var merged: [LocalDocument] = []
+        for doc in selectedDocumentsOnly + selectedDocumentsInSelectedFolders {
+            if seen.insert(doc.id).inserted {
+                merged.append(doc)
+            }
+        }
+        return merged
+    }
+
+    private var selectedItemCount: Int {
+        activeSelectedFolderIDs.count + selectedDocumentsOnly.count
+    }
+
+    private var canMoveSelection: Bool {
+        activeSelectedFolderIDs.isEmpty
+            && !selectedDocumentsOnly.isEmpty
+            && selectedDocumentsOnly.allSatisfy { $0.status == .local }
+    }
+
+    private var exportableSelectionURLs: [URL] {
+        var seenPaths: Set<String> = []
+        var urls: [URL] = []
+        for doc in resolvedSelectedDocuments {
+            guard let localURL = doc.localPDFURL else { continue }
+            if seenPaths.insert(localURL.path).inserted {
+                urls.append(localURL)
+            }
+        }
+        return urls
+    }
+
+    private var canExportSelection: Bool {
+        !exportableSelectionURLs.isEmpty
+    }
+
+    private var canDeleteSelection: Bool {
+        selectedItemCount > 0
+    }
+
+    private var bulkDeletePromptTitle: String {
+        let folderCount = activeSelectedFolderIDs.count
+        let documentCount = resolvedSelectedDocuments.count
+        if folderCount > 0 && documentCount > 0 {
+            return "Delete \(folderCount) folder\(folderCount == 1 ? "" : "s") and \(documentCount) document\(documentCount == 1 ? "" : "s")?"
+        }
+        if folderCount > 0 {
+            return "Delete \(folderCount) folder\(folderCount == 1 ? "" : "s")?"
+        }
+        return "Delete \(documentCount) document\(documentCount == 1 ? "" : "s")?"
     }
 
     var body: some View {
@@ -389,6 +464,15 @@ struct DocumentBrowserView: View {
                 )
             }
         }
+        .sheet(isPresented: $showBulkMoveSheet) {
+            BulkMoveDocumentsSheetView(
+                selectedCount: selectedDocumentsOnly.count,
+                folders: folders,
+                onMove: { targetFolderId in
+                    performBulkMove(to: targetFolderId)
+                }
+            )
+        }
         .sheet(item: $sharePayload) { payload in
             ShareSheetView(items: payload.urls)
         }
@@ -421,6 +505,18 @@ struct DocumentBrowserView: View {
         } message: {
             Text(featureNotice ?? "")
         }
+        .confirmationDialog(
+            bulkDeletePromptTitle,
+            isPresented: $showBulkDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                performBulkDelete()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This action cannot be undone.")
+        }
         .fullScreenCover(item: $editorDocumentId) { docId in
             if let doc = document(for: docId) {
                 PDFAnnotationView(
@@ -432,7 +528,10 @@ struct DocumentBrowserView: View {
                 )
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lectraBackgroundSyncCompleted)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .lectraBackgroundSyncCompleted)) { notification in
+            if let documentId = notification.object as? UUID {
+                markDocumentAsEdited(documentId)
+            }
             guard activeSection == .documents else { return }
             if editorDocumentId == nil {
                 showBackgroundSyncToast("Sync complete ✓")
@@ -447,7 +546,15 @@ struct DocumentBrowserView: View {
             }
         }
         .onChange(of: currentFolderId) { _, _ in
+            if isSelectionMode {
+                exitSelectionMode()
+            }
             updateImportedFolderPolling()
+        }
+        .onChange(of: activeSection) { _, newSection in
+            if newSection != .documents && isSelectionMode {
+                exitSelectionMode()
+            }
         }
         .onChange(of: scenePhase) { _, _ in
             updateImportedFolderPolling()
@@ -551,12 +658,6 @@ struct DocumentBrowserView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
 
-                if section == .marketplace && !isSidebarCollapsed {
-                    Text("500+ Items for Essential")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.72))
-                        .padding(.leading, 40)
-                }
             }
             .foregroundColor(Color.white.opacity(0.95))
             .padding(.horizontal, isSidebarCollapsed ? 0 : 10)
@@ -581,8 +682,8 @@ struct DocumentBrowserView: View {
             favoritesPane
         case .shared:
             sharedPane
-        case .marketplace:
-            marketplacePane
+        case .courseBrain:
+            courseBrainPane
         }
     }
 
@@ -613,6 +714,21 @@ struct DocumentBrowserView: View {
             if showSearchOverlay {
                 searchOverlay
                     .transition(.opacity)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelectionMode {
+                selectionActionBar
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.02), Color.black.opacity(0.86), Color.black.opacity(0.98)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
             }
         }
     }
@@ -659,6 +775,7 @@ struct DocumentBrowserView: View {
 
                 Spacer(minLength: 0)
 
+                selectButton
                 newButton
                 viewModeButton
                 cloudButton
@@ -700,74 +817,8 @@ struct DocumentBrowserView: View {
         }
     }
 
-    private var marketplacePane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Marketplace")
-                    .font(.system(size: 42, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.96))
-
-                GoodnotesSearchBar(text: .constant(""), placeholder: "Search for a product, creator, brand, character", isEditable: false)
-
-                HStack(spacing: 22) {
-                    ForEach(["Home", "Creators", "Brand Collab", "Work", "Study", "Life"], id: \.self) { tab in
-                        Text(tab)
-                            .font(.system(size: 16, weight: tab == "Home" ? .semibold : .regular))
-                            .foregroundColor(tab == "Home" ? Color(hex: 0xE84D4D) : Color.white.opacity(0.72))
-                            .overlay(alignment: .bottom) {
-                                if tab == "Home" {
-                                    Rectangle()
-                                        .fill(Color(hex: 0xE84D4D))
-                                        .frame(height: 2)
-                                        .offset(y: 8)
-                                }
-                            }
-                    }
-
-                    Spacer(minLength: 0)
-
-                    Text("Saved")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color(hex: 0x33171D))
-                        .clipShape(Capsule())
-                }
-
-                Text("Featured Items")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundColor(.white)
-
-                HStack(spacing: 30) {
-                    MarketplaceFeatureIcon(symbol: "gift.fill", title: "Subscriber\nSpecials", tint: Color(hex: 0xC76A6A))
-                    MarketplaceFeatureIcon(symbol: "lungs.fill", title: "Anatomy", tint: Color(hex: 0xE7D78E))
-                    MarketplaceFeatureIcon(symbol: "checklist", title: "To-do List", tint: Color(hex: 0xD7A2A2))
-                    MarketplaceFeatureIcon(symbol: "signature", title: "Lectra\nOriginals", tint: Color(hex: 0xD89595))
-                }
-
-                MarketplaceHeroBanner()
-
-                Text("Happy International Women's Day!")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundColor(.white)
-
-                ScrollView(.horizontal) {
-                    HStack(spacing: 16) {
-                        ForEach(marketplaceCards) { card in
-                            MarketplaceProductCard(item: card)
-                                .frame(width: 300)
-                        }
-                    }
-                    .padding(.bottom, 24)
-                }
-                .scrollIndicators(.hidden)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 10)
-            .padding(.bottom, 40)
-        }
-        .scrollIndicators(.hidden)
+    private var courseBrainPane: some View {
+        CourseBrainPane(documents: documents)
     }
 
     private func genericTopBar(title: String, filterTitle: String, includeSearch: Bool) -> some View {
@@ -822,9 +873,17 @@ struct DocumentBrowserView: View {
             LazyVStack(alignment: .leading, spacing: 10) {
                 ForEach(filteredFolders) { folder in
                     Button {
-                        openFolder(folder)
+                        if isSelectionMode {
+                            toggleFolderSelection(folder.id)
+                        } else {
+                            openFolder(folder)
+                        }
                     } label: {
                         HStack(spacing: 12) {
+                            if isSelectionMode {
+                                LibrarySelectionIndicatorView(isSelected: activeSelectedFolderIDs.contains(folder.id))
+                            }
+
                             Image(systemName: "folder.fill")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(Color(hex: 0xD97A7A))
@@ -841,9 +900,11 @@ struct DocumentBrowserView: View {
 
                             Spacer(minLength: 0)
 
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(Color.white.opacity(0.4))
+                            if !isSelectionMode {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            }
                         }
                         .padding(.horizontal, 14)
                         .frame(minHeight: 58)
@@ -872,11 +933,17 @@ struct DocumentBrowserView: View {
             subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
             accent: folderAccentColor(for: folder),
             iconSystemName: folder.iconSystemName,
-            isOptionsVisible: activeFolderOptionsID == folder.id,
+            showsOptionsButton: !isSelectionMode,
+            isOptionsVisible: !isSelectionMode && activeFolderOptionsID == folder.id,
             onOpen: {
-                openFolder(folder)
+                if isSelectionMode {
+                    toggleFolderSelection(folder.id)
+                } else {
+                    openFolder(folder)
+                }
             },
             onOptionsTap: {
+                guard !isSelectionMode else { return }
                 if activeFolderOptionsID == folder.id {
                     activeFolderOptionsID = nil
                 } else {
@@ -885,9 +952,15 @@ struct DocumentBrowserView: View {
             }
         )
         .frame(width: libraryCardWidth, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            if isSelectionMode {
+                LibrarySelectionIndicatorView(isSelected: activeSelectedFolderIDs.contains(folder.id))
+                    .padding(10)
+            }
+        }
         .popover(
             isPresented: Binding(
-                get: { activeFolderOptionsID == folder.id },
+                get: { !isSelectionMode && activeFolderOptionsID == folder.id },
                 set: { isPresented in
                     if !isPresented && activeFolderOptionsID == folder.id {
                         activeFolderOptionsID = nil
@@ -934,24 +1007,37 @@ struct DocumentBrowserView: View {
             }
         }
         .dropDestination(for: String.self) { items, _ in
-            handleDrop(items: items, into: folder.id)
+            guard !isSelectionMode else { return false }
+            return handleDrop(items: items, into: folder.id)
         }
     }
 
     @ViewBuilder
     private func documentGridCard(for doc: LocalDocument) -> some View {
-        DocumentCardView(
+        let baseCard = DocumentCardView(
             document: doc,
             subtitle: formattedDocumentDate(for: doc),
-            onOptionsTap: {
-                selectedDocumentForOptions = doc
+            onOptionsTap: isSelectionMode ? nil : {
+                    selectedDocumentForOptions = doc
             }
         )
         .frame(width: libraryCardWidth, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            if isSelectionMode {
+                LibrarySelectionIndicatorView(isSelected: selectedDocumentIDs.contains(doc.id))
+                    .padding(10)
+            }
+        }
         .onTapGesture {
             handleDocumentTap(doc)
         }
-        .draggable(doc.id.uuidString)
+
+        if isSelectionMode {
+            baseCard
+        } else {
+            baseCard
+                .draggable(doc.id.uuidString)
+        }
     }
 
     private func documentListRow(for doc: LocalDocument) -> some View {
@@ -959,6 +1045,10 @@ struct DocumentBrowserView: View {
             handleDocumentTap(doc)
         } label: {
             HStack(spacing: 12) {
+                if isSelectionMode {
+                    LibrarySelectionIndicatorView(isSelected: selectedDocumentIDs.contains(doc.id))
+                }
+
                 MiniDocumentPreview(document: doc)
                     .frame(width: 48, height: 64)
 
@@ -969,15 +1059,17 @@ struct DocumentBrowserView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
 
-                        Button {
-                            selectedDocumentForOptions = doc
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(Color(hex: 0xE84D4D))
-                                .frame(width: 24, height: 24)
+                        if !isSelectionMode {
+                            Button {
+                                selectedDocumentForOptions = doc
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundColor(Color(hex: 0xE84D4D))
+                                    .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
 
                     Text(formattedDocumentDate(for: doc))
@@ -1091,6 +1183,8 @@ struct DocumentBrowserView: View {
             .foregroundColor(Color(hex: 0xE84D4D))
             .frame(minHeight: 44)
         }
+        .disabled(isSelectionMode)
+        .opacity(isSelectionMode ? 0.5 : 1)
     }
 
     private var filterTitle: String {
@@ -1098,6 +1192,25 @@ struct DocumentBrowserView: View {
             return "All"
         }
         return documentFilter.title
+    }
+
+    private var selectButton: some View {
+        Button {
+            if isSelectionMode {
+                exitSelectionMode()
+            } else {
+                enterSelectionMode()
+            }
+        } label: {
+            Text(isSelectionMode ? "Cancel" : "Select")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color(hex: 0xE84D4D))
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var newButton: some View {
@@ -1117,6 +1230,8 @@ struct DocumentBrowserView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(isSelectionMode)
+        .opacity(isSelectionMode ? 0.5 : 1)
         .popover(isPresented: $showCreateMenu, arrowEdge: .top) {
             CreateMenuPopoverView(
                 onNotebook: {
@@ -1239,6 +1354,74 @@ struct DocumentBrowserView: View {
         }
     }
 
+    private var selectionActionBar: some View {
+        VStack(spacing: 10) {
+            Divider()
+                .background(Color.white.opacity(0.08))
+
+            HStack(spacing: 12) {
+                Text("\(selectedItemCount) selected")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+
+                Spacer(minLength: 0)
+
+                bulkActionButton(
+                    title: "Move",
+                    icon: "arrowshape.turn.up.right",
+                    isEnabled: canMoveSelection,
+                    action: {
+                        showBulkMoveSheet = true
+                    }
+                )
+
+                bulkActionButton(
+                    title: "Export",
+                    icon: "square.and.arrow.up",
+                    isEnabled: canExportSelection,
+                    action: {
+                        performBulkExport()
+                    }
+                )
+
+                bulkActionButton(
+                    title: "Delete",
+                    icon: "trash",
+                    isDestructive: true,
+                    isEnabled: canDeleteSelection,
+                    action: {
+                        showBulkDeleteConfirm = true
+                    }
+                )
+            }
+        }
+    }
+
+    private func bulkActionButton(
+        title: String,
+        icon: String,
+        isDestructive: Bool = false,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundColor(isDestructive ? Color(hex: 0xF26A6A) : .white)
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+
     private var loadingView: some View {
         VStack(spacing: 10) {
             ProgressView()
@@ -1353,9 +1536,49 @@ struct DocumentBrowserView: View {
             .onTapGesture(perform: onDismiss)
     }
 
+    private func enterSelectionMode() {
+        isSelectionMode = true
+        clearSelection()
+        activeFolderOptionsID = nil
+        selectedDocumentForOptions = nil
+        showCreateMenu = false
+        showViewMenu = false
+    }
+
+    private func exitSelectionMode() {
+        isSelectionMode = false
+        showBulkDeleteConfirm = false
+        showBulkMoveSheet = false
+        clearSelection()
+    }
+
+    private func clearSelection() {
+        selectedFolderIDs.removeAll()
+        selectedDocumentIDs.removeAll()
+    }
+
+    private func toggleFolderSelection(_ folderId: UUID) {
+        if selectedFolderIDs.contains(folderId) {
+            selectedFolderIDs.remove(folderId)
+        } else {
+            selectedFolderIDs.insert(folderId)
+        }
+    }
+
+    private func toggleDocumentSelection(_ documentId: UUID) {
+        if selectedDocumentIDs.contains(documentId) {
+            selectedDocumentIDs.remove(documentId)
+        } else {
+            selectedDocumentIDs.insert(documentId)
+        }
+    }
+
     private func selectSection(_ section: LibrarySection) {
         activeSection = section
         showSearchOverlay = false
+        if section != .documents {
+            exitSelectionMode()
+        }
 
         if section != .documents {
             currentFolderId = nil
@@ -1363,6 +1586,9 @@ struct DocumentBrowserView: View {
     }
 
     private func openFolder(_ folder: LocalFolder) {
+        if isSelectionMode {
+            exitSelectionMode()
+        }
         withAnimation(.easeInOut(duration: 0.18)) {
             currentFolderId = folder.id
             documentFilter = .all
@@ -1376,6 +1602,9 @@ struct DocumentBrowserView: View {
     }
 
     private func returnToVaultRoot() {
+        if isSelectionMode {
+            exitSelectionMode()
+        }
         withAnimation(.easeInOut(duration: 0.18)) {
             currentFolderId = nil
         }
@@ -1544,6 +1773,19 @@ struct DocumentBrowserView: View {
         }
 
         saveRecentDocuments()
+    }
+
+    private func markDocumentAsEdited(_ documentId: UUID) {
+        guard let doc = document(for: documentId) else { return }
+
+        let now = Date()
+        doc.updatedAt = now
+
+        if doc.status == .local {
+            updateSavedLocalDocumentTitle(documentId: doc.id, title: doc.title, updatedAt: now)
+        }
+
+        documents = Array(documents)
     }
 
     private func clearRecentDocuments() {
@@ -1749,6 +1991,57 @@ struct DocumentBrowserView: View {
         return true
     }
 
+    private func performBulkExport() {
+        let urls = exportableSelectionURLs
+        guard !urls.isEmpty else {
+            featureNotice = "No local documents available to export from this selection."
+            return
+        }
+
+        sharePayload = SharePayload(urls: urls)
+        exitSelectionMode()
+    }
+
+    private func performBulkMove(to targetFolderId: UUID?) {
+        let docsToMove = selectedDocumentsOnly
+        guard !docsToMove.isEmpty else {
+            featureNotice = "Select at least one document to move."
+            return
+        }
+        guard docsToMove.allSatisfy({ $0.status == .local }) else {
+            featureNotice = "Imported docs can’t be moved from Select mode."
+            return
+        }
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            for doc in docsToMove {
+                moveDocument(documentId: doc.id, to: targetFolderId)
+            }
+        }
+
+        exitSelectionMode()
+    }
+
+    private func performBulkDelete() {
+        let docsToDelete = resolvedSelectedDocuments
+        guard !docsToDelete.isEmpty || !activeSelectedFolderIDs.isEmpty else { return }
+
+        if docsToDelete.contains(where: { $0.status != .local }) {
+            featureNotice = "Imported/synced documents can’t be deleted in bulk from this screen."
+            return
+        }
+
+        for doc in docsToDelete {
+            removeDocument(doc)
+        }
+
+        for folderID in activeSelectedFolderIDs {
+            deleteFolder(folderId: folderID)
+        }
+
+        exitSelectionMode()
+    }
+
     // MARK: - Loading
 
     private func loadDocuments() async {
@@ -1872,6 +2165,11 @@ struct DocumentBrowserView: View {
     // MARK: - Document Tap
 
     private func handleDocumentTap(_ doc: LocalDocument) {
+        if isSelectionMode {
+            toggleDocumentSelection(doc.id)
+            return
+        }
+
         guard doc.localPDFURL != nil else {
             Task {
                 await MainActor.run {
@@ -2455,6 +2753,7 @@ private struct GoodnotesFolderCardView: View {
     let subtitle: String
     let accent: Color
     let iconSystemName: String?
+    let showsOptionsButton: Bool
     let isOptionsVisible: Bool
     let onOpen: () -> Void
     let onOptionsTap: () -> Void
@@ -2500,13 +2799,15 @@ private struct GoodnotesFolderCardView: View {
                     .lineLimit(1)
                     .onTapGesture(perform: onOpen)
 
-                Button(action: onOptionsTap) {
-                    Image(systemName: isOptionsVisible ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                        .frame(width: 22, height: 22)
+                if showsOptionsButton {
+                    Button(action: onOptionsTap) {
+                        Image(systemName: isOptionsVisible ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(Color(hex: 0xE84D4D))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
             Text(subtitle)
@@ -2717,6 +3018,28 @@ private struct FolderMenuActionRow: View {
                 .background(Color.white.opacity(0.12))
                 .padding(.leading, 12)
         }
+    }
+}
+
+private struct LibrarySelectionIndicatorView: View {
+    let isSelected: Bool
+
+    var body: some View {
+        Circle()
+            .fill(Color.white)
+            .frame(width: 22, height: 22)
+            .overlay {
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(hex: 0xE84D4D))
+                }
+            }
+            .overlay(
+                Circle()
+                    .stroke(Color.white.opacity(0.5), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.22), radius: 2, x: 0, y: 1)
     }
 }
 
@@ -3295,127 +3618,6 @@ private struct CloudBackupSettingsModalView: View {
     }
 }
 
-private struct MarketplaceFeatureIcon: View {
-    let symbol: String
-    let title: String
-    let tint: Color
-
-    var body: some View {
-        VStack(spacing: 7) {
-            Circle()
-                .fill(Color.white)
-                .frame(width: 94, height: 94)
-                .overlay(
-                    Image(systemName: symbol)
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundColor(tint)
-                )
-
-            Text(title)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-        }
-    }
-}
-
-private struct MarketplaceHeroBanner: View {
-    var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Happy International Women's Day!")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
-                Text("Celebrate your journey and explore tools designed for your growth")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.white.opacity(0.9))
-
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white)
-                    .frame(width: 210, height: 42)
-                    .padding(.top, 4)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: 0x5E1F47))
-
-            ZStack {
-                Color(hex: 0xE3B8B8)
-                Image(systemName: "person.3.fill")
-                    .font(.system(size: 44, weight: .regular))
-                    .foregroundColor(Color(hex: 0x8E2C2C))
-            }
-            .frame(width: 360)
-        }
-        .frame(height: 170)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-private struct MarketplaceCardItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String
-    let price: String
-    let tint: Color
-}
-
-private struct MarketplaceProductCard: View {
-    let item: MarketplaceCardItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(item.tint)
-                .frame(height: 170)
-                .overlay(
-                    Image(systemName: "doc.richtext")
-                        .font(.system(size: 18, weight: .regular))
-                        .foregroundColor(.white.opacity(0.8))
-                )
-
-            Text(item.subtitle)
-                .font(.system(size: 16, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.8))
-            Text(item.title)
-                .font(.system(size: 16, weight: .regular))
-                .foregroundColor(.white)
-                .lineLimit(2)
-            Text(item.price)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundColor(Color(hex: 0xE84D4D))
-        }
-    }
-}
-
-private let marketplaceCards: [MarketplaceCardItem] = [
-    MarketplaceCardItem(
-        title: "Sleep Pattern Tracker",
-        subtitle: "Lectra Originals",
-        price: "$0.99",
-        tint: Color(hex: 0xF0BE9D)
-    ),
-    MarketplaceCardItem(
-        title: "Ethereal Essence Covers",
-        subtitle: "Happy Girl Digital Diaries",
-        price: "$1.49",
-        tint: Color(hex: 0xE39EB2)
-    ),
-    MarketplaceCardItem(
-        title: "Golden Rose Notebook",
-        subtitle: "InspErates",
-        price: "$6.99",
-        tint: Color(hex: 0xF1D3C6)
-    ),
-    MarketplaceCardItem(
-        title: "Believe in Yourself Covers",
-        subtitle: "Lectra Community",
-        price: "$3.49",
-        tint: Color(hex: 0xE7E4AE)
-    )
-]
-
 struct DocumentOptionsSheetView: View {
     let documentTitle: String
     let onDuplicate: () -> Void
@@ -3565,6 +3767,60 @@ struct MoveDocumentSheetView: View {
             .scrollContentBackground(.hidden)
             .background(Color.black.ignoresSafeArea())
             .navigationTitle("Move \"\(documentTitle)\"")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(Color(hex: 0xE84D4D))
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+private struct BulkMoveDocumentsSheetView: View {
+    let selectedCount: Int
+    let folders: [LocalFolder]
+    let onMove: (UUID?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button {
+                    onMove(nil)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Image(systemName: "tray.full")
+                        Text("Documents")
+                        Spacer(minLength: 0)
+                    }
+                }
+                .foregroundColor(.white)
+
+                ForEach(folders) { folder in
+                    Button {
+                        onMove(folder.id)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Image(systemName: "folder.fill")
+                                .foregroundColor(Color(hex: 0xD44A4A))
+                            Text(folder.name)
+                                .foregroundColor(.white)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.black.ignoresSafeArea())
+            .navigationTitle("Move \(selectedCount) Document\(selectedCount == 1 ? "" : "s")")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

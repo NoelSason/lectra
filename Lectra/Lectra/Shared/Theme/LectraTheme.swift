@@ -113,6 +113,9 @@ enum LectraRadius {
 enum LectraMotion {
     static let appLaunch = Animation.easeInOut(duration: 0.32)
     static let screenSwap = Animation.easeInOut(duration: 0.26)
+    static let startupIntro = Animation.easeOut(duration: 0.18)
+    static let startupPulse = Animation.easeOut(duration: 0.34)
+    static let startupExit = Animation.easeInOut(duration: 0.18)
     static let overlayPresent = Animation.spring(response: 0.30, dampingFraction: 0.90)
     static let overlayDismiss = Animation.easeOut(duration: 0.20)
     static let gridReflow = Animation.spring(response: 0.34, dampingFraction: 0.92)

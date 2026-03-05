@@ -116,7 +116,6 @@ struct PDFAnnotationView: View {
                             VStack {
                                 Spacer()
                                 HStack {
-                                    Spacer()
                                     Text("Page \(currentPage + 1) / \(max(totalPages, 1))")
                                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                                         .foregroundColor(.white)
@@ -130,8 +129,9 @@ struct PDFAnnotationView: View {
                                             Capsule()
                                                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
                                         )
-                                        .padding(.trailing, LectraSpacing.lg)
+                                        .padding(.leading, LectraSpacing.lg)
                                         .padding(.bottom, LectraSpacing.lg)
+                                    Spacer()
                                 }
                             }
                             .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -303,169 +303,109 @@ struct PDFAnnotationView: View {
         return Swift.min(Swift.max(value, lower), upper)
     }
 
-    private var toolName: String {
-        switch selectedTool {
-        case .pen:
-            return "Pen"
-        case .highlighter:
-            return "Highlighter"
-        case .eraser:
-            return selectedEraserMode == .stroke ? "Stroke Eraser" : "Classic Eraser"
-        case .lasso:
-            return "Lasso"
-        }
-    }
-
-    private var toolIcon: String {
-        switch selectedTool {
-        case .pen:
-            return "pencil.tip"
-        case .highlighter:
-            return "highlighter"
-        case .eraser:
-            return "eraser"
-        case .lasso:
-            return "lasso"
-        }
-    }
-
-    private var strokeWidthLabel: String {
-        String(format: "%.1f pt", selectedStrokeWidth)
-    }
-
     // MARK: - Top Nav Bar
 
     private var topBar: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                Button {
-                    Task { @MainActor in await saveAndSync() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .bold))
-                        Text("Vault")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 13)
-                    .frame(height: LectraSizing.minHitTarget)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
-                    )
+        HStack(spacing: 12) {
+            Button {
+                Task { @MainActor in await saveAndSync() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .bold))
+                    Text("Vault")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                 }
-                .disabled(isSaving)
+                .foregroundColor(.white)
+                .padding(.horizontal, 13)
+                .frame(height: LectraSizing.minHitTarget)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                )
+            }
+            .disabled(isSaving)
 
-                Spacer(minLength: 4)
+            Spacer(minLength: 4)
 
-                Group {
-                    if isRenamingTitle {
-                        TextField("Document title", text: $titleDraft)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color.white.opacity(0.13))
-                            )
-                            .frame(maxWidth: 380, minHeight: LectraSizing.minHitTarget)
-                            .focused($isTitleFieldFocused)
-                            .submitLabel(.done)
-                            .onSubmit { commitTitleRename() }
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    } else {
-                        Button {
-                            beginTitleRename()
-                        } label: {
-                            VStack(spacing: 2) {
-                                Text(document.title)
-                                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                                    .lineLimit(1)
-                                    .foregroundColor(.white)
-                                Text("Tap title to rename")
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.74))
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: LectraSizing.minHitTarget)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
-                Spacer(minLength: 4)
-
-                Button {
-                    Task { @MainActor in await exportToCanvascope() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.system(size: 15, weight: .bold))
-                        Text("Canvascope")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .frame(height: LectraSizing.minHitTarget)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
-                    )
-                }
-                .disabled(isSaving || isExportingToCanvascope)
-
-                Button {
-                    shareDocument()
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+            Group {
+                if isRenamingTitle {
+                    TextField("Document title", text: $titleDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white.opacity(0.12))
+                                .fill(Color.white.opacity(0.13))
                         )
+                        .frame(maxWidth: 380, minHeight: LectraSizing.minHitTarget)
+                        .focused($isTitleFieldFocused)
+                        .submitLabel(.done)
+                        .onSubmit { commitTitleRename() }
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                } else {
+                    Button {
+                        beginTitleRename()
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(document.title)
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .lineLimit(1)
+                                .foregroundColor(.white)
+                            Text("Tap title to rename")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.74))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: LectraSizing.minHitTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
-                .disabled(isSaving || isExportingToCanvascope)
             }
+            .frame(maxWidth: .infinity)
 
-            HStack(spacing: 8) {
-                Label {
-                    Text("Page \(currentPage + 1) of \(max(totalPages, 1))")
-                } icon: {
-                    Image(systemName: "doc.text")
+            Spacer(minLength: 4)
+
+            Button {
+                Task { @MainActor in await exportToCanvascope() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("Canvascope")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                 }
-                .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.1))
-                .clipShape(Capsule())
-
-                Label {
-                    Text("\(toolName) \(strokeWidthLabel)")
-                } icon: {
-                    Image(systemName: toolIcon)
-                }
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.1))
-                .clipShape(Capsule())
-
-                Spacer()
+                .frame(height: LectraSizing.minHitTarget)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                )
             }
+            .disabled(isSaving || isExportingToCanvascope)
+
+            Button {
+                shareDocument()
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.12))
+                    )
+            }
+            .disabled(isSaving || isExportingToCanvascope)
         }
         .padding(.horizontal, LectraSpacing.lg)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
         .background {
             ZStack(alignment: .bottom) {
                 LinearGradient(
@@ -536,6 +476,7 @@ struct PDFAnnotationView: View {
     private func saveAndSync() async {
         await saveLocally(showBlockingOverlay: false)
         let documentId = document.id
+        document.updatedAt = Date()
 
         dismiss()
 
@@ -688,6 +629,7 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
     @Binding var selectedStrokeWidth: CGFloat
     @Binding var selectedEraserMode: EraserMode
     var onScroll: (() -> Void)? = nil
+    var onTypewriterAutoAdvance: ((Int, CGPoint) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -697,6 +639,9 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
         vc.documentId = documentId
         vc.repository = repository
         vc.coordinator = context.coordinator
+        vc.onTypewriterAutoAdvance = { [weak coordinator = context.coordinator] pageIndex, offset in
+            coordinator?.typewriterAutoAdvanceDidTrigger(pageIndex: pageIndex, offset: offset)
+        }
         return vc
     }
 
@@ -741,6 +686,12 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
                 withAnimation(LectraMotion.quick) {
                     self.parent.selectedTool = nextTool
                 }
+            }
+        }
+
+        func typewriterAutoAdvanceDidTrigger(pageIndex: Int, offset: CGPoint) {
+            DispatchQueue.main.async {
+                self.parent.onTypewriterAutoAdvance?(pageIndex, offset)
             }
         }
     }
@@ -1577,11 +1528,27 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         let kind: Kind
         let pageBounds: CGRect
     }
+
+    enum ScrollDirectionMode {
+        case horizontal
+        case vertical
+    }
+
+    private enum ZoomIntent {
+        case turnPages
+        case panInspect
+    }
+
+    private enum SnapAlignment {
+        case centered
+        case topLeading
+    }
     
     var pdfURL: URL!
     var documentId: UUID!
     var repository: DocumentRepository!
     weak var coordinator: PDFEditorRepresentable.Coordinator?
+    var onTypewriterAutoAdvance: ((Int, CGPoint) -> Void)?
 
     private let scrollView = UIScrollView()
     private let containerView = UIView()
@@ -1596,10 +1563,18 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private var legacyDrawings: [Int: PKDrawing] = [:]
     private var pageDescriptors: [PageDescriptor] = []
     private var displayScales: [CGFloat] = []
+    private var pageFrames: [CGRect] = []
+    private var scrollDirectionMode: ScrollDirectionMode = .horizontal
+    private var pendingDoubleTapRecenteringPageIndex: Int?
+    private var lastLaidOutViewportSize: CGSize = .zero
 
     private var currentTool: InkToolDescriptor = .default
     private var saveObserver: NSObjectProtocol?
     private let pagePadding: CGFloat = 20.0
+    private let zoomedOutThresholdScale: CGFloat = 1.05
+    private let zoomedInFlingVelocityThreshold: CGFloat = 1.15
+    private let zoomedInBoundaryPullThreshold: CGFloat = 72.0
+    private let zoomedInEmptyViewportSnapThreshold: CGFloat = 0.5
 
     // MARK: - Lifecycle
 
@@ -1628,10 +1603,19 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        guard view.bounds.height > 0, view.bounds.width > 0 else { return }
+
         // If the view just got bounds, setup pages
-        if pageViews.isEmpty && view.bounds.height > 0 {
+        if pageViews.isEmpty {
             setupPages()
             navigateToPage(currentPageIndex, animated: false)
+            lastLaidOutViewportSize = view.bounds.size
+            return
+        }
+
+        if lastLaidOutViewportSize != view.bounds.size {
+            relayoutPages(preservingPageIndex: currentPageIndex)
+            lastLaidOutViewportSize = view.bounds.size
         }
     }
 
@@ -1653,6 +1637,8 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         scrollView.panGestureRecognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         scrollView.pinchGestureRecognizer?.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         view.addSubview(scrollView)
+        applyScrollDirectionConfiguration()
+        installDoubleTapToFitGesture()
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -1662,6 +1648,26 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         ])
         // Rely on auto resizing to allow us to define exact frames manually.
         scrollView.addSubview(containerView)
+    }
+
+    private func applyScrollDirectionConfiguration() {
+        switch scrollDirectionMode {
+        case .horizontal:
+            scrollView.alwaysBounceHorizontal = true
+            scrollView.alwaysBounceVertical = false
+        case .vertical:
+            scrollView.alwaysBounceHorizontal = false
+            scrollView.alwaysBounceVertical = true
+        }
+        scrollView.isDirectionalLockEnabled = true
+    }
+
+    private func installDoubleTapToFitGesture() {
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTapToFit(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.numberOfTouchesRequired = 1
+        doubleTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        scrollView.addGestureRecognizer(doubleTap)
     }
 
     private func setupPencilSqueezeInteractionIfAvailable() {
@@ -1680,6 +1686,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         pageViews.removeAll(keepingCapacity: true)
         pageDescriptors.removeAll(keepingCapacity: true)
         displayScales.removeAll(keepingCapacity: true)
+        pageFrames.removeAll(keepingCapacity: true)
 
         for i in 0..<pdf.pageCount {
             guard let page = pdf.page(at: i) else { continue }
@@ -1701,6 +1708,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         }
 
         updateContainerLayout()
+        lastLaidOutViewportSize = view.bounds.size
 
         scrollView.minimumZoomScale = 1.0 // Fully zoomed-out fits perfectly inside the screen limits
         scrollView.maximumZoomScale = 5.0
@@ -1737,17 +1745,13 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         let bounds = normalizedPageBounds(descriptor.pageBounds)
         let viewWidth = max(view.bounds.width, 1.0)
         let viewHeight = max(view.bounds.height, 1.0)
-        let slotWidth = viewWidth + pagePadding
         let scale = min(viewWidth / bounds.width, viewHeight / bounds.height)
         let scaledWidth = bounds.width * scale
         let scaledHeight = bounds.height * scale
-        let xOffset = (viewWidth - scaledWidth) * 0.5
-        let yOffset = (viewHeight - scaledHeight) * 0.5
-        let frame = CGRect(
-            x: CGFloat(index) * slotWidth + xOffset,
-            y: yOffset,
-            width: scaledWidth,
-            height: scaledHeight
+        let frame = pageFrameForIndex(
+            index,
+            scaledWidth: scaledWidth,
+            scaledHeight: scaledHeight
         )
 
         let pageView = PageView(pageIndex: index)
@@ -1762,6 +1766,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         pageViews.append(pageView)
         pageDescriptors.append(PageDescriptor(kind: descriptor.kind, pageBounds: bounds))
         displayScales.append(scale)
+        pageFrames.append(frame)
         pageDrawings[index] = drawing
         return index
     }
@@ -1798,10 +1803,85 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private func updateContainerLayout() {
         let viewWidth = max(view.bounds.width, 1.0)
         let viewHeight = max(view.bounds.height, 1.0)
-        let slotWidth = viewWidth + pagePadding
-        let contentWidth = max(0, CGFloat(pageViews.count) * slotWidth - pagePadding)
-        containerView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: viewHeight)
+        switch scrollDirectionMode {
+        case .horizontal:
+            let slotWidth = viewWidth + pagePadding
+            let contentWidth = max(0, CGFloat(pageViews.count) * slotWidth - pagePadding)
+            containerView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: viewHeight)
+        case .vertical:
+            let slotHeight = viewHeight + pagePadding
+            let contentHeight = max(0, CGFloat(pageViews.count) * slotHeight - pagePadding)
+            containerView.frame = CGRect(x: 0, y: 0, width: viewWidth, height: contentHeight)
+        }
         scrollView.contentSize = containerView.bounds.size
+    }
+
+    private func pageFrameForIndex(_ index: Int, scaledWidth: CGFloat, scaledHeight: CGFloat) -> CGRect {
+        let viewWidth = max(view.bounds.width, 1.0)
+        let viewHeight = max(view.bounds.height, 1.0)
+        let xOffset = (viewWidth - scaledWidth) * 0.5
+        let yOffset = (viewHeight - scaledHeight) * 0.5
+        switch scrollDirectionMode {
+        case .horizontal:
+            let slotWidth = viewWidth + pagePadding
+            return CGRect(
+                x: CGFloat(index) * slotWidth + xOffset,
+                y: yOffset,
+                width: scaledWidth,
+                height: scaledHeight
+            )
+        case .vertical:
+            let slotHeight = viewHeight + pagePadding
+            return CGRect(
+                x: xOffset,
+                y: CGFloat(index) * slotHeight + yOffset,
+                width: scaledWidth,
+                height: scaledHeight
+            )
+        }
+    }
+
+    private func relayoutPages(preservingPageIndex: Int) {
+        guard !pageViews.isEmpty else {
+            updateContainerLayout()
+            return
+        }
+
+        let existingZoomScale = max(scrollView.zoomScale, 0.001)
+        let targetPage = min(max(preservingPageIndex, 0), pageViews.count - 1)
+
+        for index in pageViews.indices {
+            guard pageDescriptors.indices.contains(index) else { continue }
+            let bounds = pageDescriptors[index].pageBounds
+            let viewWidth = max(view.bounds.width, 1.0)
+            let viewHeight = max(view.bounds.height, 1.0)
+            let scale = min(viewWidth / bounds.width, viewHeight / bounds.height)
+            let frame = pageFrameForIndex(
+                index,
+                scaledWidth: bounds.width * scale,
+                scaledHeight: bounds.height * scale
+            )
+            pageViews[index].frame = frame
+            if pageFrames.indices.contains(index) {
+                pageFrames[index] = frame
+            } else {
+                pageFrames.append(frame)
+            }
+            if displayScales.indices.contains(index) {
+                displayScales[index] = scale
+            } else {
+                displayScales.append(scale)
+            }
+        }
+
+        updateContainerLayout()
+        let alignedOffset = targetContentOffsetForPage(
+            targetPage,
+            zoomScale: existingZoomScale,
+            alignment: zoomIntent(for: existingZoomScale) == .turnPages ? zoomedOutSnapAlignment() : .topLeading
+        )
+        scrollView.contentOffset = alignedOffset
+        updateVisiblePages()
     }
 
     func setTool(_ tool: AnnotationTool, color: AnnotationInkColor, width: CGFloat, eraserMode: EraserMode) {
@@ -1810,15 +1890,273 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     }
 
     // MARK: - Scrolling, Visibility, and Zooming
+
+    func setScrollDirectionMode(_ mode: ScrollDirectionMode) {
+        guard mode != scrollDirectionMode else { return }
+        scrollDirectionMode = mode
+        applyScrollDirectionConfiguration()
+        relayoutPages(preservingPageIndex: currentPageIndex)
+    }
+
+    private func zoomIntent(for zoomScale: CGFloat) -> ZoomIntent {
+        zoomScale <= zoomedOutThresholdScale ? .turnPages : .panInspect
+    }
+
+    private func primaryAxisCenter(in rect: CGRect) -> CGFloat {
+        switch scrollDirectionMode {
+        case .horizontal:
+            return rect.midX
+        case .vertical:
+            return rect.midY
+        }
+    }
+
+    private func primaryAxisCenter(for frame: CGRect) -> CGFloat {
+        switch scrollDirectionMode {
+        case .horizontal:
+            return frame.midX
+        case .vertical:
+            return frame.midY
+        }
+    }
+
+    private func primaryAxisVelocity(_ velocity: CGPoint) -> CGFloat {
+        switch scrollDirectionMode {
+        case .horizontal:
+            return velocity.x
+        case .vertical:
+            return velocity.y
+        }
+    }
+
+    private func visibleRect(for contentOffset: CGPoint, zoomScale: CGFloat) -> CGRect {
+        let normalizedScale = max(zoomScale, 0.001)
+        return CGRect(
+            x: contentOffset.x / normalizedScale,
+            y: contentOffset.y / normalizedScale,
+            width: scrollView.bounds.width / normalizedScale,
+            height: scrollView.bounds.height / normalizedScale
+        )
+    }
+
+    private func clampToScrollBounds(_ offset: CGPoint) -> CGPoint {
+        let maxX = max(scrollView.contentSize.width - scrollView.bounds.width, 0)
+        let maxY = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+        return CGPoint(
+            x: min(max(offset.x, 0), maxX),
+            y: min(max(offset.y, 0), maxY)
+        )
+    }
+
+    private func dominantPageIndex(in visibleRect: CGRect) -> Int {
+        guard !pageFrames.isEmpty else { return 0 }
+        var bestIndex = currentPageIndex
+        var bestArea: CGFloat = -1
+        for (index, frame) in pageFrames.enumerated() {
+            let overlap = frame.intersection(visibleRect)
+            let area = max(overlap.width, 0) * max(overlap.height, 0)
+            if area > bestArea {
+                bestArea = area
+                bestIndex = index
+            }
+        }
+        return bestIndex
+    }
+
+    private func closestPageIndex(to visibleRect: CGRect) -> Int {
+        guard !pageFrames.isEmpty else { return 0 }
+        let targetCenter = primaryAxisCenter(in: visibleRect)
+        var bestIndex = currentPageIndex
+        var minDistance = CGFloat.greatestFiniteMagnitude
+        for (index, frame) in pageFrames.enumerated() {
+            let distance = abs(primaryAxisCenter(for: frame) - targetCenter)
+            if distance < minDistance {
+                minDistance = distance
+                bestIndex = index
+            }
+        }
+        return bestIndex
+    }
+
+    private func pageCoverageInVisibleRect(pageIndex: Int, visibleRect: CGRect) -> CGFloat {
+        guard pageFrames.indices.contains(pageIndex) else { return 0 }
+        let overlap = pageFrames[pageIndex].intersection(visibleRect)
+        let overlapArea = max(overlap.width, 0) * max(overlap.height, 0)
+        let visibleArea = max(visibleRect.width * visibleRect.height, 1)
+        return overlapArea / visibleArea
+    }
+
+    private func zoomedOutSnapAlignment() -> SnapAlignment {
+        switch scrollDirectionMode {
+        case .horizontal:
+            return .centered
+        case .vertical:
+            return .topLeading
+        }
+    }
+
+    private func targetContentOffsetForPage(_ index: Int, zoomScale: CGFloat, alignment: SnapAlignment) -> CGPoint {
+        guard pageFrames.indices.contains(index) else { return .zero }
+        let frame = pageFrames[index]
+        let normalizedScale = max(zoomScale, 0.001)
+        let viewportWidth = scrollView.bounds.width / normalizedScale
+        let viewportHeight = scrollView.bounds.height / normalizedScale
+
+        let contentX: CGFloat
+        let contentY: CGFloat
+        switch alignment {
+        case .centered:
+            contentX = frame.midX - viewportWidth * 0.5
+            contentY = frame.midY - viewportHeight * 0.5
+        case .topLeading:
+            switch scrollDirectionMode {
+            case .horizontal:
+                contentX = frame.minX
+                contentY = frame.midY - viewportHeight * 0.5
+            case .vertical:
+                contentX = frame.midX - viewportWidth * 0.5
+                contentY = frame.minY
+            }
+        }
+
+        let scaledOffset = CGPoint(x: contentX * normalizedScale, y: contentY * normalizedScale)
+        return clampToScrollBounds(scaledOffset)
+    }
+
+    private func clampedOffset(_ proposedOffset: CGPoint, withinPage pageIndex: Int, zoomScale: CGFloat) -> CGPoint {
+        guard pageFrames.indices.contains(pageIndex) else {
+            return clampToScrollBounds(proposedOffset)
+        }
+        let frame = pageFrames[pageIndex]
+        let normalizedScale = max(zoomScale, 0.001)
+        let viewportWidth = scrollView.bounds.width / normalizedScale
+        let viewportHeight = scrollView.bounds.height / normalizedScale
+        let proposedX = proposedOffset.x / normalizedScale
+        let proposedY = proposedOffset.y / normalizedScale
+
+        let minX = frame.minX
+        let maxX = frame.maxX - viewportWidth
+        let minY = frame.minY
+        let maxY = frame.maxY - viewportHeight
+
+        let resolvedX: CGFloat
+        if maxX < minX {
+            resolvedX = frame.midX - viewportWidth * 0.5
+        } else {
+            resolvedX = min(max(proposedX, minX), maxX)
+        }
+
+        let resolvedY: CGFloat
+        if maxY < minY {
+            resolvedY = frame.midY - viewportHeight * 0.5
+        } else {
+            resolvedY = min(max(proposedY, minY), maxY)
+        }
+
+        return clampToScrollBounds(CGPoint(x: resolvedX * normalizedScale, y: resolvedY * normalizedScale))
+    }
+
+    private func shouldAllowZoomedInTransition(
+        from currentPage: Int,
+        to targetPage: Int,
+        targetVisibleRect: CGRect,
+        velocity: CGPoint,
+        zoomScale: CGFloat
+    ) -> Bool {
+        guard pageFrames.indices.contains(currentPage), targetPage != currentPage else { return false }
+        let axisVelocity = primaryAxisVelocity(velocity)
+        if abs(axisVelocity) > zoomedInFlingVelocityThreshold {
+            return true
+        }
+
+        let threshold = zoomedInBoundaryPullThreshold / max(zoomScale, 0.001)
+        let currentFrame = pageFrames[currentPage]
+        switch scrollDirectionMode {
+        case .horizontal:
+            if targetPage > currentPage {
+                return targetVisibleRect.maxX > currentFrame.maxX + threshold
+            }
+            return targetVisibleRect.minX < currentFrame.minX - threshold
+        case .vertical:
+            if targetPage > currentPage {
+                return targetVisibleRect.maxY > currentFrame.maxY + threshold
+            }
+            return targetVisibleRect.minY < currentFrame.minY - threshold
+        }
+    }
+
+    private func alignToNearestPageIfNeededAfterInteraction() {
+        guard !pageFrames.isEmpty else { return }
+        let zoomScale = max(scrollView.zoomScale, 0.001)
+        guard zoomIntent(for: zoomScale) == .turnPages else { return }
+
+        let currentVisibleRect = visibleRect(for: scrollView.contentOffset, zoomScale: zoomScale)
+        // Keep the page that currently occupies most of the viewport and center it precisely.
+        let targetPage = dominantPageIndex(in: currentVisibleRect)
+        let targetOffset = targetContentOffsetForPage(
+            targetPage,
+            zoomScale: zoomScale,
+            alignment: zoomedOutSnapAlignment()
+        )
+
+        let deltaX = abs(targetOffset.x - scrollView.contentOffset.x)
+        let deltaY = abs(targetOffset.y - scrollView.contentOffset.y)
+        if deltaX > 0.5 || deltaY > 0.5 {
+            scrollView.setContentOffset(targetOffset, animated: false)
+        }
+    }
+
+    private func transitionOffsetForZoomedInPageFlip(
+        from currentPage: Int,
+        to nextPage: Int,
+        proposedOffset: CGPoint,
+        zoomScale: CGFloat
+    ) -> CGPoint {
+        guard pageFrames.indices.contains(nextPage) else {
+            return clampToScrollBounds(proposedOffset)
+        }
+        let normalizedScale = max(zoomScale, 0.001)
+        let viewportWidth = scrollView.bounds.width / normalizedScale
+        let viewportHeight = scrollView.bounds.height / normalizedScale
+        let nextFrame = pageFrames[nextPage]
+        let proposedRect = visibleRect(for: proposedOffset, zoomScale: zoomScale)
+
+        var targetX = proposedRect.minX
+        var targetY = proposedRect.minY
+
+        switch scrollDirectionMode {
+        case .horizontal:
+            targetX = nextPage > currentPage ? nextFrame.minX : nextFrame.maxX - viewportWidth
+            let yMin = nextFrame.minY
+            let yMax = max(nextFrame.maxY - viewportHeight, yMin)
+            targetY = min(max(targetY, yMin), yMax)
+        case .vertical:
+            targetY = nextPage > currentPage ? nextFrame.minY : nextFrame.maxY - viewportHeight
+            let xMin = nextFrame.minX
+            let xMax = max(nextFrame.maxX - viewportWidth, xMin)
+            targetX = min(max(targetX, xMin), xMax)
+        }
+
+        let scaled = CGPoint(x: targetX * normalizedScale, y: targetY * normalizedScale)
+        return clampToScrollBounds(scaled)
+    }
     
     private func updateVisiblePages() {
         let visibleRect = scrollView.convert(scrollView.bounds, to: containerView)
         // Expand visible rect to pre-render adjacent pages lazily
-        let prefetchRect = visibleRect.insetBy(dx: -view.bounds.width * 0.5, dy: 0)
+        let prefetchRect: CGRect
+        switch scrollDirectionMode {
+        case .horizontal:
+            prefetchRect = visibleRect.insetBy(dx: -view.bounds.width * 0.5, dy: 0)
+        case .vertical:
+            prefetchRect = visibleRect.insetBy(dx: 0, dy: -view.bounds.height * 0.5)
+        }
         
         var closestPage = currentPageIndex
         var minDistance: CGFloat = .greatestFiniteMagnitude
-        let centerX = visibleRect.midX
+        let centerAxis = primaryAxisCenter(in: visibleRect)
+        var dominantPage = currentPageIndex
+        var dominantArea: CGFloat = -1
         
         for (i, pageView) in pageViews.enumerated() {
             if prefetchRect.intersects(pageView.frame) {
@@ -1829,18 +2167,26 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 pageView.clear()
             }
             
-            let dist = abs(pageView.frame.midX - centerX)
+            let dist = abs(primaryAxisCenter(for: pageView.frame) - centerAxis)
             if dist < minDistance {
                 minDistance = dist
                 closestPage = i
             }
+
+            let overlap = pageView.frame.intersection(visibleRect)
+            let overlapArea = max(overlap.width, 0) * max(overlap.height, 0)
+            if overlapArea > dominantArea {
+                dominantArea = overlapArea
+                dominantPage = i
+            }
         }
         
-        if closestPage != currentPageIndex {
-            currentPageIndex = closestPage
+        let resolvedPage = zoomIntent(for: scrollView.zoomScale) == .turnPages ? closestPage : dominantPage
+        if resolvedPage != currentPageIndex {
+            currentPageIndex = resolvedPage
             // Update SWIFTUI only if we're not manually scrolling via the API
             if !isScrollingProgrammatically {
-                coordinator?.pageDidChange(to: closestPage, total: pageViews.count)
+                coordinator?.pageDidChange(to: resolvedPage, total: pageViews.count)
             }
         }
 
@@ -1881,30 +2227,107 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         isScrollingProgrammatically = false
+        alignToNearestPageIfNeededAfterInteraction()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate {
+            alignToNearestPageIfNeededAfterInteraction()
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        alignToNearestPageIfNeededAfterInteraction()
     }
     
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-        if abs(scrollView.zoomScale - scrollView.minimumZoomScale) < 0.01 {
-            let slotWidth = view.bounds.width + pagePadding
-            
-            let estimatedPage = targetContentOffset.pointee.x / slotWidth
-            var page = round(estimatedPage)
-            
-            // Allow flicking to smoothly turn pages
-            if velocity.x > 0.3 {
-                if currentPageIndex == pageViews.count - 1 {
-                    let newPageIndex = appendBlankPage()
-                    targetContentOffset.pointee.x = CGFloat(newPageIndex) * slotWidth
-                    coordinator?.pageDidChange(to: newPageIndex, total: pageViews.count)
+        guard !pageViews.isEmpty else { return }
+
+        let zoomScale = max(scrollView.zoomScale, 0.001)
+        let currentVisibleRect = visibleRect(for: scrollView.contentOffset, zoomScale: zoomScale)
+        let targetVisibleRect = visibleRect(for: targetContentOffset.pointee, zoomScale: zoomScale)
+        let currentPage = dominantPageIndex(in: currentVisibleRect)
+        let axisVelocity = primaryAxisVelocity(velocity)
+
+        switch zoomIntent(for: zoomScale) {
+        case .turnPages:
+            var targetPage = closestPageIndex(to: targetVisibleRect)
+            if axisVelocity > 0.35 {
+                targetPage = min(currentPage + 1, pageViews.count - 1)
+            } else if axisVelocity < -0.35 {
+                targetPage = max(currentPage - 1, 0)
+            }
+
+            if axisVelocity > 0.35 && currentPage == pageViews.count - 1 && targetPage == pageViews.count - 1 {
+                let newPageIndex = appendBlankPage()
+                targetPage = newPageIndex
+                coordinator?.pageDidChange(to: newPageIndex, total: pageViews.count)
+            }
+
+            targetContentOffset.pointee = targetContentOffsetForPage(
+                targetPage,
+                zoomScale: zoomScale,
+                alignment: zoomedOutSnapAlignment()
+            )
+
+        case .panInspect:
+            let currentPageCoverage = pageCoverageInVisibleRect(pageIndex: currentPage, visibleRect: targetVisibleRect)
+            if currentPageCoverage <= zoomedInEmptyViewportSnapThreshold,
+               pageFrames.indices.contains(currentPage) {
+                let currentFrame = pageFrames[currentPage]
+                let direction: Int
+                switch scrollDirectionMode {
+                case .horizontal:
+                    direction = targetVisibleRect.midX >= currentFrame.midX ? 1 : -1
+                case .vertical:
+                    direction = targetVisibleRect.midY >= currentFrame.midY ? 1 : -1
+                }
+                let adjacentPage = min(max(currentPage + direction, 0), pageViews.count - 1)
+                if adjacentPage != currentPage {
+                    targetContentOffset.pointee = transitionOffsetForZoomedInPageFlip(
+                        from: currentPage,
+                        to: adjacentPage,
+                        proposedOffset: targetContentOffset.pointee,
+                        zoomScale: zoomScale
+                    )
                     return
                 }
-                page = ceil(estimatedPage)
-            } else if velocity.x < -0.3 {
-                page = floor(estimatedPage)
             }
-            
-            page = max(0, min(page, CGFloat(pageViews.count - 1)))
-            targetContentOffset.pointee.x = page * slotWidth
+
+            let targetPage = dominantPageIndex(in: targetVisibleRect)
+            if targetPage == currentPage {
+                targetContentOffset.pointee = clampedOffset(
+                    targetContentOffset.pointee,
+                    withinPage: currentPage,
+                    zoomScale: zoomScale
+                )
+                return
+            }
+
+            let allowTransition = shouldAllowZoomedInTransition(
+                from: currentPage,
+                to: targetPage,
+                targetVisibleRect: targetVisibleRect,
+                velocity: velocity,
+                zoomScale: zoomScale
+            )
+
+            if allowTransition {
+                let direction = targetPage > currentPage ? 1 : -1
+                let nextPage = min(max(currentPage + direction, 0), pageViews.count - 1)
+                targetContentOffset.pointee = transitionOffsetForZoomedInPageFlip(
+                    from: currentPage,
+                    to: nextPage,
+                    proposedOffset: targetContentOffset.pointee,
+                    zoomScale: zoomScale
+                )
+            } else {
+                targetContentOffset.pointee = clampedOffset(
+                    targetContentOffset.pointee,
+                    withinPage: currentPage,
+                    zoomScale: zoomScale
+                )
+            }
         }
     }
 
@@ -1921,7 +2344,65 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        applyPendingDoubleTapRecenteringIfNeeded()
         refreshVisibleCanvasResolution(forceRedraw: true)
+    }
+
+    @objc
+    private func handleDoubleTapToFit(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        let fitScale = scrollView.minimumZoomScale
+        guard scrollView.zoomScale > fitScale + 0.02 else { return }
+
+        let dominantPage = dominantPageIndex(
+            in: visibleRect(for: scrollView.contentOffset, zoomScale: max(scrollView.zoomScale, 0.001))
+        )
+        pendingDoubleTapRecenteringPageIndex = dominantPage
+        scrollView.setZoomScale(fitScale, animated: true)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
+            self?.applyPendingDoubleTapRecenteringIfNeeded()
+        }
+    }
+
+    private func applyPendingDoubleTapRecenteringIfNeeded() {
+        guard let targetPage = pendingDoubleTapRecenteringPageIndex else { return }
+        guard abs(scrollView.zoomScale - scrollView.minimumZoomScale) < 0.03 else { return }
+        pendingDoubleTapRecenteringPageIndex = nil
+        let targetOffset = targetContentOffsetForPage(
+            targetPage,
+            zoomScale: scrollView.minimumZoomScale,
+            alignment: zoomedOutSnapAlignment()
+        )
+        scrollView.setContentOffset(targetOffset, animated: true)
+    }
+
+    @discardableResult
+    func triggerTypewriterAutoAdvanceIfNeeded(
+        pageIndex: Int,
+        strokeLocationInPage: CGPoint,
+        writingBounds: CGRect,
+        lineHeight: CGFloat
+    ) -> Bool {
+        guard pageFrames.indices.contains(pageIndex), lineHeight > 0 else { return false }
+        guard strokeLocationInPage.x >= writingBounds.maxX else { return false }
+
+        let zoomScale = max(scrollView.zoomScale, 0.001)
+        let pageFrame = pageFrames[pageIndex]
+        let viewportHeight = scrollView.bounds.height / zoomScale
+        let currentContentOffset = visibleRect(for: scrollView.contentOffset, zoomScale: zoomScale).origin
+
+        let targetContentX = pageFrame.minX
+        let yMin = pageFrame.minY
+        let yMax = max(pageFrame.maxY - viewportHeight, yMin)
+        let targetContentY = min(max(currentContentOffset.y + lineHeight, yMin), yMax)
+
+        let targetOffset = clampToScrollBounds(
+            CGPoint(x: targetContentX * zoomScale, y: targetContentY * zoomScale)
+        )
+        scrollView.setContentOffset(targetOffset, animated: true)
+        onTypewriterAutoAdvance?(pageIndex, targetOffset)
+        return true
     }
 
     // MARK: - Navigation
@@ -1930,18 +2411,17 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         guard index >= 0, index < pageViews.count else { return }
         
         isScrollingProgrammatically = true
-        let slotWidth = view.bounds.width + pagePadding
+        let targetOffset = targetContentOffsetForPage(
+            index,
+            zoomScale: scrollView.minimumZoomScale,
+            alignment: zoomedOutSnapAlignment()
+        )
         
-        let targetX = CGFloat(index) * slotWidth
-        
-        if scrollView.zoomScale != 1.0 {
-            scrollView.setZoomScale(1.0, animated: animated)
+        if abs(scrollView.zoomScale - scrollView.minimumZoomScale) > 0.01 {
+            scrollView.setZoomScale(scrollView.minimumZoomScale, animated: animated)
         }
         
-        let visibleX = max(0, min(targetX, scrollView.contentSize.width - scrollView.bounds.width))
-        let visibleY: CGFloat = 0
-        
-        scrollView.setContentOffset(CGPoint(x: visibleX, y: visibleY), animated: animated)
+        scrollView.setContentOffset(targetOffset, animated: animated)
         if !animated {
             isScrollingProgrammatically = false
         }
