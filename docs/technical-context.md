@@ -34,21 +34,23 @@ When fetching rows from `synced_items`, decode the `item_data` into this Swift `
   "title": "CS161_Midterm_Review.pdf",
   "courseId": 123456,
   "sourceUrl": "https://bcourses.berkeley.edu/.../download",
-  "storagePath": "user-uuid/lectra_documents/raw-uuid.pdf",
-  "annotatedStoragePath": "user-uuid/lectra_documents/annotated-uuid.pdf",
-  "status": "pending_annotation" // pending_annotation, annotated, archived
+  "storagePath": "user-uuid/lectra_documents/imported_from_canvascope/2026/03/<row-id>.pdf",
+  "annotatedStoragePath": null,
+  "status": "pending_annotation",
+  "sourcePlatform": "canvascope_extension",
+  "sourceKind": "canvas_pdf_import"
 }
 ```
 
 ## 3. Storage Buckets (File Blobs)
 - **Bucket**: `lectra_documents` (Private RLS-enabled)
 - **Flow**:
-  1. The Canvascope Chrome extension uploads a file to `<user-id>/lectra_documents/<filename>`.
+  1. The Canvascope Chrome extension uploads a file to `<user-id>/lectra_documents/imported_from_canvascope/<yyyy>/<mm>/<row-id>.pdf`.
   2. The extension inserts a row into `synced_items` pointing to that `storagePath` with `status: pending_annotation`.
   3. The Lectra iPad App downloads the PDF from `storagePath`.
   4. The user annotates using PencilKit.
   5. Lectra locally merges the strokes out to a flattened PDF.
-  6. Lectra uploads the new PDF to `<user-id>/lectra_documents/annotated-<filename>`.
+  6. Lectra uploads the new PDF to a user-scoped annotated path and sets `annotatedStoragePath`.
   7. Lectra updates the `<row-id>` changing the `status` to `annotated` and populating `annotatedStoragePath`.
 
 ## 4. UI/Design Tokens (GoodNotes Style)

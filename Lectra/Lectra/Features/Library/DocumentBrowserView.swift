@@ -30,6 +30,7 @@ struct SavedLocalFolder: Codable {
     var createdAt: Date
     var colorHex: Int?
     var iconSystemName: String?
+    var systemTag: String?
 }
 
 struct LocalFolder: Identifiable {
@@ -38,6 +39,7 @@ struct LocalFolder: Identifiable {
     var createdAt: Date
     var colorHex: Int?
     var iconSystemName: String?
+    var systemTag: String?
 }
 
 struct SharePayload: Identifiable {
@@ -127,6 +129,7 @@ private enum LibrarySortMode: String, CaseIterable {
 
 struct DocumentBrowserView: View {
     @EnvironmentObject private var authManager: AuthManager
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var documents: [LocalDocument] = []
     @State private var folders: [LocalFolder] = []
@@ -172,6 +175,8 @@ struct DocumentBrowserView: View {
     @State private var isCloudSyncEnabled = false
     @State private var isAutoBackupEnabled = true
     @State private var isSyncingCloud = false
+    @State private var isRefreshingRemoteDocuments = false
+    @State private var importedFolderPollingTask: Task<Void, Never>? = nil
     @State private var isICloudAvailable = false
     @State private var lastCloudSyncDate = Date()
     @State private var lastBackupDate = Date().addingTimeInterval(-20 * 60)
@@ -187,6 +192,9 @@ struct DocumentBrowserView: View {
     private let autoBackupEnabledDefaultsKey = "lectra_auto_backup_enabled"
     private let lastCloudSyncDefaultsKey = "lectra_last_cloud_sync"
     private let lastBackupDefaultsKey = "lectra_last_backup"
+    private let importedCanvascopeFolderName = "Imported From Canvascope"
+    private let importedCanvascopeSystemTag = "imported_canvascope"
+    private let importedFolderPollingIntervalNanoseconds: UInt64 = 5_000_000_000
 
     private var sidebarWidth: CGFloat {
         isSidebarCollapsed ? 86 : 292
@@ -195,6 +203,14 @@ struct DocumentBrowserView: View {
     private var currentFolder: LocalFolder? {
         guard let currentFolderId else { return nil }
         return folders.first(where: { $0.id == currentFolderId })
+    }
+
+    private var importedCanvascopeFolder: LocalFolder? {
+        folders.first(where: { $0.systemTag == importedCanvascopeSystemTag })
+    }
+
+    private var importedCanvascopeFolderId: UUID? {
+        importedCanvascopeFolder?.id
     }
 
     private var documentsInScope: [LocalDocument] {
@@ -365,6 +381,8 @@ struct DocumentBrowserView: View {
                     documentTitle: doc.title,
                     folders: folders,
                     currentFolderId: folderId(for: doc),
+                    isLockedToImportedFolder: doc.status != .local,
+                    importedFolderName: importedCanvascopeFolderName,
                     onMove: { targetFolderId in
                         moveDocument(documentId: doc.id, to: targetFolderId)
                     }
@@ -428,6 +446,12 @@ struct DocumentBrowserView: View {
                 showBackgroundSyncToast("Sync complete ✓")
             }
         }
+        .onChange(of: currentFolderId) { _, _ in
+            updateImportedFolderPolling()
+        }
+        .onChange(of: scenePhase) { _, _ in
+            updateImportedFolderPolling()
+        }
         .task {
             guard !hasLoaded else { return }
             hasLoaded = true
@@ -440,6 +464,7 @@ struct DocumentBrowserView: View {
         }
         .onDisappear {
             backgroundSyncToastTask?.cancel()
+            stopImportedFolderPolling()
         }
         .preferredColorScheme(.dark)
     }
@@ -841,6 +866,7 @@ struct DocumentBrowserView: View {
 
     @ViewBuilder
     private func folderGridCard(for folder: LocalFolder) -> some View {
+        let isProtectedFolder = isImportedCanvascopeFolder(folder.id)
         GoodnotesFolderCardView(
             folderName: folder.name,
             subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
@@ -875,6 +901,7 @@ struct DocumentBrowserView: View {
                     folderName: activeFolder.name,
                     selectedColorHex: activeFolder.colorHex,
                     selectedIcon: activeFolder.iconSystemName ?? "folder",
+                    isProtectedFolder: isProtectedFolder,
                     onClose: {
                         activeFolderOptionsID = nil
                     },
@@ -1340,12 +1367,53 @@ struct DocumentBrowserView: View {
             currentFolderId = folder.id
             documentFilter = .all
         }
+
+        if isImportedCanvascopeFolder(folder.id) {
+            Task {
+                await refreshRemoteDocuments()
+            }
+        }
     }
 
     private func returnToVaultRoot() {
         withAnimation(.easeInOut(duration: 0.18)) {
             currentFolderId = nil
         }
+    }
+
+    private func updateImportedFolderPolling() {
+        guard scenePhase == .active,
+              currentFolderId == importedCanvascopeFolderId else {
+            stopImportedFolderPolling()
+            return
+        }
+        startImportedFolderPollingIfNeeded()
+    }
+
+    private func startImportedFolderPollingIfNeeded() {
+        guard importedFolderPollingTask == nil else { return }
+        importedFolderPollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: importedFolderPollingIntervalNanoseconds)
+                guard !Task.isCancelled else { break }
+
+                let shouldContinue = await MainActor.run {
+                    scenePhase == .active && currentFolderId == importedCanvascopeFolderId
+                }
+                guard shouldContinue else { break }
+
+                await refreshRemoteDocuments()
+            }
+
+            await MainActor.run {
+                importedFolderPollingTask = nil
+            }
+        }
+    }
+
+    private func stopImportedFolderPolling() {
+        importedFolderPollingTask?.cancel()
+        importedFolderPollingTask = nil
     }
 
     private func document(for id: UUID) -> LocalDocument? {
@@ -1355,6 +1423,76 @@ struct DocumentBrowserView: View {
     private func folderId(for document: LocalDocument) -> UUID? {
         guard let stored = documentFolderMap[document.id.uuidString] else { return nil }
         return UUID(uuidString: stored)
+    }
+
+    private func isImportedCanvascopeFolder(_ folderId: UUID) -> Bool {
+        folders.first(where: { $0.id == folderId })?.systemTag == importedCanvascopeSystemTag
+    }
+
+    private func ensureImportedCanvascopeFolderExists() {
+        var changed = false
+
+        var taggedIndices = folders.indices.filter { folders[$0].systemTag == importedCanvascopeSystemTag }
+        if taggedIndices.count > 1 {
+            for idx in taggedIndices.dropFirst() {
+                folders[idx].systemTag = nil
+                changed = true
+            }
+            taggedIndices = folders.indices.filter { folders[$0].systemTag == importedCanvascopeSystemTag }
+        }
+
+        if let taggedIndex = taggedIndices.first {
+            if folders[taggedIndex].name != importedCanvascopeFolderName {
+                folders[taggedIndex].name = importedCanvascopeFolderName
+                changed = true
+            }
+            if changed {
+                saveFolders()
+            }
+            return
+        }
+
+        if let namedIndex = folders.firstIndex(where: {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(importedCanvascopeFolderName) == .orderedSame
+        }) {
+            folders[namedIndex].name = importedCanvascopeFolderName
+            folders[namedIndex].systemTag = importedCanvascopeSystemTag
+            changed = true
+        } else {
+            let folder = LocalFolder(
+                id: UUID(),
+                name: importedCanvascopeFolderName,
+                createdAt: Date(),
+                colorHex: nil,
+                iconSystemName: "folder",
+                systemTag: importedCanvascopeSystemTag
+            )
+            folders = [folder] + folders
+            changed = true
+        }
+
+        if changed {
+            saveFolders()
+        }
+    }
+
+    private func routeNonLocalDocumentsToImportedFolder() {
+        guard let importedFolderId = importedCanvascopeFolderId else { return }
+
+        var changed = false
+        for doc in documents where doc.status != .local {
+            let key = doc.id.uuidString
+            let required = importedFolderId.uuidString
+            if documentFolderMap[key] != required {
+                documentFolderMap[key] = required
+                changed = true
+            }
+        }
+
+        if changed {
+            saveDocumentFolderMap()
+        }
     }
 
     private func folderAccentColor(for folder: LocalFolder) -> Color {
@@ -1567,7 +1705,8 @@ struct DocumentBrowserView: View {
                     name: $0.name,
                     createdAt: $0.createdAt,
                     colorHex: $0.colorHex,
-                    iconSystemName: $0.iconSystemName
+                    iconSystemName: $0.iconSystemName,
+                    systemTag: $0.systemTag
                 )
             },
             items: snapshotItems
@@ -1635,6 +1774,20 @@ struct DocumentBrowserView: View {
     }
 
     private func refreshRemoteDocuments() async {
+        let shouldRefresh = await MainActor.run { () -> Bool in
+            if isRefreshingRemoteDocuments {
+                return false
+            }
+            isRefreshingRemoteDocuments = true
+            return true
+        }
+        guard shouldRefresh else { return }
+        defer {
+            Task { @MainActor in
+                isRefreshingRemoteDocuments = false
+            }
+        }
+
         do {
             let items = try await repository.fetchDocuments()
             let fetched = items.map { LocalDocument(from: $0) }
@@ -1644,6 +1797,7 @@ struct DocumentBrowserView: View {
             await MainActor.run {
                 documents = merged
                 applyTitleOverrides()
+                ensureImportedCanvascopeFolderExists()
 
                 for doc in documents where doc.status != .local {
                     if repository.isPDFCachedLocally(documentId: doc.id) {
@@ -1651,6 +1805,7 @@ struct DocumentBrowserView: View {
                     }
                 }
 
+                routeNonLocalDocumentsToImportedFolder()
                 pruneFolderMappingForCurrentData()
                 if let currentFolderId,
                    !folders.contains(where: { $0.id == currentFolderId }) {
@@ -1932,13 +2087,18 @@ struct DocumentBrowserView: View {
     private func createFolder(named: String) {
         let trimmed = named.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard trimmed.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) != .orderedSame else {
+            featureNotice = "\"\(importedCanvascopeFolderName)\" is reserved."
+            return
+        }
 
         let folder = LocalFolder(
             id: UUID(),
             name: trimmed,
             createdAt: Date(),
             colorHex: nil,
-            iconSystemName: nil
+            iconSystemName: nil,
+            systemTag: nil
         )
         folders = [folder] + folders
         saveFolders()
@@ -1948,6 +2108,7 @@ struct DocumentBrowserView: View {
         guard let data = UserDefaults.standard.data(forKey: localFoldersDefaultsKey),
               let saved = try? JSONDecoder().decode([SavedLocalFolder].self, from: data) else {
             folders = []
+            ensureImportedCanvascopeFolderExists()
             return
         }
 
@@ -1958,10 +2119,13 @@ struct DocumentBrowserView: View {
                     name: $0.name,
                     createdAt: $0.createdAt,
                     colorHex: $0.colorHex,
-                    iconSystemName: $0.iconSystemName
+                    iconSystemName: $0.iconSystemName,
+                    systemTag: $0.systemTag
                 )
             }
             .sorted { $0.createdAt > $1.createdAt }
+
+        ensureImportedCanvascopeFolderExists()
     }
 
     private func saveFolders() {
@@ -1971,7 +2135,8 @@ struct DocumentBrowserView: View {
                 name: $0.name,
                 createdAt: $0.createdAt,
                 colorHex: $0.colorHex,
-                iconSystemName: $0.iconSystemName
+                iconSystemName: $0.iconSystemName,
+                systemTag: $0.systemTag
             )
         }
         if let encoded = try? JSONEncoder().encode(saved) {
@@ -1980,8 +2145,17 @@ struct DocumentBrowserView: View {
     }
 
     private func renameFolder(folderId: UUID, to proposedName: String) {
+        if isImportedCanvascopeFolder(folderId) {
+            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+            return
+        }
+
         let trimmed = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard trimmed.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) != .orderedSame else {
+            featureNotice = "\"\(importedCanvascopeFolderName)\" is reserved."
+            return
+        }
 
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
         guard folders[idx].name != trimmed else { return }
@@ -1990,6 +2164,10 @@ struct DocumentBrowserView: View {
     }
 
     private func updateFolderColor(folderId: UUID, colorHex: Int) {
+        if isImportedCanvascopeFolder(folderId) {
+            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+            return
+        }
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
         folders[idx].colorHex = colorHex
         folders[idx].createdAt = Date()
@@ -1997,12 +2175,20 @@ struct DocumentBrowserView: View {
     }
 
     private func updateFolderIcon(folderId: UUID, iconSystemName: String) {
+        if isImportedCanvascopeFolder(folderId) {
+            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+            return
+        }
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
         folders[idx].iconSystemName = iconSystemName
         saveFolders()
     }
 
     private func moveFolderToTop(folderId: UUID) {
+        if isImportedCanvascopeFolder(folderId) {
+            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+            return
+        }
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
         folders[idx].createdAt = Date()
         folders.sort { $0.createdAt > $1.createdAt }
@@ -2010,6 +2196,10 @@ struct DocumentBrowserView: View {
     }
 
     private func deleteFolder(folderId: UUID) {
+        if isImportedCanvascopeFolder(folderId) {
+            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+            return
+        }
         folders.removeAll { $0.id == folderId }
 
         for (docID, mappedFolderID) in documentFolderMap where mappedFolderID == folderId.uuidString {
@@ -2082,7 +2272,16 @@ struct DocumentBrowserView: View {
 
     private func moveDocument(documentId: UUID, to folderId: UUID?, shouldAnimate: Bool) {
         let key = documentId.uuidString
-        let destination = folderId?.uuidString
+        var destination = folderId?.uuidString
+        if let doc = document(for: documentId),
+           doc.status != .local,
+           let importedFolderId = importedCanvascopeFolderId {
+            let lockedDestination = importedFolderId.uuidString
+            if destination != lockedDestination {
+                featureNotice = "Imported docs stay in \"\(importedCanvascopeFolderName)\"."
+                destination = lockedDestination
+            }
+        }
         let currentDestination = documentFolderMap[key]
         guard currentDestination != destination else { return }
 
@@ -2353,6 +2552,7 @@ private struct FolderOptionsPopoverView: View {
     let folderName: String
     let selectedColorHex: Int?
     let selectedIcon: String
+    let isProtectedFolder: Bool
     let onClose: () -> Void
     let onRename: (String) -> Void
     let onSelectColor: (Int) -> Void
@@ -2368,11 +2568,23 @@ private struct FolderOptionsPopoverView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
-                TextField("Folder name", text: $draftName)
-                    .textInputAutocapitalization(.words)
-                    .disableAutocorrection(true)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                if isProtectedFolder {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(folderName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text("Managed by Canvascope")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.55))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    TextField("Folder name", text: $draftName)
+                        .textInputAutocapitalization(.words)
+                        .disableAutocorrection(true)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                }
 
                 Button(action: onClose) {
                     Image(systemName: "xmark.circle.fill")
@@ -2386,60 +2598,71 @@ private struct FolderOptionsPopoverView: View {
             .background(Color.white.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            Picker("Folder Options", selection: $mode) {
-                ForEach(PickerMode.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+            if !isProtectedFolder {
+                Picker("Folder Options", selection: $mode) {
+                    ForEach(PickerMode.allCases) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
+                .pickerStyle(.segmented)
 
-            if mode == .color {
-                HStack(spacing: 12) {
-                    ForEach(colorOptions) { option in
-                        Button {
-                            onSelectColor(option.hex)
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(Color(hex: UInt(option.hex)))
-                                    .frame(width: 20, height: 20)
-                                if option.hex == selectedColorHex {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 10, weight: .bold))
+                if mode == .color {
+                    HStack(spacing: 12) {
+                        ForEach(colorOptions) { option in
+                            Button {
+                                onSelectColor(option.hex)
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color(hex: UInt(option.hex)))
+                                        .frame(width: 20, height: 20)
+                                    if option.hex == selectedColorHex {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(spacing: 10) {
+                        ForEach(iconOptions, id: \.self) { icon in
+                            Button {
+                                onSelectIcon(icon)
+                            } label: {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.white.opacity(icon == selectedIcon ? 0.2 : 0.08))
+                                        .frame(width: 38, height: 34)
+                                    Image(systemName: icon)
+                                        .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(.white)
                                 }
                             }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                HStack(spacing: 10) {
-                    ForEach(iconOptions, id: \.self) { icon in
-                        Button {
-                            onSelectIcon(icon)
-                        } label: {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.white.opacity(icon == selectedIcon ? 0.2 : 0.08))
-                                    .frame(width: 38, height: 34)
-                                Image(systemName: icon)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             VStack(spacing: 0) {
-                FolderMenuActionRow(title: "Move", icon: "arrow.right.square", action: onMove)
+                if !isProtectedFolder {
+                    FolderMenuActionRow(title: "Move", icon: "arrow.right.square", action: onMove)
+                }
                 FolderMenuActionRow(title: "Open in New Window", icon: "menubar.dock.rectangle", action: onOpenInWindow)
-                FolderMenuActionRow(title: "Export", icon: "square.and.arrow.up", action: onExport)
-                FolderMenuActionRow(title: "Move to Trash", icon: "trash", isDestructive: true, showDivider: false, action: onMoveToTrash)
+                FolderMenuActionRow(
+                    title: "Export",
+                    icon: "square.and.arrow.up",
+                    showDivider: !isProtectedFolder,
+                    action: onExport
+                )
+                if !isProtectedFolder {
+                    FolderMenuActionRow(title: "Move to Trash", icon: "trash", isDestructive: true, showDivider: false, action: onMoveToTrash)
+                }
             }
             .background(Color.white.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -2454,10 +2677,14 @@ private struct FolderOptionsPopoverView: View {
             draftName = newValue
         }
         .onSubmit {
-            onRename(draftName)
+            if !isProtectedFolder {
+                onRename(draftName)
+            }
         }
         .onDisappear {
-            onRename(draftName)
+            if !isProtectedFolder {
+                onRename(draftName)
+            }
         }
     }
 }
@@ -3275,45 +3502,64 @@ struct MoveDocumentSheetView: View {
     let documentTitle: String
     let folders: [LocalFolder]
     let currentFolderId: UUID?
+    let isLockedToImportedFolder: Bool
+    let importedFolderName: String
     let onMove: (UUID?) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
-                Button {
-                    onMove(nil)
-                    dismiss()
-                } label: {
+                if isLockedToImportedFolder {
                     HStack {
-                        Image(systemName: "tray.full")
-                        Text("Documents")
+                        Image(systemName: "lock.fill")
+                            .foregroundColor(Color(hex: 0xE84D4D))
+                        Text(importedFolderName)
+                            .foregroundColor(.white)
                         Spacer(minLength: 0)
-                        if currentFolderId == nil {
-                            Image(systemName: "checkmark")
-                        }
+                        Image(systemName: "checkmark")
+                            .foregroundColor(Color(hex: 0xE84D4D))
                     }
-                }
-                .foregroundColor(.white)
+                    .padding(.vertical, 4)
 
-                ForEach(folders) { folder in
+                    Text("Imported documents stay in this protected folder.")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.65))
+                } else {
                     Button {
-                        onMove(folder.id)
+                        onMove(nil)
                         dismiss()
                     } label: {
                         HStack {
-                            Image(systemName: "folder.fill")
-                                .foregroundColor(Color(hex: 0xD44A4A))
-                            Text(folder.name)
-                                .foregroundColor(.white)
+                            Image(systemName: "tray.full")
+                            Text("Documents")
                             Spacer(minLength: 0)
-                            if currentFolderId == folder.id {
+                            if currentFolderId == nil {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(Color(hex: 0xE84D4D))
                             }
                         }
                     }
-                    .buttonStyle(.plain)
+                    .foregroundColor(.white)
+
+                    ForEach(folders) { folder in
+                        Button {
+                            onMove(folder.id)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Image(systemName: "folder.fill")
+                                    .foregroundColor(Color(hex: 0xD44A4A))
+                                Text(folder.name)
+                                    .foregroundColor(.white)
+                                Spacer(minLength: 0)
+                                if currentFolderId == folder.id {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(Color(hex: 0xE84D4D))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .scrollContentBackground(.hidden)

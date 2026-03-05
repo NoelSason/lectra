@@ -12,7 +12,7 @@ Lectra is a high-performance, premium iPad application designed specifically for
 On Lectra, they handwrite their notes seamlessly. When done, the document syncs back to Canvascope for easy viewing and reference on their desktop or Chrome extension.
 
 ### Core Workflows
-1. **Push (Canvascope Chrome Extension)**: Adding a "Send to Lectra" button on Canvas PDF viewers. Uploads raw PDF to Supabase.
+1. **Push (Canvascope Chrome Extension)**: Adding a "Send to Lectra" button on Canvas PDF viewers. Uploads the selected PDF to Supabase Storage under the signed-in user's `lectra_documents` path.
 2. **Fetch (Lectra iPad)**: Pulls the PDF from Supabase locally.
 3. **Annotate (Lectra iPad)**: The core user experience. Smooth, lag-free Apple Pencil writing over PDFs using PencilKit and PDFKit.
 4. **Sync (Lectra iPad)**: Flattens strokes onto the PDF and uploads the `annotated` version back to Supabase.
@@ -34,14 +34,16 @@ In the existing `synced_items` table (which is used for generic sync data), we i
     "title": "CS161_Midterm_Review.pdf",
     "courseId": 123456,
     "sourceUrl": "https://bcourses.berkeley.edu/...",
-    "storagePath": "user-uuid/lectra_documents/raw-xxx.pdf",
-    "annotatedStoragePath": "user-uuid/lectra_documents/annotated-xxx.pdf",
-    "status": "pending_annotation" // "pending_annotation" | "annotated" | "archived"
+    "storagePath": "user-uuid/lectra_documents/imported_from_canvascope/2026/03/<row-id>.pdf",
+    "annotatedStoragePath": null,
+    "status": "pending_annotation",
+    "sourcePlatform": "canvascope_extension",
+    "sourceKind": "canvas_pdf_import"
   }
   ```
 
 ### Storage Bucket
-A new private bucket named `lectra_documents` will hold the binary `.pdf` files. RLS policies must ensure users can only read/write their own PDF objects.
+A private bucket named `lectra_documents` holds binary `.pdf` files. The Canvascope handoff path enforces a 25 MB maximum file size and `application/pdf` MIME type via storage configuration and validation.
 
 ### Apple Stack
 - **UI**: SwiftUI
