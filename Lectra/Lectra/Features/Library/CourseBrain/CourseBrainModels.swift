@@ -166,6 +166,7 @@ extension Dictionary where Key == String, Value == CourseBrainJSONValue {
 // MARK: - Graph Types
 
 enum CourseBrainNodeType: String, Codable, CaseIterable {
+    case topic
     case lecture
     case assignment
     case note
@@ -315,7 +316,31 @@ struct CourseBrainBuildPayload {
     let courseFilter: Int?
 }
 
+struct CourseBrainTopicBucket: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let courseId: Int?
+    let memberNodeIDs: [String]
+    let countsByType: [CourseBrainNodeType: Int]
+    let topConceptIDs: [String]
+}
+
+struct CourseBrainLeafSummary: Identifiable, Hashable {
+    let id: String
+    let type: CourseBrainNodeType
+    let title: String
+    let courseId: Int?
+    let courseName: String?
+    let moduleName: String?
+    let dueAt: Date?
+    let unlockAt: Date?
+    let lockAt: Date?
+    let url: URL?
+    let instructionPreview: String?
+}
+
 enum CourseBrainLeftSection: String, CaseIterable, Identifiable {
+    case topics = "Topics"
     case concepts = "Concepts"
     case assignments = "Assignments"
     case lectures = "Lectures"
@@ -328,6 +353,13 @@ enum CourseBrainLeftSection: String, CaseIterable, Identifiable {
 enum CourseBrainDisplayMode: String, CaseIterable, Identifiable {
     case graph = "Graph"
     case timeline = "Timeline"
+
+    var id: String { rawValue }
+}
+
+enum CourseBrainGraphDensityMode: String, CaseIterable, Identifiable {
+    case overviewTopicFirst
+    case expandedTopic
 
     var id: String { rawValue }
 }

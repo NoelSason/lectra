@@ -38,6 +38,7 @@ struct PDFAnnotationView: View {
     let repository: DocumentRepository
     var onRename: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var gradescopeManager: GradescopeManager
 
     @State private var currentPage: Int = 0
     @State private var totalPages: Int = 1
@@ -80,6 +81,7 @@ struct PDFAnnotationView: View {
     @State private var toolbarSize: CGSize = .zero
     @State private var isToolbarDragging = false
     @State private var canvascopeDeliveryTask: Task<Void, Never>? = nil
+    @State private var showGradescopeSubmitSheet = false
     private let canvascopeExportService = CanvascopeExportService()
 
     var body: some View {
@@ -183,6 +185,10 @@ struct PDFAnnotationView: View {
         .animation(LectraMotion.indicatorFade, value: showPageIndicator)
         .animation(LectraMotion.toast, value: saveMessage)
         .animation(LectraMotion.quick, value: isRenamingTitle)
+        .sheet(isPresented: $showGradescopeSubmitSheet) {
+            GradescopeSubmitSheet(document: document, repository: repository)
+                .environmentObject(gradescopeManager)
+        }
         .onDisappear {
             indicatorTask?.cancel()
             canvascopeDeliveryTask?.cancel()
@@ -377,6 +383,25 @@ struct PDFAnnotationView: View {
                     Image(systemName: "arrow.up.forward.app")
                         .font(.system(size: 15, weight: .bold))
                     Text("Canvascope")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .frame(height: LectraSizing.minHitTarget)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                )
+            }
+            .disabled(isSaving || isExportingToCanvascope)
+
+            Button {
+                showGradescopeSubmitSheet = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "graduationcap")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("Gradescope")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)

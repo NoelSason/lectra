@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 struct CourseBrainGraphBuildResult {
     let graph: CourseBrainGraph
@@ -7,11 +8,26 @@ struct CourseBrainGraphBuildResult {
     let courseSummaries: [CourseBrainCourseSummary]
     let timelineBuckets: [CourseBrainTimelineBucket]
     let conceptCache: [CourseBrainConceptCacheConcept]
+    let topicBuckets: [CourseBrainTopicBucket]
+    let leafByID: [String: CourseBrainLeafSummary]
+    let topicToLeafIDs: [String: [String]]
 }
 
 struct CourseBrainLayoutSnapshot {
     let fingerprint: String
     let positions: [String: CGPoint]
+}
+
+private struct CourseBrainTopicConceptScore {
+    var score: Double
+    var typeCounts: [CourseBrainNodeType: Int]
+}
+
+private struct CourseBrainTopicAggregation {
+    let topicNodes: [CourseBrainNode]
+    let topicBuckets: [CourseBrainTopicBucket]
+    let topicToLeafIDs: [String: [String]]
+    let conceptScoresByTopic: [String: [String: CourseBrainTopicConceptScore]]
 }
 
 final class CourseBrainGraphBuilder {
@@ -20,14 +36,22 @@ final class CourseBrainGraphBuilder {
     private let assignmentTypes: Set<String> = ["assignment", "quiz"]
     private let fileTypes: Set<String> = ["file", "pdf", "document", "slides", "video", "page", "externalurl", "externaltool", "discussion"]
 
+    // Compatibility shims for stale editor state in older buffers.
+    private let topicRegex = try? NSRegularExpression(pattern: "\\b(week|lecture|lec|unit|chapter|session|class)\\s*([0-9]{1,3})\\b", options: [.caseInsensitive])
+    private let genericTopicWords: Set<String> = ["module", "course", "materials", "content", "general", "misc", "resources"]
+
     private let lectureRegex = try? NSRegularExpression(pattern: "\\b(lecture|lec|week|session|class)\\b", options: [.caseInsensitive])
-    private let numberRegex = try? NSRegularExpression(pattern: "(?:lecture|lec|week|session|class)?\\s*(\\d{1,3})", options: [.caseInsensitive])
+    private let leadingOrdinalRegex = try? NSRegularExpression(pattern: "^\\d+\\s*[\\.)-]\\s*", options: [])
 
     private let stopwords: Set<String> = [
-        "the", "and", "for", "from", "with", "your", "this", "that", "into", "of", "to", "in", "on", "at", "by", "as", "is", "it", "be", "are", "or", "an", "a", "lab", "homework", "hw", "module", "assignment", "quiz", "lecture", "week", "class", "session", "notes", "note", "practice", "review"
+        "the", "and", "for", "from", "with", "your", "this", "that", "into", "of", "to", "in", "on", "at", "by", "as", "is", "it", "be", "are", "or", "an", "a", "lab", "homework", "hw", "module", "assignment", "quiz", "lecture", "week", "class", "session", "notes", "note", "practice", "review", "page", "pages", "file", "files", "document", "documents", "course", "content", "resource", "resources", "admin", "links"
     ]
 
-    func build(payload: CourseBrainBuildPayload, maxVisibleNodes: Int = 180, maxVisibleEdges: Int = 300) -> CourseBrainGraphBuildResult {
+    private let structuralNoiseLabels: Set<String> = [
+        "general", "unfiled", "course files", "course file", "files", "file", "content", "module", "modules", "pages", "assignments", "quizzes", "discussions", "course image", "course_image", "photos", "images", "media gallery"
+    ]
+
+    func build(payload: CourseBrainBuildPayload, maxVisibleNodes: Int = 90, maxVisibleEdges: Int = 140) -> CourseBrainGraphBuildResult {
         let scopedRecords = payload.records.filter { record in
             guard let courseFilter = payload.courseFilter else { return true }
             return record.courseId == courseFilter
@@ -35,37 +59,37 @@ final class CourseBrainGraphBuilder {
 
         let courseSummaries = buildCourseSummaries(from: payload.records)
 
-        var nodeMap: [String: CourseBrainNode] = [:]
-        var sourceNodeIDs: [String] = []
+        var allNodeMap: [String: CourseBrainNode] = [:]
 
         for record in scopedRecords {
             guard let node = mapRecordToNode(record) else { continue }
-            if nodeMap[node.id] == nil {
-                sourceNodeIDs.append(node.id)
-                nodeMap[node.id] = node
+            if let existing = allNodeMap[node.id] {
+                allNodeMap[node.id] = mergeNodes(existing: existing, incoming: node)
             } else {
-                nodeMap[node.id] = mergeNodes(existing: nodeMap[node.id]!, incoming: node)
+                allNodeMap[node.id] = node
             }
         }
 
+        let leafNodes = allNodeMap.values.filter {
+            $0.type == .assignment || $0.type == .lecture || $0.type == .file
+        }
+
         for note in payload.localNotes where payload.courseFilter == nil || note.courseId == payload.courseFilter {
-            nodeMap[note.id] = note
-            sourceNodeIDs.append(note.id)
+            allNodeMap[note.id] = note
         }
 
         for note in payload.syncedNoteNodes where payload.courseFilter == nil || note.courseId == payload.courseFilter {
-            nodeMap[note.id] = note
-            sourceNodeIDs.append(note.id)
+            allNodeMap[note.id] = note
         }
 
-        let sourceNodes = sourceNodeIDs.compactMap { nodeMap[$0] }
-        let conceptCandidates = extractConcepts(from: sourceNodes)
+        let noteNodes = allNodeMap.values.filter { $0.type == .note }
 
-        for candidate in conceptCandidates {
-            let node = CourseBrainNode(
-                id: candidate.id,
+        let conceptCandidates = extractConcepts(from: leafNodes + noteNodes)
+        let conceptNodes = conceptCandidates.map { concept -> CourseBrainNode in
+            CourseBrainNode(
+                id: concept.id,
                 type: .concept,
-                title: candidate.title,
+                title: concept.title,
                 courseId: payload.courseFilter,
                 metadata: CourseBrainNodeMetadata(
                     courseName: nil,
@@ -87,27 +111,52 @@ final class CourseBrainGraphBuilder {
                 ),
                 resourceURL: nil
             )
-            nodeMap[node.id] = node
         }
 
-        var edges = inferConceptEdges(nodes: Array(nodeMap.values), concepts: conceptCandidates)
-        edges.append(contentsOf: inferAssignmentLectureEdges(nodes: Array(nodeMap.values)))
-        edges.append(contentsOf: inferFileLectureEdges(nodes: Array(nodeMap.values)))
+        for concept in conceptNodes {
+            allNodeMap[concept.id] = concept
+        }
 
-        let manualEdges = mapManualLinkEdges(payload.manualLinks, nodeMap: &nodeMap, courseFilter: payload.courseFilter)
+        let leafByID = buildLeafSummaries(from: leafNodes)
+        let topicAggregation = buildTopicAggregation(leaves: leafNodes, concepts: conceptCandidates)
+
+        for topicNode in topicAggregation.topicNodes {
+            allNodeMap[topicNode.id] = topicNode
+        }
+
+        var edges = buildTopicConceptEdges(
+            topicScores: topicAggregation.conceptScoresByTopic,
+            topicToConceptIDs: Dictionary(uniqueKeysWithValues: topicAggregation.topicBuckets.map { ($0.id, $0.topConceptIDs) })
+        )
+
+        edges.append(contentsOf: inferNoteConceptEdges(notes: noteNodes, concepts: conceptCandidates))
+
+        let manualEdges = mapManualLinkEdges(payload.manualLinks, nodeMap: &allNodeMap, courseFilter: payload.courseFilter)
         edges.append(contentsOf: manualEdges)
 
         let dedupedEdges = dedupeEdges(edges)
-        let allNodes = sortNodes(Array(nodeMap.values))
+        let allNodes = sortNodes(Array(allNodeMap.values))
         let timelineBuckets = buildTimelineBuckets(from: allNodes)
+
+        let overviewNodeIDs = Set(allNodes.compactMap { node -> String? in
+            switch node.type {
+            case .topic, .concept, .note:
+                return node.id
+            default:
+                return nil
+            }
+        })
+
+        let overviewNodes = allNodes.filter { overviewNodeIDs.contains($0.id) }
+        let overviewEdges = dedupedEdges.filter { overviewNodeIDs.contains($0.source) && overviewNodeIDs.contains($0.target) }
 
         let fingerprintSeed = allNodes.map(\ .id).joined(separator: "|") + "#" + dedupedEdges.map(\ .id).joined(separator: "|")
         let fingerprint = "graph-\(courseBrainStableHash(fingerprintSeed))"
 
-        let visibleNodeIDs = cappedNodeIDs(nodes: allNodes, edges: dedupedEdges, limit: maxVisibleNodes)
-        let visibleNodes = allNodes.filter { visibleNodeIDs.contains($0.id) }
+        let visibleNodeIDs = cappedNodeIDs(nodes: overviewNodes, edges: overviewEdges, limit: maxVisibleNodes)
+        let visibleNodes = overviewNodes.filter { visibleNodeIDs.contains($0.id) }
 
-        var visibleEdges = dedupedEdges.filter { visibleNodeIDs.contains($0.source) && visibleNodeIDs.contains($0.target) }
+        var visibleEdges = overviewEdges.filter { visibleNodeIDs.contains($0.source) && visibleNodeIDs.contains($0.target) }
         if visibleEdges.count > maxVisibleEdges {
             visibleEdges = Array(visibleEdges.prefix(maxVisibleEdges))
         }
@@ -116,8 +165,8 @@ final class CourseBrainGraphBuilder {
             nodes: visibleNodes,
             edges: visibleEdges,
             generatedAt: Date(),
-            fullNodeCount: allNodes.count,
-            fullEdgeCount: dedupedEdges.count,
+            fullNodeCount: overviewNodes.count,
+            fullEdgeCount: overviewEdges.count,
             fingerprint: fingerprint
         )
 
@@ -127,7 +176,10 @@ final class CourseBrainGraphBuilder {
             allEdges: dedupedEdges,
             courseSummaries: courseSummaries,
             timelineBuckets: timelineBuckets,
-            conceptCache: conceptCandidates
+            conceptCache: conceptCandidates,
+            topicBuckets: topicAggregation.topicBuckets,
+            leafByID: leafByID,
+            topicToLeafIDs: topicAggregation.topicToLeafIDs
         )
     }
 
@@ -137,13 +189,14 @@ final class CourseBrainGraphBuilder {
             grouped[node.type, default: []].append(node)
         }
 
-        let typeOrder: [CourseBrainNodeType] = [.assignment, .lecture, .note, .file, .concept]
+        let typeOrder: [CourseBrainNodeType] = [.topic, .concept, .note, .assignment, .lecture, .file]
         let groupCenters: [CourseBrainNodeType: CGPoint] = [
-            .assignment: CGPoint(x: 540, y: 220),
-            .lecture: CGPoint(x: 260, y: 240),
-            .note: CGPoint(x: 240, y: 520),
-            .file: CGPoint(x: 520, y: 560),
-            .concept: CGPoint(x: 390, y: 390)
+            .topic: CGPoint(x: 0.34, y: 0.50),
+            .concept: CGPoint(x: 0.66, y: 0.50),
+            .note: CGPoint(x: 0.50, y: 0.18),
+            .assignment: CGPoint(x: 0.20, y: 0.78),
+            .lecture: CGPoint(x: 0.50, y: 0.84),
+            .file: CGPoint(x: 0.80, y: 0.78)
         ]
 
         var positions: [String: CGPoint] = [:]
@@ -152,8 +205,8 @@ final class CourseBrainGraphBuilder {
             let nodesForType = sortNodes(grouped[type] ?? [])
             guard !nodesForType.isEmpty else { continue }
 
-            let center = groupCenters[type] ?? CGPoint(x: 390, y: 390)
-            let radius = max(58, min(250, CGFloat(nodesForType.count) * 6.6))
+            let center = groupCenters[type] ?? CGPoint(x: 0.5, y: 0.5)
+            let radius = max(0.04, min(0.22, CGFloat(nodesForType.count) * 0.012))
 
             for (index, node) in nodesForType.enumerated() {
                 if nodesForType.count == 1 {
@@ -162,19 +215,20 @@ final class CourseBrainGraphBuilder {
                 }
 
                 let angle = (CGFloat(index) / CGFloat(nodesForType.count)) * (.pi * 2)
-                let jitter = CGFloat((index % 5) - 2) * 7
+                let jitter = CGFloat((index % 4) - 2) * 0.008
                 let point = CGPoint(
                     x: center.x + cos(angle) * (radius + jitter),
                     y: center.y + sin(angle) * (radius - jitter)
                 )
-                positions[node.id] = point
+                positions[node.id] = CGPoint(
+                    x: min(max(point.x, 0.06), 0.94),
+                    y: min(max(point.y, 0.08), 0.92)
+                )
             }
         }
 
         return CourseBrainLayoutSnapshot(fingerprint: fingerprint, positions: positions)
     }
-
-    // MARK: - Mapping
 
     private func mapRecordToNode(_ record: CourseBrainSourceRecord) -> CourseBrainNode? {
         let normalizedType = record.normalizedType
@@ -272,129 +326,429 @@ final class CourseBrainGraphBuilder {
         return lectureRegex?.firstMatch(in: joined, options: [], range: range) != nil
     }
 
-    // MARK: - Concepts
-
-    private func extractConcepts(from nodes: [CourseBrainNode]) -> [CourseBrainConceptCacheConcept] {
-        struct CandidateStats {
-            var score: Double
-            var appearances: Int
-            var nodeTypes: Set<CourseBrainNodeType>
+    private func buildLeafSummaries(from leaves: [CourseBrainNode]) -> [String: CourseBrainLeafSummary] {
+        var result: [String: CourseBrainLeafSummary] = [:]
+        for leaf in leaves {
+            result[leaf.id] = CourseBrainLeafSummary(
+                id: leaf.id,
+                type: leaf.type,
+                title: leaf.title,
+                courseId: leaf.courseId,
+                courseName: leaf.metadata.courseName,
+                moduleName: leaf.metadata.moduleName,
+                dueAt: leaf.metadata.dueAt,
+                unlockAt: leaf.metadata.unlockAt,
+                lockAt: leaf.metadata.lockAt,
+                url: leaf.resourceURL,
+                instructionPreview: leaf.metadata.bestInstructionText
+            )
         }
-
-        var stats: [String: CandidateStats] = [:]
-
-        for node in nodes where node.type == .lecture || node.type == .assignment || node.type == .note {
-            let baseWeight: Double
-            switch node.type {
-            case .lecture:
-                baseWeight = 1.25
-            case .assignment:
-                baseWeight = 1.15
-            case .note:
-                baseWeight = 1.0
-            default:
-                baseWeight = 1.0
-            }
-
-            let text = [node.title, node.metadata.bestInstructionText].compactMap { $0 }.joined(separator: " ")
-            let phrases = conceptPhrases(from: text)
-            for phrase in phrases {
-                let slug = "concept:\(slugify(phrase))"
-                var entry = stats[slug] ?? CandidateStats(score: 0, appearances: 0, nodeTypes: [])
-                entry.score += baseWeight
-                entry.appearances += 1
-                entry.nodeTypes.insert(node.type)
-                stats[slug] = entry
-            }
-        }
-
-        var concepts: [CourseBrainConceptCacheConcept] = []
-        concepts.reserveCapacity(stats.count)
-
-        for (id, info) in stats {
-            guard info.appearances >= 2 || info.nodeTypes.count >= 2 else { continue }
-            let title = titleFromConceptID(id)
-            guard title.count >= 3 && title.count <= 40 else { continue }
-            concepts.append(.init(id: id, title: title, score: info.score + Double(info.nodeTypes.count)))
-        }
-
-        concepts.sort { lhs, rhs in
-            if lhs.score == rhs.score {
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-            return lhs.score > rhs.score
-        }
-
-        if concepts.count > 60 {
-            concepts = Array(concepts.prefix(60))
-        }
-
-        return concepts
+        return result
     }
 
-    private func conceptPhrases(from text: String) -> Set<String> {
-        let separators = CharacterSet(charactersIn: "-:|()[]{}").union(.newlines)
-        let segments = text
-            .components(separatedBy: separators)
-            .map(normalizeForMatching)
-            .filter { !$0.isEmpty }
+    private func buildTopicAggregation(leaves: [CourseBrainNode], concepts: [CourseBrainConceptCacheConcept]) -> CourseBrainTopicAggregation {
+        struct MutableBucket {
+            var title: String
+            var courseId: Int?
+            var courseName: String?
+            var memberNodeIDs: [String]
+            var countsByType: [CourseBrainNodeType: Int]
+            var conceptScores: [String: CourseBrainTopicConceptScore]
+        }
 
-        var results: Set<String> = []
-
-        for segment in segments {
-            let tokens = segment
-                .split(separator: " ")
-                .map(String.init)
-                .filter { token in
-                    token.count >= 3 && !stopwords.contains(token)
-                }
-
-            guard !tokens.isEmpty else { continue }
-
-            for n in 1...3 {
-                guard tokens.count >= n else { continue }
-                for i in 0...(tokens.count - n) {
-                    let phrase = tokens[i..<(i + n)].joined(separator: " ")
-                    guard phrase.count >= 3 && phrase.count <= 40 else { continue }
-                    results.insert(phrase)
-                }
+        var moduleFrequencyByCourse: [Int: [String: Int]] = [:]
+        var folderFrequencyByCourse: [Int: [String: Int]] = [:]
+        for leaf in leaves {
+            let courseScope = leaf.courseId ?? -1
+            if let module = normalizedStructuralLabel(leaf.metadata.moduleName),
+               !structuralNoiseLabels.contains(normalizeForMatching(module)) {
+                incrementFrequency(&moduleFrequencyByCourse, courseScope: courseScope, label: module)
+            }
+            if let folder = folderRoot(from: leaf.metadata.folderPath),
+               let normalizedFolder = normalizedStructuralLabel(folder),
+               !structuralNoiseLabels.contains(normalizeForMatching(normalizedFolder)) {
+                incrementFrequency(&folderFrequencyByCourse, courseScope: courseScope, label: normalizedFolder)
             }
         }
 
-        return results
-    }
+        var buckets: [String: MutableBucket] = [:]
 
-    private func inferConceptEdges(nodes: [CourseBrainNode], concepts: [CourseBrainConceptCacheConcept]) -> [CourseBrainEdge] {
-        let conceptByID = Dictionary(uniqueKeysWithValues: concepts.map { ($0.id, $0) })
-        var edges: [CourseBrainEdge] = []
+        for leaf in leaves {
+            let rawTitle = deriveTopicTitle(
+                for: leaf,
+                moduleFrequencyByCourse: moduleFrequencyByCourse,
+                folderFrequencyByCourse: folderFrequencyByCourse
+            )
+            let normalizedTitle = normalizeTopicTitle(rawTitle)
+            let courseScope = leaf.courseId ?? -1
+            let bucketKey = "\(courseScope)|\(slugify(normalizedTitle))"
 
-        for node in nodes where node.type == .lecture || node.type == .assignment || node.type == .note {
-            let text = normalizeForMatching(node.searchableText)
-            guard !text.isEmpty else { continue }
+            var bucket = buckets[bucketKey] ?? MutableBucket(
+                title: normalizedTitle,
+                courseId: leaf.courseId,
+                courseName: leaf.metadata.courseName,
+                memberNodeIDs: [],
+                countsByType: [:],
+                conceptScores: [:]
+            )
 
+            bucket.memberNodeIDs.append(leaf.id)
+            bucket.countsByType[leaf.type, default: 0] += 1
+
+            let evidenceText = topicEvidenceText(for: leaf)
             for concept in concepts {
                 let phrase = normalizeForMatching(concept.title)
-                guard !phrase.isEmpty, text.contains(phrase) else { continue }
+                guard !phrase.isEmpty, evidenceText.contains(phrase) else { continue }
+                var conceptScore = bucket.conceptScores[concept.id] ?? CourseBrainTopicConceptScore(score: 0, typeCounts: [:])
 
-                let relationship: CourseBrainRelationship
-                switch node.type {
-                case .lecture:
-                    relationship = .teaches
+                let weight: Double
+                switch leaf.type {
                 case .assignment:
-                    relationship = .tests
-                case .note:
-                    relationship = .references
+                    weight = 1.3
+                case .lecture:
+                    weight = 1.2
+                case .file:
+                    weight = 1.0
                 default:
-                    relationship = .references
+                    weight = 1.0
                 }
 
-                guard conceptByID[concept.id] != nil else { continue }
+                conceptScore.score += weight
+                conceptScore.typeCounts[leaf.type, default: 0] += 1
+                bucket.conceptScores[concept.id] = conceptScore
+            }
 
+            buckets[bucketKey] = bucket
+        }
+
+        var groupedKeysByCourse: [Int: [String]] = [:]
+        for (key, bucket) in buckets {
+            groupedKeysByCourse[bucket.courseId ?? -1, default: []].append(key)
+        }
+
+        for (courseScope, keys) in groupedKeysByCourse {
+            let sparseKeys = keys.filter { key in
+                guard let bucket = buckets[key] else { return false }
+                return bucket.memberNodeIDs.count < 3 && bucket.title.lowercased() != "general"
+            }
+            guard !sparseKeys.isEmpty else { continue }
+
+            let generalKey = "\(courseScope)|general"
+            if buckets[generalKey] == nil {
+                buckets[generalKey] = MutableBucket(
+                    title: "General",
+                    courseId: courseScope == -1 ? nil : courseScope,
+                    courseName: sparseKeys.compactMap { buckets[$0]?.courseName }.first,
+                    memberNodeIDs: [],
+                    countsByType: [:],
+                    conceptScores: [:]
+                )
+            }
+
+            for sparseKey in sparseKeys {
+                guard let sparse = buckets[sparseKey], var general = buckets[generalKey] else { continue }
+                general.memberNodeIDs.append(contentsOf: sparse.memberNodeIDs)
+                for (type, count) in sparse.countsByType {
+                    general.countsByType[type, default: 0] += count
+                }
+                for (conceptID, score) in sparse.conceptScores {
+                    var existing = general.conceptScores[conceptID] ?? CourseBrainTopicConceptScore(score: 0, typeCounts: [:])
+                    existing.score += score.score
+                    for (type, count) in score.typeCounts {
+                        existing.typeCounts[type, default: 0] += count
+                    }
+                    general.conceptScores[conceptID] = existing
+                }
+                buckets[generalKey] = general
+                buckets.removeValue(forKey: sparseKey)
+            }
+        }
+
+        var topicNodes: [CourseBrainNode] = []
+        var topicBuckets: [CourseBrainTopicBucket] = []
+        var topicToLeafIDs: [String: [String]] = [:]
+        var conceptScoresByTopic: [String: [String: CourseBrainTopicConceptScore]] = [:]
+
+        for (_, bucket) in buckets {
+            let topicSeed = "\(bucket.courseId ?? -1)|\(bucket.title.lowercased())"
+            let topicID = "topic:\(courseBrainStableHash(topicSeed))"
+
+            let sortedConceptIDs = bucket.conceptScores
+                .sorted { lhs, rhs in
+                    if lhs.value.score == rhs.value.score {
+                        return lhs.key < rhs.key
+                    }
+                    return lhs.value.score > rhs.value.score
+                }
+                .map { $0.key }
+
+            let topConceptIDs = Array(sortedConceptIDs.prefix(8))
+            let counts = bucket.countsByType
+
+            let countsText = [
+                "Assignments: \(counts[.assignment, default: 0])",
+                "Lectures: \(counts[.lecture, default: 0])",
+                "Files: \(counts[.file, default: 0])"
+            ].joined(separator: " • ")
+
+            let topicNode = CourseBrainNode(
+                id: topicID,
+                type: .topic,
+                title: bucket.title,
+                courseId: bucket.courseId,
+                metadata: CourseBrainNodeMetadata(
+                    courseName: bucket.courseName,
+                    moduleName: bucket.title,
+                    dueAt: nil,
+                    unlockAt: nil,
+                    lockAt: nil,
+                    scannedAt: nil,
+                    folderPath: nil,
+                    platform: nil,
+                    sourceItemType: "derived_topic",
+                    sourceSyncedItemId: nil,
+                    sourceURLString: nil,
+                    instructions: nil,
+                    description: countsText,
+                    body: nil,
+                    content: nil,
+                    text: nil
+                ),
+                resourceURL: nil
+            )
+
+            topicNodes.append(topicNode)
+            topicBuckets.append(
+                CourseBrainTopicBucket(
+                    id: topicID,
+                    title: bucket.title,
+                    courseId: bucket.courseId,
+                    memberNodeIDs: bucket.memberNodeIDs.sorted(),
+                    countsByType: bucket.countsByType,
+                    topConceptIDs: topConceptIDs
+                )
+            )
+            topicToLeafIDs[topicID] = bucket.memberNodeIDs.sorted()
+            conceptScoresByTopic[topicID] = bucket.conceptScores
+        }
+
+        topicNodes = sortNodes(topicNodes)
+        topicBuckets.sort {
+            if $0.title == $1.title {
+                return ($0.courseId ?? -1) < ($1.courseId ?? -1)
+            }
+            return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+
+        return CourseBrainTopicAggregation(
+            topicNodes: topicNodes,
+            topicBuckets: topicBuckets,
+            topicToLeafIDs: topicToLeafIDs,
+            conceptScoresByTopic: conceptScoresByTopic
+        )
+    }
+
+    private func deriveTopicTitle(
+        for leaf: CourseBrainNode,
+        moduleFrequencyByCourse: [Int: [String: Int]],
+        folderFrequencyByCourse: [Int: [String: Int]]
+    ) -> String {
+        let courseScope = leaf.courseId ?? -1
+
+        let normalizedModule = normalizedStructuralLabel(leaf.metadata.moduleName)
+        let normalizedFolder = normalizedStructuralLabel(folderRoot(from: leaf.metadata.folderPath))
+        let structuralSignal = normalizeForMatching([
+            normalizedModule,
+            normalizedFolder,
+            urlStructureToken(for: leaf.resourceURL),
+            fallbackTopicTitle(for: leaf.type)
+        ].compactMap { $0 }.joined(separator: " "))
+
+        if let structuralCategory = structuralCategoryTitle(signal: structuralSignal, nodeType: leaf.type) {
+            return structuralCategory
+        }
+
+        if let normalizedModule {
+            let moduleKey = normalizeForMatching(normalizedModule)
+            if !structuralNoiseLabels.contains(moduleKey) {
+                let moduleFrequency = frequency(of: normalizedModule, in: moduleFrequencyByCourse, courseScope: courseScope)
+                if moduleFrequency >= 8 {
+                    return normalizedModule
+                }
+            }
+        }
+
+        if let normalizedFolder {
+            let folderKey = normalizeForMatching(normalizedFolder)
+            if !structuralNoiseLabels.contains(folderKey) {
+                let folderFrequency = frequency(of: normalizedFolder, in: folderFrequencyByCourse, courseScope: courseScope)
+                if folderFrequency >= 8 {
+                    return normalizedFolder
+                }
+            }
+        }
+
+        if let normalizedModule, !structuralNoiseLabels.contains(normalizeForMatching(normalizedModule)), normalizedModule.count <= 34 {
+            return normalizedModule
+        }
+
+        if let normalizedFolder, !structuralNoiseLabels.contains(normalizeForMatching(normalizedFolder)), normalizedFolder.count <= 34 {
+            return normalizedFolder
+        }
+
+        return fallbackTopicTitle(for: leaf.type)
+    }
+
+    private func normalizeTopicTitle(_ raw: String) -> String {
+        let normalized = normalizeWhitespace(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "General" : normalized
+    }
+
+    private func normalizedStructuralLabel(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        var normalized = normalizeWhitespace(raw)
+        if let leadingOrdinalRegex {
+            let range = NSRange(location: 0, length: normalized.utf16.count)
+            normalized = leadingOrdinalRegex.stringByReplacingMatches(in: normalized, options: [], range: range, withTemplate: "")
+        }
+        normalized = normalizeWhitespace(normalized)
+        guard !normalized.isEmpty else { return nil }
+        return normalized
+    }
+
+    private func folderRoot(from raw: String?) -> String? {
+        guard let raw else { return nil }
+        let normalized = normalizeWhitespace(raw)
+        guard !normalized.isEmpty else { return nil }
+        if let first = normalized.split(separator: ">", maxSplits: 1, omittingEmptySubsequences: true).first {
+            return normalizeWhitespace(String(first))
+        }
+        return normalized
+    }
+
+    private func incrementFrequency(_ map: inout [Int: [String: Int]], courseScope: Int, label: String) {
+        var scoped = map[courseScope] ?? [:]
+        scoped[label, default: 0] += 1
+        map[courseScope] = scoped
+    }
+
+    private func frequency(of label: String, in map: [Int: [String: Int]], courseScope: Int) -> Int {
+        map[courseScope]?[label] ?? 0
+    }
+
+    private func topicEvidenceText(for leaf: CourseBrainNode) -> String {
+        let evidence = [
+            normalizedStructuralLabel(leaf.metadata.moduleName),
+            normalizedStructuralLabel(folderRoot(from: leaf.metadata.folderPath)),
+            urlStructureToken(for: leaf.resourceURL),
+            fallbackTopicTitle(for: leaf.type)
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
+
+        if evidence.isEmpty {
+            return normalizeForMatching(leaf.title)
+        }
+
+        return normalizeForMatching(evidence)
+    }
+
+    private func structuralCategoryTitle(signal: String, nodeType: CourseBrainNodeType) -> String? {
+        let normalized = normalizeForMatching(signal)
+        guard !normalized.isEmpty else { return nil }
+
+        if containsAny(in: normalized, keywords: ["orientation", "policy", "procedure", "syllabus", "campus resource", "resource", "important link", "logistic"]) {
+            return "Course Admin & Links"
+        }
+        if containsAny(in: normalized, keywords: ["exam", "midterm", "final", "answer key", "keys", "solution", "review"]) {
+            return "Exams & Review"
+        }
+        if containsAny(in: normalized, keywords: ["lab", "experiment", "manual"]) {
+            return "Lab Materials"
+        }
+        if containsAny(in: normalized, keywords: ["lecture", "slides", "notes", "classppt", "head gsi"]) {
+            return "Lecture Materials"
+        }
+        if containsAny(in: normalized, keywords: ["worksheet", "plws", "practice"]) {
+            return "Worksheets & Practice"
+        }
+        if containsAny(in: normalized, keywords: ["week", "weekly"]) {
+            return "Weekly Content"
+        }
+        if containsAny(in: normalized, keywords: ["external", "redirect", "tool", "link"]) {
+            return "External Resources"
+        }
+        if containsAny(in: normalized, keywords: ["image", "images", "photo", "video", "media"]) {
+            return "Media & Images"
+        }
+        if containsAny(in: normalized, keywords: ["quiz", "discussion"]) {
+            return "Quizzes & Discussions"
+        }
+
+        switch nodeType {
+        case .assignment:
+            return "Assignments"
+        case .lecture:
+            return "Lecture Materials"
+        case .file:
+            return "Files & Documents"
+        default:
+            return nil
+        }
+    }
+
+    private func containsAny(in text: String, keywords: [String]) -> Bool {
+        keywords.contains(where: { text.contains($0) })
+    }
+
+    private func fallbackTopicTitle(for type: CourseBrainNodeType) -> String {
+        switch type {
+        case .assignment:
+            return "Assignments"
+        case .lecture:
+            return "Lecture Materials"
+        case .file:
+            return "Files & Documents"
+        case .note:
+            return "Notes"
+        case .concept:
+            return "Concepts"
+        case .topic:
+            return "Topics"
+        }
+    }
+
+    private func urlStructureToken(for url: URL?) -> String? {
+        guard let path = url?.path.lowercased() else { return nil }
+
+        if path.contains("/assignments/") { return "assignment" }
+        if path.contains("/quizzes/") { return "quiz" }
+        if path.contains("/discussion_topics/") { return "discussion" }
+        if path.contains("/pages/") || path.contains("/wiki/") { return "page" }
+        if path.contains("/files/") { return "file" }
+        if path.contains("/module_item_redirect/") { return "external link" }
+        if path.contains("/external_tools/") || path.contains("/modules/items/") { return "external tool" }
+        return nil
+    }
+
+    private func buildTopicConceptEdges(
+        topicScores: [String: [String: CourseBrainTopicConceptScore]],
+        topicToConceptIDs: [String: [String]]
+    ) -> [CourseBrainEdge] {
+        var edges: [CourseBrainEdge] = []
+
+        for (topicID, conceptIDs) in topicToConceptIDs {
+            guard let scoreMap = topicScores[topicID] else { continue }
+
+            for conceptID in conceptIDs {
+                guard let score = scoreMap[conceptID] else { continue }
+
+                let relationship = dominantRelationship(for: score.typeCounts)
                 edges.append(
                     CourseBrainEdge(
-                        id: "\(relationship.rawValue):\(node.id)->\(concept.id)",
-                        source: node.id,
-                        target: concept.id,
+                        id: "topicConcept:\(topicID)->\(conceptID)",
+                        source: topicID,
+                        target: conceptID,
                         relationship: relationship,
                         directional: true,
                         inferred: true,
@@ -407,140 +761,46 @@ final class CourseBrainGraphBuilder {
         return edges
     }
 
-    private func inferAssignmentLectureEdges(nodes: [CourseBrainNode]) -> [CourseBrainEdge] {
-        let assignments = nodes.filter { $0.type == .assignment }
-        let lectures = nodes.filter { $0.type == .lecture }
-        guard !assignments.isEmpty, !lectures.isEmpty else { return [] }
+    private func dominantRelationship(for typeCounts: [CourseBrainNodeType: Int]) -> CourseBrainRelationship {
+        let assignmentCount = typeCounts[.assignment, default: 0]
+        let lectureCount = typeCounts[.lecture, default: 0]
+        let fileCount = typeCounts[.file, default: 0]
 
+        if assignmentCount >= lectureCount && assignmentCount >= fileCount && assignmentCount > 0 {
+            return .tests
+        }
+        if lectureCount > 0 || fileCount > 0 {
+            return .teaches
+        }
+        return .references
+    }
+
+    private func inferNoteConceptEdges(notes: [CourseBrainNode], concepts: [CourseBrainConceptCacheConcept]) -> [CourseBrainEdge] {
         var edges: [CourseBrainEdge] = []
 
-        for assignment in assignments {
-            let sameCourseLectures = lectures.filter { lecture in
-                guard let lectureCourse = lecture.courseId else { return assignment.courseId == nil }
-                return lectureCourse == assignment.courseId
-            }
-            guard !sameCourseLectures.isEmpty else { continue }
+        for note in notes {
+            let text = normalizeForMatching(note.searchableText)
+            guard !text.isEmpty else { continue }
 
-            let ranked = sameCourseLectures
-                .map { lecture -> (CourseBrainNode, Double) in
-                    (lecture, lectureAffinity(assignment: assignment, lecture: lecture))
-                }
-                .sorted { $0.1 > $1.1 }
+            for concept in concepts {
+                let phrase = normalizeForMatching(concept.title)
+                guard !phrase.isEmpty, text.contains(phrase) else { continue }
 
-            guard let best = ranked.first, best.1 >= 2.0 else { continue }
-
-            edges.append(
-                CourseBrainEdge(
-                    id: "assignmentToLecture:\(assignment.id)->\(best.0.id)",
-                    source: assignment.id,
-                    target: best.0.id,
-                    relationship: .assignmentToLecture,
-                    directional: true,
-                    inferred: true,
-                    manualLinkRowId: nil
+                edges.append(
+                    CourseBrainEdge(
+                        id: "noteConcept:\(note.id)->\(concept.id)",
+                        source: note.id,
+                        target: concept.id,
+                        relationship: .references,
+                        directional: true,
+                        inferred: true,
+                        manualLinkRowId: nil
+                    )
                 )
-            )
+            }
         }
 
         return edges
-    }
-
-    private func inferFileLectureEdges(nodes: [CourseBrainNode]) -> [CourseBrainEdge] {
-        let files = nodes.filter { $0.type == .file }
-        let lectures = nodes.filter { $0.type == .lecture }
-        guard !files.isEmpty, !lectures.isEmpty else { return [] }
-
-        var edges: [CourseBrainEdge] = []
-
-        for file in files {
-            let sameCourseLectures = lectures.filter { lecture in
-                guard let lectureCourse = lecture.courseId else { return file.courseId == nil }
-                return lectureCourse == file.courseId
-            }
-            guard !sameCourseLectures.isEmpty else { continue }
-
-            let ranked = sameCourseLectures
-                .map { lecture -> (CourseBrainNode, Double) in
-                    (lecture, lectureAffinity(file: file, lecture: lecture))
-                }
-                .sorted { $0.1 > $1.1 }
-
-            guard let best = ranked.first, best.1 >= 2.0 else { continue }
-
-            edges.append(
-                CourseBrainEdge(
-                    id: "belongsToLecture:\(file.id)->\(best.0.id)",
-                    source: file.id,
-                    target: best.0.id,
-                    relationship: .belongsToLecture,
-                    directional: true,
-                    inferred: true,
-                    manualLinkRowId: nil
-                )
-            )
-        }
-
-        return edges
-    }
-
-    private func lectureAffinity(assignment: CourseBrainNode, lecture: CourseBrainNode) -> Double {
-        var score: Double = 1.0
-
-        let assignmentModule = normalizeForMatching(assignment.metadata.moduleName ?? "")
-        let lectureModule = normalizeForMatching(lecture.metadata.moduleName ?? "")
-
-        if !assignmentModule.isEmpty && assignmentModule == lectureModule {
-            score += 2.0
-        }
-
-        if let assignmentLectureNumber = extractLectureNumber(from: assignment.searchableText),
-           let lectureNumber = extractLectureNumber(from: lecture.searchableText),
-           assignmentLectureNumber == lectureNumber {
-            score += 2.5
-        }
-
-        if normalizeForMatching(assignment.title).contains(normalizeForMatching(lecture.title)) ||
-            normalizeForMatching(lecture.title).contains(normalizeForMatching(assignment.title)) {
-            score += 0.8
-        }
-
-        return score
-    }
-
-    private func lectureAffinity(file: CourseBrainNode, lecture: CourseBrainNode) -> Double {
-        var score: Double = 1.0
-
-        let fileModule = normalizeForMatching(file.metadata.moduleName ?? "")
-        let lectureModule = normalizeForMatching(lecture.metadata.moduleName ?? "")
-
-        if !fileModule.isEmpty && fileModule == lectureModule {
-            score += 2.2
-        }
-
-        if let fileLectureNumber = extractLectureNumber(from: file.searchableText),
-           let lectureNumber = extractLectureNumber(from: lecture.searchableText),
-           fileLectureNumber == lectureNumber {
-            score += 2.2
-        }
-
-        if normalizeForMatching(file.title).contains(normalizeForMatching(lecture.title)) ||
-            normalizeForMatching(lecture.title).contains(normalizeForMatching(file.title)) {
-            score += 0.8
-        }
-
-        return score
-    }
-
-    private func extractLectureNumber(from text: String) -> Int? {
-        let normalized = normalizeWhitespace(text)
-        let range = NSRange(location: 0, length: normalized.utf16.count)
-        guard let match = numberRegex?.firstMatch(in: normalized, options: [], range: range),
-              match.numberOfRanges >= 2,
-              let groupRange = Range(match.range(at: 1), in: normalized) else {
-            return nil
-        }
-
-        return Int(normalized[groupRange])
     }
 
     private func mapManualLinkEdges(
@@ -606,7 +866,104 @@ final class CourseBrainGraphBuilder {
         return edges
     }
 
-    // MARK: - Bucketing & Sorting
+    private func extractConcepts(from nodes: [CourseBrainNode]) -> [CourseBrainConceptCacheConcept] {
+        struct CandidateStats {
+            var score: Double
+            var appearances: Int
+            var nodeTypes: Set<CourseBrainNodeType>
+        }
+
+        var stats: [String: CandidateStats] = [:]
+
+        for node in nodes where node.type == .lecture || node.type == .assignment || node.type == .note || node.type == .file {
+            let baseWeight: Double
+            switch node.type {
+            case .lecture:
+                baseWeight = 1.25
+            case .assignment:
+                baseWeight = 1.15
+            case .file:
+                baseWeight = 1.0
+            case .note:
+                baseWeight = 1.05
+            default:
+                baseWeight = 1.0
+            }
+
+            let text: String
+            if node.type == .note {
+                text = [node.title, node.metadata.bestInstructionText, node.metadata.moduleName, node.metadata.folderPath]
+                    .compactMap { $0 }
+                    .joined(separator: " ")
+            } else {
+                text = topicEvidenceText(for: node)
+            }
+            let phrases = conceptPhrases(from: text)
+            for phrase in phrases {
+                let slug = "concept:\(slugify(phrase))"
+                var entry = stats[slug] ?? CandidateStats(score: 0, appearances: 0, nodeTypes: [])
+                entry.score += baseWeight
+                entry.appearances += 1
+                entry.nodeTypes.insert(node.type)
+                stats[slug] = entry
+            }
+        }
+
+        var concepts: [CourseBrainConceptCacheConcept] = []
+        concepts.reserveCapacity(stats.count)
+
+        for (id, info) in stats {
+            guard info.appearances >= 2 || info.nodeTypes.count >= 2 else { continue }
+            let title = titleFromConceptID(id)
+            guard title.count >= 3 && title.count <= 40 else { continue }
+            concepts.append(.init(id: id, title: title, score: info.score + Double(info.nodeTypes.count)))
+        }
+
+        concepts.sort { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            return lhs.score > rhs.score
+        }
+
+        if concepts.count > 28 {
+            concepts = Array(concepts.prefix(28))
+        }
+
+        return concepts
+    }
+
+    private func conceptPhrases(from text: String) -> Set<String> {
+        let separators = CharacterSet(charactersIn: "-:|()[]{}").union(.newlines)
+        let segments = text
+            .components(separatedBy: separators)
+            .map(normalizeForMatching)
+            .filter { !$0.isEmpty }
+
+        var results: Set<String> = []
+
+        for segment in segments {
+            let tokens = segment
+                .split(separator: " ")
+                .map(String.init)
+                .filter { token in
+                    token.count >= 3 && !stopwords.contains(token)
+                }
+
+            guard !tokens.isEmpty else { continue }
+
+            for n in 1...3 {
+                guard tokens.count >= n else { continue }
+                for i in 0...(tokens.count - n) {
+                    let phrase = tokens[i..<(i + n)].joined(separator: " ")
+                    guard phrase.count >= 3 && phrase.count <= 40 else { continue }
+                    results.insert(phrase)
+                }
+            }
+        }
+
+        return results
+    }
 
     private func buildCourseSummaries(from records: [CourseBrainSourceRecord]) -> [CourseBrainCourseSummary] {
         var counters: [Int: (name: String, count: Int)] = [:]
@@ -632,7 +989,7 @@ final class CourseBrainGraphBuilder {
         var buckets: [String: [CourseBrainNode]] = [:]
         var bucketSortDates: [String: Date] = [:]
 
-        for node in nodes where node.type != .concept {
+        for node in nodes where node.type != .concept && node.type != .topic {
             let date = node.metadata.dueAt ?? node.metadata.unlockAt ?? node.metadata.lockAt ?? node.metadata.scannedAt
 
             if let date {
@@ -719,11 +1076,12 @@ final class CourseBrainGraphBuilder {
 
     private func nodePriority(_ type: CourseBrainNodeType) -> Int {
         switch type {
-        case .assignment: return 0
-        case .lecture: return 1
+        case .topic: return 0
+        case .concept: return 1
         case .note: return 2
-        case .file: return 3
-        case .concept: return 4
+        case .assignment: return 3
+        case .lecture: return 4
+        case .file: return 5
         }
     }
 
@@ -753,8 +1111,6 @@ final class CourseBrainGraphBuilder {
         return Set(sorted.prefix(limit).map(\ .id))
     }
 
-    // MARK: - Text Helpers
-
     private func normalizeWhitespace(_ raw: String) -> String {
         raw
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -762,37 +1118,33 @@ final class CourseBrainGraphBuilder {
     }
 
     private func normalizeForMatching(_ raw: String) -> String {
-        let lowered = raw.lowercased()
-        let cleaned = lowered.replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
-        return normalizeWhitespace(cleaned)
+        normalizeWhitespace(raw)
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func slugify(_ raw: String) -> String {
-        normalizeForMatching(raw)
-            .replacingOccurrences(of: " ", with: "-")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let lowered = normalizeForMatching(raw)
+        if lowered.isEmpty {
+            return "general"
+        }
+        return lowered.replacingOccurrences(of: " ", with: "-")
     }
 
-    private func titleFromConceptID(_ id: String) -> String {
-        let slug = id.replacingOccurrences(of: "concept:", with: "")
-        let spaced = slug.replacingOccurrences(of: "-", with: " ")
-        return spaced
-            .split(separator: " ")
+    private func titleFromConceptID(_ conceptID: String) -> String {
+        conceptID
+            .replacingOccurrences(of: "concept:", with: "")
+            .split(separator: "-")
             .map { $0.capitalized }
             .joined(separator: " ")
     }
 }
 
-func courseBrainStableHash(_ input: String) -> String {
-    // Deterministic FNV-1a 64-bit hash for stable IDs/fingerprints.
-    let bytes = Array(input.utf8)
-    var hash: UInt64 = 0xcbf29ce484222325
-    let prime: UInt64 = 0x100000001b3
-
-    for byte in bytes {
-        hash ^= UInt64(byte)
-        hash = hash &* prime
-    }
-
-    return String(hash, radix: 16)
+func courseBrainStableHash(_ input: String) -> Int64 {
+    var hasher = Hasher()
+    hasher.combine(input)
+    let value = hasher.finalize()
+    return Int64(abs(value))
 }

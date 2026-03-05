@@ -68,6 +68,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case favorites
     case shared
     case courseBrain
+    case gradescope
 
     var id: String { rawValue }
 
@@ -77,6 +78,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .favorites: return "Favorites"
         case .shared: return "Shared"
         case .courseBrain: return "Course Brain"
+        case .gradescope: return "Gradescope"
         }
     }
 
@@ -86,6 +88,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .favorites: return "bookmark"
         case .shared: return "person.2"
         case .courseBrain: return "brain.head.profile"
+        case .gradescope: return "graduationcap"
         }
     }
 }
@@ -129,6 +132,7 @@ private enum LibrarySortMode: String, CaseIterable {
 
 struct DocumentBrowserView: View {
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var gradescopeManager: GradescopeManager
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var documents: [LocalDocument] = []
@@ -197,8 +201,12 @@ struct DocumentBrowserView: View {
     private let autoBackupEnabledDefaultsKey = "lectra_auto_backup_enabled"
     private let lastCloudSyncDefaultsKey = "lectra_last_cloud_sync"
     private let lastBackupDefaultsKey = "lectra_last_backup"
+    private let importedFolderName = "Imported"
+    private let importedRootSystemTag = "imported_root"
     private let importedCanvascopeFolderName = "Imported From Canvascope"
     private let importedCanvascopeSystemTag = "imported_canvascope"
+    private let importedGradescopeFolderName = "Imported From Gradescope"
+    private let importedGradescopeSystemTag = "imported_gradescope"
     private let importedFolderPollingIntervalNanoseconds: UInt64 = 5_000_000_000
 
     private var sidebarWidth: CGFloat {
@@ -214,24 +222,55 @@ struct DocumentBrowserView: View {
         folders.first(where: { $0.systemTag == importedCanvascopeSystemTag })
     }
 
+    private var importedRootFolder: LocalFolder? {
+        folders.first(where: { $0.systemTag == importedRootSystemTag })
+    }
+
+    private var importedRootFolderId: UUID? {
+        importedRootFolder?.id
+    }
+
     private var importedCanvascopeFolderId: UUID? {
         importedCanvascopeFolder?.id
     }
 
+    private var importedGradescopeFolder: LocalFolder? {
+        folders.first(where: { $0.systemTag == importedGradescopeSystemTag })
+    }
+
+    private var importedGradescopeFolderId: UUID? {
+        importedGradescopeFolder?.id
+    }
+
     private var documentsInScope: [LocalDocument] {
-        documents.filter { folderId(for: $0) == currentFolderId }
+        if currentFolderId == importedRootFolderId {
+            return []
+        }
+        return documents.filter { folderId(for: $0) == currentFolderId }
     }
 
     private var filteredFolders: [LocalFolder] {
-        guard currentFolderId == nil else { return [] }
+        let scopedFolders: [LocalFolder]
+        if currentFolderId == importedRootFolderId {
+            scopedFolders = folders.filter {
+                $0.systemTag == importedCanvascopeSystemTag || $0.systemTag == importedGradescopeSystemTag
+            }
+        } else if currentFolderId == nil {
+            scopedFolders = folders.filter {
+                $0.systemTag != importedCanvascopeSystemTag && $0.systemTag != importedGradescopeSystemTag
+            }
+        } else {
+            scopedFolders = []
+        }
+
         guard activeSection == .documents else { return [] }
         guard documentFilter != .documents else { return [] }
 
         switch sortMode {
         case .name, .type:
-            return folders.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            return scopedFolders.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .dateCreated, .lastModified:
-            return folders.sorted { $0.createdAt > $1.createdAt }
+            return scopedFolders.sorted { $0.createdAt > $1.createdAt }
         }
     }
 
@@ -426,6 +465,7 @@ struct DocumentBrowserView: View {
         }
         .sheet(isPresented: $showFilePicker) {
             DocumentPickerView(contentTypes: filePickerContentTypes) { url in
+                guard canModifyContents(of: currentFolderId) else { return }
                 importPickedFile(from: url, folderId: currentFolderId)
             }
         }
@@ -454,10 +494,10 @@ struct DocumentBrowserView: View {
             if let doc = document(for: docId) {
                 MoveDocumentSheetView(
                     documentTitle: doc.title,
-                    folders: folders,
+                    folders: folders.filter { !isProtectedImportedFolder($0.id) },
                     currentFolderId: folderId(for: doc),
-                    isLockedToImportedFolder: doc.status != .local,
-                    importedFolderName: importedCanvascopeFolderName,
+                    isLockedToImportedFolder: isDocumentLockedToImportedFolder(doc),
+                    importedFolderName: lockedImportedFolderName(for: doc),
                     onMove: { targetFolderId in
                         moveDocument(documentId: doc.id, to: targetFolderId)
                     }
@@ -467,7 +507,7 @@ struct DocumentBrowserView: View {
         .sheet(isPresented: $showBulkMoveSheet) {
             BulkMoveDocumentsSheetView(
                 selectedCount: selectedDocumentsOnly.count,
-                folders: folders,
+                folders: folders.filter { !isProtectedImportedFolder($0.id) },
                 onMove: { targetFolderId in
                     performBulkMove(to: targetFolderId)
                 }
@@ -684,6 +724,8 @@ struct DocumentBrowserView: View {
             sharedPane
         case .courseBrain:
             courseBrainPane
+        case .gradescope:
+            gradescopePane
         }
     }
 
@@ -744,7 +786,7 @@ struct DocumentBrowserView: View {
                             HStack(spacing: 7) {
                                 Image(systemName: "chevron.left")
                                     .font(.system(size: 14, weight: .semibold))
-                                Text("Documents")
+                                Text(backNavigationLabel)
                                     .font(.system(size: 16, weight: .regular))
                             }
                             .foregroundColor(Color(hex: 0xE84D4D))
@@ -819,6 +861,12 @@ struct DocumentBrowserView: View {
 
     private var courseBrainPane: some View {
         CourseBrainPane(documents: documents)
+    }
+
+    private var gradescopePane: some View {
+        GradescopeHubView { templateURL, suggestedName, assignment in
+            importGradescopeTemplate(from: templateURL, suggestedName: suggestedName, assignment: assignment)
+        }
     }
 
     private func genericTopBar(title: String, filterTitle: String, includeSearch: Bool) -> some View {
@@ -927,13 +975,14 @@ struct DocumentBrowserView: View {
 
     @ViewBuilder
     private func folderGridCard(for folder: LocalFolder) -> some View {
-        let isProtectedFolder = isImportedCanvascopeFolder(folder.id)
+        let protectedFolderManagerName = importedFolderManagerName(for: folder.id)
+        let isProtectedFolder = protectedFolderManagerName != nil
         GoodnotesFolderCardView(
             folderName: folder.name,
             subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
             accent: folderAccentColor(for: folder),
             iconSystemName: folder.iconSystemName,
-            showsOptionsButton: !isSelectionMode,
+            showsOptionsButton: !isSelectionMode && !isProtectedFolder,
             isOptionsVisible: !isSelectionMode && activeFolderOptionsID == folder.id,
             onOpen: {
                 if isSelectionMode {
@@ -975,6 +1024,7 @@ struct DocumentBrowserView: View {
                     selectedColorHex: activeFolder.colorHex,
                     selectedIcon: activeFolder.iconSystemName ?? "folder",
                     isProtectedFolder: isProtectedFolder,
+                    protectedFolderManagerName: protectedFolderManagerName,
                     onClose: {
                         activeFolderOptionsID = nil
                     },
@@ -1277,6 +1327,10 @@ struct DocumentBrowserView: View {
                     filePickerContentTypes = [.image]
                     showFilePicker = true
                 },
+                onImportGradescopeTemplate: {
+                    showCreateMenu = false
+                    selectSection(.gradescope)
+                },
                 onTakePhoto: {
                     showCreateMenu = false
                     filePickerContentTypes = [.image]
@@ -1573,6 +1627,22 @@ struct DocumentBrowserView: View {
         }
     }
 
+    private var backNavigationLabel: String {
+        guard let currentFolderId else { return "Documents" }
+        if let parentFolderId = parentFolderId(for: currentFolderId),
+           let parentFolder = folders.first(where: { $0.id == parentFolderId }) {
+            return parentFolder.name
+        }
+        return "Documents"
+    }
+
+    private func parentFolderId(for folderId: UUID) -> UUID? {
+        if folderId == importedCanvascopeFolderId || folderId == importedGradescopeFolderId {
+            return importedRootFolderId
+        }
+        return nil
+    }
+
     private func selectSection(_ section: LibrarySection) {
         activeSection = section
         showSearchOverlay = false
@@ -1606,7 +1676,12 @@ struct DocumentBrowserView: View {
             exitSelectionMode()
         }
         withAnimation(.easeInOut(duration: 0.18)) {
-            currentFolderId = nil
+            if let currentFolderId,
+               let parentFolderId = parentFolderId(for: currentFolderId) {
+                self.currentFolderId = parentFolderId
+            } else {
+                currentFolderId = nil
+            }
         }
     }
 
@@ -1654,8 +1729,128 @@ struct DocumentBrowserView: View {
         return UUID(uuidString: stored)
     }
 
+    private func lockedImportedFolder(for document: LocalDocument) -> LocalFolder? {
+        if document.status != .local {
+            return importedCanvascopeFolder
+        }
+        guard let mappedFolderId = folderId(for: document),
+              isProtectedImportedFolder(mappedFolderId) else {
+            return nil
+        }
+        return folders.first(where: { $0.id == mappedFolderId })
+    }
+
+    private func lockedImportedFolderId(for document: LocalDocument) -> UUID? {
+        lockedImportedFolder(for: document)?.id
+    }
+
+    private func lockedImportedFolderName(for document: LocalDocument) -> String {
+        lockedImportedFolder(for: document)?.name ?? importedCanvascopeFolderName
+    }
+
+    private func isDocumentLockedToImportedFolder(_ document: LocalDocument) -> Bool {
+        lockedImportedFolder(for: document) != nil
+    }
+
+    private func isDocumentInProtectedImportedFolder(_ document: LocalDocument) -> Bool {
+        guard let mappedFolderId = folderId(for: document) else { return false }
+        return isProtectedImportedFolder(mappedFolderId)
+    }
+
     private func isImportedCanvascopeFolder(_ folderId: UUID) -> Bool {
         folders.first(where: { $0.id == folderId })?.systemTag == importedCanvascopeSystemTag
+    }
+
+    private func ensureImportedFolderHierarchyExists() {
+        ensureImportedRootFolderExists()
+        ensureImportedCanvascopeFolderExists()
+        ensureImportedGradescopeFolderExists()
+    }
+
+    private func importedFolderManagerName(for folderId: UUID) -> String? {
+        guard let systemTag = folders.first(where: { $0.id == folderId })?.systemTag else { return nil }
+        switch systemTag {
+        case importedRootSystemTag:
+            return "Lectra"
+        case importedCanvascopeSystemTag:
+            return "Canvascope"
+        case importedGradescopeSystemTag:
+            return "Gradescope"
+        default:
+            return nil
+        }
+    }
+
+    private func isProtectedImportedFolder(_ folderId: UUID) -> Bool {
+        importedFolderManagerName(for: folderId) != nil
+    }
+
+    private func managedFolderNotice(for folderId: UUID) -> String {
+        if let managerName = importedFolderManagerName(for: folderId) {
+            return "This folder is managed by \(managerName) and can’t be changed."
+        }
+        return "This folder is managed and can’t be changed."
+    }
+
+    private func reservedImportedFolderNameNotice(for proposedName: String) -> String? {
+        if proposedName.localizedCaseInsensitiveCompare(importedFolderName) == .orderedSame {
+            return "\"\(importedFolderName)\" is reserved."
+        }
+        if proposedName.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) == .orderedSame {
+            return "\"\(importedCanvascopeFolderName)\" is reserved."
+        }
+        if proposedName.localizedCaseInsensitiveCompare(importedGradescopeFolderName) == .orderedSame {
+            return "\"\(importedGradescopeFolderName)\" is reserved."
+        }
+        return nil
+    }
+
+    private func ensureImportedRootFolderExists() {
+        var changed = false
+
+        var taggedIndices = folders.indices.filter { folders[$0].systemTag == importedRootSystemTag }
+        if taggedIndices.count > 1 {
+            for idx in taggedIndices.dropFirst() {
+                folders[idx].systemTag = nil
+                changed = true
+            }
+            taggedIndices = folders.indices.filter { folders[$0].systemTag == importedRootSystemTag }
+        }
+
+        if let taggedIndex = taggedIndices.first {
+            if folders[taggedIndex].name != importedFolderName {
+                folders[taggedIndex].name = importedFolderName
+                changed = true
+            }
+            if changed {
+                saveFolders()
+            }
+            return
+        }
+
+        if let namedIndex = folders.firstIndex(where: {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(importedFolderName) == .orderedSame
+        }) {
+            folders[namedIndex].name = importedFolderName
+            folders[namedIndex].systemTag = importedRootSystemTag
+            changed = true
+        } else {
+            let folder = LocalFolder(
+                id: UUID(),
+                name: importedFolderName,
+                createdAt: Date(),
+                colorHex: nil,
+                iconSystemName: "tray.full",
+                systemTag: importedRootSystemTag
+            )
+            folders = [folder] + folders
+            changed = true
+        }
+
+        if changed {
+            saveFolders()
+        }
     }
 
     private func ensureImportedCanvascopeFolderExists() {
@@ -1696,6 +1891,54 @@ struct DocumentBrowserView: View {
                 colorHex: nil,
                 iconSystemName: "folder",
                 systemTag: importedCanvascopeSystemTag
+            )
+            folders = [folder] + folders
+            changed = true
+        }
+
+        if changed {
+            saveFolders()
+        }
+    }
+
+    private func ensureImportedGradescopeFolderExists() {
+        var changed = false
+
+        var taggedIndices = folders.indices.filter { folders[$0].systemTag == importedGradescopeSystemTag }
+        if taggedIndices.count > 1 {
+            for idx in taggedIndices.dropFirst() {
+                folders[idx].systemTag = nil
+                changed = true
+            }
+            taggedIndices = folders.indices.filter { folders[$0].systemTag == importedGradescopeSystemTag }
+        }
+
+        if let taggedIndex = taggedIndices.first {
+            if folders[taggedIndex].name != importedGradescopeFolderName {
+                folders[taggedIndex].name = importedGradescopeFolderName
+                changed = true
+            }
+            if changed {
+                saveFolders()
+            }
+            return
+        }
+
+        if let namedIndex = folders.firstIndex(where: {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(importedGradescopeFolderName) == .orderedSame
+        }) {
+            folders[namedIndex].name = importedGradescopeFolderName
+            folders[namedIndex].systemTag = importedGradescopeSystemTag
+            changed = true
+        } else {
+            let folder = LocalFolder(
+                id: UUID(),
+                name: importedGradescopeFolderName,
+                createdAt: Date(),
+                colorHex: nil,
+                iconSystemName: "folder",
+                systemTag: importedGradescopeSystemTag
             )
             folders = [folder] + folders
             changed = true
@@ -1979,7 +2222,17 @@ struct DocumentBrowserView: View {
             .appendingPathComponent("LectraBackups", isDirectory: true)
     }
 
+    private func canModifyContents(of folderId: UUID?) -> Bool {
+        guard let folderId else { return true }
+        guard !isProtectedImportedFolder(folderId) else {
+            featureNotice = "Imported folders are read-only."
+            return false
+        }
+        return true
+    }
+
     private func handleDrop(items: [String], into folderId: UUID) -> Bool {
+        guard canModifyContents(of: folderId) else { return false }
         let documentIDs = items.compactMap(UUID.init(uuidString:))
         guard !documentIDs.isEmpty else { return false }
 
@@ -2008,6 +2261,7 @@ struct DocumentBrowserView: View {
             featureNotice = "Select at least one document to move."
             return
         }
+        guard canModifyContents(of: targetFolderId) else { return }
         guard docsToMove.allSatisfy({ $0.status == .local }) else {
             featureNotice = "Imported docs can’t be moved from Select mode."
             return
@@ -2025,6 +2279,11 @@ struct DocumentBrowserView: View {
     private func performBulkDelete() {
         let docsToDelete = resolvedSelectedDocuments
         guard !docsToDelete.isEmpty || !activeSelectedFolderIDs.isEmpty else { return }
+
+        if docsToDelete.contains(where: isDocumentInProtectedImportedFolder) {
+            featureNotice = "Imported folders are read-only."
+            return
+        }
 
         if docsToDelete.contains(where: { $0.status != .local }) {
             featureNotice = "Imported/synced documents can’t be deleted in bulk from this screen."
@@ -2090,7 +2349,7 @@ struct DocumentBrowserView: View {
             await MainActor.run {
                 documents = merged
                 applyTitleOverrides()
-                ensureImportedCanvascopeFolderExists()
+                ensureImportedFolderHierarchyExists()
 
                 for doc in documents where doc.status != .local {
                     if repository.isPDFCachedLocally(documentId: doc.id) {
@@ -2277,6 +2536,60 @@ struct DocumentBrowserView: View {
         }
     }
 
+    private func importGradescopeTemplate(from url: URL, suggestedName: String, assignment: GSAssignment) {
+        ensureImportedFolderHierarchyExists()
+
+        let inferredTitle: String = {
+            let trimmed = suggestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return assignment.name
+            }
+            return URL(fileURLWithPath: trimmed).deletingPathExtension().lastPathComponent
+        }()
+
+        let doc = LocalDocument(title: inferredTitle, localURL: url)
+
+        let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pdfs", isDirectory: true)
+            .appendingPathComponent(doc.id.uuidString, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: localFolder, withIntermediateDirectories: true)
+            let destination = localFolder.appendingPathComponent("original.pdf")
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.copyItem(at: url, to: destination)
+            doc.localPDFURL = destination
+
+            let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
+            storeLocalDocumentMetadata(
+                docId: doc.id,
+                title: inferredTitle,
+                relativePath: relativePath,
+                folderId: importedGradescopeFolderId,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt
+            )
+
+            gradescopeManager.linkDocument(
+                documentId: doc.id,
+                courseId: assignment.courseId,
+                assignmentId: assignment.id,
+                mode: .template
+            )
+
+            documents = [doc] + documents
+            featureNotice = "Imported Gradescope template into \"\(importedGradescopeFolderName)\"."
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                markDocumentAsRecentlyOpened(doc.id)
+                editorDocumentId = doc.id
+            }
+        } catch {
+            featureNotice = "Could not import Gradescope template: \(error.localizedDescription)"
+        }
+    }
+
     private func importImageAsPDF(from url: URL, folderId: UUID? = nil) {
         guard let image = UIImage(contentsOfFile: url.path) ?? (try? Data(contentsOf: url)).flatMap(UIImage.init(data:)) else {
             featureNotice = "Could not load image for import."
@@ -2342,6 +2655,7 @@ struct DocumentBrowserView: View {
     }
 
     private func createBlankLocalDocument(title: String) {
+        guard canModifyContents(of: currentFolderId) else { return }
         let doc = LocalDocument(title: title, localURL: URL(fileURLWithPath: "/tmp/placeholder.pdf"))
         let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("pdfs", isDirectory: true)
@@ -2385,8 +2699,8 @@ struct DocumentBrowserView: View {
     private func createFolder(named: String) {
         let trimmed = named.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard trimmed.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) != .orderedSame else {
-            featureNotice = "\"\(importedCanvascopeFolderName)\" is reserved."
+        if let reservedNotice = reservedImportedFolderNameNotice(for: trimmed) {
+            featureNotice = reservedNotice
             return
         }
 
@@ -2406,7 +2720,7 @@ struct DocumentBrowserView: View {
         guard let data = UserDefaults.standard.data(forKey: localFoldersDefaultsKey),
               let saved = try? JSONDecoder().decode([SavedLocalFolder].self, from: data) else {
             folders = []
-            ensureImportedCanvascopeFolderExists()
+            ensureImportedFolderHierarchyExists()
             return
         }
 
@@ -2423,7 +2737,7 @@ struct DocumentBrowserView: View {
             }
             .sorted { $0.createdAt > $1.createdAt }
 
-        ensureImportedCanvascopeFolderExists()
+        ensureImportedFolderHierarchyExists()
     }
 
     private func saveFolders() {
@@ -2443,15 +2757,15 @@ struct DocumentBrowserView: View {
     }
 
     private func renameFolder(folderId: UUID, to proposedName: String) {
-        if isImportedCanvascopeFolder(folderId) {
-            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+        if isProtectedImportedFolder(folderId) {
+            featureNotice = managedFolderNotice(for: folderId)
             return
         }
 
         let trimmed = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard trimmed.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) != .orderedSame else {
-            featureNotice = "\"\(importedCanvascopeFolderName)\" is reserved."
+        if let reservedNotice = reservedImportedFolderNameNotice(for: trimmed) {
+            featureNotice = reservedNotice
             return
         }
 
@@ -2462,8 +2776,8 @@ struct DocumentBrowserView: View {
     }
 
     private func updateFolderColor(folderId: UUID, colorHex: Int) {
-        if isImportedCanvascopeFolder(folderId) {
-            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+        if isProtectedImportedFolder(folderId) {
+            featureNotice = managedFolderNotice(for: folderId)
             return
         }
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
@@ -2473,8 +2787,8 @@ struct DocumentBrowserView: View {
     }
 
     private func updateFolderIcon(folderId: UUID, iconSystemName: String) {
-        if isImportedCanvascopeFolder(folderId) {
-            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+        if isProtectedImportedFolder(folderId) {
+            featureNotice = managedFolderNotice(for: folderId)
             return
         }
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
@@ -2483,8 +2797,8 @@ struct DocumentBrowserView: View {
     }
 
     private func moveFolderToTop(folderId: UUID) {
-        if isImportedCanvascopeFolder(folderId) {
-            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+        if isProtectedImportedFolder(folderId) {
+            featureNotice = managedFolderNotice(for: folderId)
             return
         }
         guard let idx = folders.firstIndex(where: { $0.id == folderId }) else { return }
@@ -2494,8 +2808,8 @@ struct DocumentBrowserView: View {
     }
 
     private func deleteFolder(folderId: UUID) {
-        if isImportedCanvascopeFolder(folderId) {
-            featureNotice = "This folder is managed by Canvascope and can’t be changed."
+        if isProtectedImportedFolder(folderId) {
+            featureNotice = managedFolderNotice(for: folderId)
             return
         }
         folders.removeAll { $0.id == folderId }
@@ -2572,11 +2886,10 @@ struct DocumentBrowserView: View {
         let key = documentId.uuidString
         var destination = folderId?.uuidString
         if let doc = document(for: documentId),
-           doc.status != .local,
-           let importedFolderId = importedCanvascopeFolderId {
+           let importedFolderId = lockedImportedFolderId(for: doc) {
             let lockedDestination = importedFolderId.uuidString
             if destination != lockedDestination {
-                featureNotice = "Imported docs stay in \"\(importedCanvascopeFolderName)\"."
+                featureNotice = "Imported docs stay in \"\(lockedImportedFolderName(for: doc))\"."
                 destination = lockedDestination
             }
         }
@@ -2597,6 +2910,10 @@ struct DocumentBrowserView: View {
     }
 
     private func duplicateDocument(_ doc: LocalDocument) {
+        if isDocumentInProtectedImportedFolder(doc) {
+            featureNotice = "Imported folders are read-only."
+            return
+        }
         guard let sourceURL = doc.localPDFURL else {
             featureNotice = "Open this file once, then duplicate it."
             return
@@ -2658,6 +2975,10 @@ struct DocumentBrowserView: View {
     }
 
     private func removeDocument(_ doc: LocalDocument) {
+        if isDocumentInProtectedImportedFolder(doc) {
+            featureNotice = "Imported folders are read-only."
+            return
+        }
         documents.removeAll(where: { $0.id == doc.id })
         documentFolderMap.removeValue(forKey: doc.id.uuidString)
         saveDocumentFolderMap()
@@ -2854,6 +3175,7 @@ private struct FolderOptionsPopoverView: View {
     let selectedColorHex: Int?
     let selectedIcon: String
     let isProtectedFolder: Bool
+    let protectedFolderManagerName: String?
     let onClose: () -> Void
     let onRename: (String) -> Void
     let onSelectColor: (Int) -> Void
@@ -2874,7 +3196,7 @@ private struct FolderOptionsPopoverView: View {
                         Text(folderName)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.white)
-                        Text("Managed by Canvascope")
+                        Text("Managed by \(protectedFolderManagerName ?? "Lectra")")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Color.white.opacity(0.55))
                     }
@@ -3146,6 +3468,7 @@ private struct CreateMenuPopoverView: View {
     let onScanDocuments: () -> Void
     let onStudySet: () -> Void
     let onImage: () -> Void
+    let onImportGradescopeTemplate: () -> Void
     let onTakePhoto: () -> Void
 
     var body: some View {
@@ -3169,6 +3492,7 @@ private struct CreateMenuPopoverView: View {
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "Import PDF", icon: "square.and.arrow.down", action: onImport)
+                PopoverActionRow(title: "Import Gradescope Template", icon: "graduationcap", action: onImportGradescopeTemplate)
                 PopoverActionRow(title: "Scan Documents", icon: "doc.viewfinder", action: onScanDocuments)
                 PopoverActionRow(title: "Image", icon: "photo", action: onImage)
                 PopoverActionRow(title: "Take Photo", icon: "camera", showDivider: false, action: onTakePhoto)

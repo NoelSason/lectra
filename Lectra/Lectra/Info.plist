@@ -13,5 +13,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>canvas-student</string>
+		<string>canvas-courses</string>
+	</array>
 </dict>
 </plist>

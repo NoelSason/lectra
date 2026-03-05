@@ -16,6 +16,7 @@ struct ContentView: View {
 
     @EnvironmentObject var authManager: AuthManager
     @StateObject private var startupCoordinator = StartupCoordinator()
+    @StateObject private var gradescopeManager = GradescopeManager()
 
     private var rootScreen: RootScreen {
         authManager.isAuthenticated ? .library : .auth
@@ -41,6 +42,7 @@ struct ContentView: View {
                 .zIndex(10)
             }
         }
+        .environmentObject(gradescopeManager)
         .preferredColorScheme(.dark)
         .animation(LectraMotion.screenSwap, value: rootScreen)
         .animation(LectraMotion.startupExit, value: startupCoordinator.isCompleted)
