@@ -81,6 +81,74 @@ enum LectraGradient {
     )
 }
 
+// MARK: - Glass & Elevation
+
+enum LectraGlass {
+    static let sidebarTint = LinearGradient(
+        colors: [
+            Color.white.opacity(0.08),
+            LectraColor.accentCool.opacity(0.14),
+            LectraColor.accent.opacity(0.08),
+            Color.clear
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    static let floatingToolbarTint = LinearGradient(
+        colors: [
+            Color.white.opacity(0.08),
+            LectraColor.accentCool.opacity(0.12),
+            LectraColor.accent.opacity(0.10),
+            Color.clear
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    static let urgentCardCritical = LinearGradient(
+        colors: [
+            LectraColor.accent.opacity(0.16),
+            LectraColor.warning.opacity(0.10),
+            Color.white.opacity(0.06),
+            Color.clear
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    static let urgentCardWarning = LinearGradient(
+        colors: [
+            LectraColor.warning.opacity(0.16),
+            LectraColor.accentCool.opacity(0.08),
+            Color.white.opacity(0.05),
+            Color.clear
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    static let urgentCardDefault = LinearGradient(
+        colors: [
+            LectraColor.accentCool.opacity(0.12),
+            Color.white.opacity(0.05),
+            Color.clear
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    static let hairlineStroke = Color.white.opacity(0.18)
+    static let innerHighlight = Color.white.opacity(0.10)
+}
+
+enum LectraElevation {
+    static let floatingRadius: CGFloat = 20
+    static let floatingYOffset: CGFloat = 12
+    static let libraryCardRadius: CGFloat = 10
+    static let libraryCardYOffset: CGFloat = 5
+}
+
 // MARK: - Spacing (8pt grid)
 
 enum LectraSpacing {
@@ -106,6 +174,7 @@ enum LectraRadius {
     static let button: CGFloat = 8
     static let card:  CGFloat = 16
     static let sheet: CGFloat = 24
+    static let capsule: CGFloat = 22
 }
 
 // MARK: - Motion

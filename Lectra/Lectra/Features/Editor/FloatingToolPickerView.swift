@@ -69,17 +69,23 @@ struct FloatingToolPickerView: View {
                     .environment(\.colorScheme, .dark)
 
                 RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
-                    .fill(Color(hex: 0x121B2E, opacity: 0.6))
+                    .fill(LectraGlass.floatingToolbarTint)
 
                 RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
-                    .fill(LectraGradient.spotlight.opacity(0.25))
+                    .fill(
+                        LinearGradient(
+                            colors: [LectraGlass.innerHighlight, Color.clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
 
                 RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous))
-        .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 12)
+        .shadow(color: .black.opacity(0.38), radius: LectraElevation.floatingRadius, x: 0, y: LectraElevation.floatingYOffset)
         .overlay(alignment: .top) {
             if let index = activeWidthEditorIndex {
                 thicknessEditor(for: index)
@@ -267,18 +273,33 @@ struct FloatingToolPickerView: View {
                     }
                 } label: {
                     Text(mode.title)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(.caption.weight(.semibold))
                         .foregroundColor(selectedEraserMode == mode ? .white : Color.white.opacity(0.85))
-                        .padding(.horizontal, 10)
-                        .frame(height: 30)
+                        .padding(.horizontal, 12)
+                        .frame(minWidth: LectraSizing.minHitTarget, minHeight: LectraSizing.minHitTarget)
                         .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(selectedEraserMode == mode ? Color(hex: 0xD13C35) : Color.white.opacity(0.08))
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(.regularMaterial)
+                                    .environment(\.colorScheme, .dark)
+
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(
+                                        selectedEraserMode == mode
+                                        ? LinearGradient(
+                                            colors: [LectraColor.accent.opacity(0.92), Color(hex: 0xD13C35, opacity: 0.88)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                        : LectraGlass.floatingToolbarTint
+                                    )
+                            }
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(Color.white.opacity(selectedEraserMode == mode ? 0.0 : 0.18), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(selectedEraserMode == mode ? Color.clear : LectraGlass.hairlineStroke, lineWidth: 0.5)
                         )
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(mode.title) eraser")
@@ -291,11 +312,11 @@ struct FloatingToolPickerView: View {
 
         return VStack(alignment: .leading, spacing: 10) {
             Text(thicknessEditorTitle)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.caption.weight(.semibold))
                 .foregroundColor(.white.opacity(0.76))
             HStack(spacing: 12) {
                 Text(String(format: "%.1f mm", currentWidth))
-                    .font(.system(size: 17, weight: .medium, design: .rounded))
+                    .font(.headline.weight(.medium))
                     .foregroundColor(.white)
                     .frame(width: 78, alignment: .leading)
 
@@ -313,13 +334,32 @@ struct FloatingToolPickerView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(Color(hex: 0x0D1526, opacity: 0.95))
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.regularMaterial)
+                    .environment(\.colorScheme, .dark)
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(LectraGlass.floatingToolbarTint)
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [LectraGlass.innerHighlight, Color.clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .frame(width: 330)
+        .shadow(color: .black.opacity(0.36), radius: LectraElevation.floatingRadius, x: 0, y: LectraElevation.floatingYOffset)
         .allowsHitTesting(true)
     }
 
@@ -393,8 +433,17 @@ private struct StrokeWidthButton: View {
         Button(action: action) {
             ZStack {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
+                    .fill(.regularMaterial)
+                    .environment(\.colorScheme, .dark)
                     .frame(width: tapSize, height: tapSize)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(isSelected ? LectraGlass.floatingToolbarTint : LinearGradient(colors: [Color.clear], startPoint: .top, endPoint: .bottom))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(LectraGlass.hairlineStroke.opacity(isSelected ? 1 : 0.55), lineWidth: 0.5)
+                    }
 
                 Circle()
                     .stroke(isSelected ? LectraColor.accentCool : Color.white, lineWidth: width)
@@ -418,7 +467,7 @@ private struct ToolButton: View {
             Image(systemName: icon)
                 .font(.system(size: 20, weight: isSelected ? .bold : .regular))
                 .foregroundColor(isSelected ? .white : Color.white.opacity(0.9))
-                .frame(width: 36, height: 36)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                 .background(
                     ZStack {
                         if isSelected {
@@ -432,9 +481,17 @@ private struct ToolButton: View {
                                 )
                         } else {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(0.06))
+                                .fill(.regularMaterial)
+                                .environment(\.colorScheme, .dark)
+
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(LectraGlass.floatingToolbarTint)
                         }
                     }
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(LectraGlass.hairlineStroke.opacity(isSelected ? 0 : 1), lineWidth: 0.5)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)

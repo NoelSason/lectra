@@ -112,6 +112,20 @@ private enum RecoveryRestoreMode {
     case replace
 }
 
+private enum LibraryGridEntry: Identifiable {
+    case folder(LocalFolder)
+    case document(LocalDocument)
+
+    var id: String {
+        switch self {
+        case .folder(let folder):
+            return "folder-\(folder.id.uuidString)"
+        case .document(let document):
+            return "document-\(document.id.uuidString)"
+        }
+    }
+}
+
 private enum LibrarySortMode: String, CaseIterable {
     case dateCreated
     case lastModified
@@ -295,6 +309,10 @@ struct DocumentBrowserView: View {
                     : documentType(for: $0) < documentType(for: $1)
             }
         }
+    }
+
+    private var visibleGridEntries: [LibraryGridEntry] {
+        filteredFolders.map(LibraryGridEntry.folder) + filteredDocuments.map(LibraryGridEntry.document)
     }
 
     private var libraryCardWidth: CGFloat {
@@ -770,7 +788,7 @@ struct DocumentBrowserView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: isSidebarCollapsed ? 12 : 10) {
+        VStack(alignment: isSidebarCollapsed ? .center : .leading, spacing: isSidebarCollapsed ? 12 : 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.22)) {
                     isSidebarCollapsed.toggle()
@@ -779,11 +797,25 @@ struct DocumentBrowserView: View {
                 Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(Color(hex: 0xE84D4D))
-                    .frame(width: 44, height: 44)
+                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                    .background {
+                        Circle()
+                            .fill(.regularMaterial)
+                            .environment(\.colorScheme, .dark)
+                            .overlay(
+                                Circle()
+                                    .fill(LectraGlass.sidebarTint)
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+                            )
+                    }
             }
             .buttonStyle(.plain)
             .padding(.top, 8)
-            .contentShape(Rectangle())
+            .contentShape(Circle())
+            .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
 
             if !isSidebarCollapsed {
                 Text("Lectra")
@@ -808,12 +840,19 @@ struct DocumentBrowserView: View {
                 Rectangle()
                     .fill(.ultraThinMaterial)
                     .environment(\.colorScheme, .dark)
-                
+
+                LectraGlass.sidebarTint
+
                 LinearGradient(
-                    colors: [Color(hex: 0x1C1618).opacity(0.75), Color(hex: 0x131417).opacity(0.85)],
-                    startPoint: .top,
-                    endPoint: .bottom
+                    colors: [Color.white.opacity(0.08), Color.clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
+            }
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(LectraGlass.hairlineStroke)
+                    .frame(width: 0.5)
             }
             .ignoresSafeArea()
         )
@@ -1113,20 +1152,13 @@ struct DocumentBrowserView: View {
     private var documentsGridView: some View {
         let metrics = libraryGridMetrics
         return ScrollView {
-            VStack(alignment: .leading, spacing: metrics.sectionGap) {
-                if !filteredFolders.isEmpty {
-                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: metrics.folderGridSpacing) {
-                        ForEach(filteredFolders) { folder in
-                            folderGridCard(for: folder)
-                        }
-                    }
-                }
-
-                if !filteredDocuments.isEmpty {
-                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: metrics.documentGridSpacing) {
-                        ForEach(filteredDocuments) { doc in
-                            documentGridCard(for: doc)
-                        }
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: metrics.documentGridSpacing) {
+                ForEach(visibleGridEntries) { entry in
+                    switch entry {
+                    case .folder(let folder):
+                        folderGridCard(for: folder)
+                    case .document(let document):
+                        documentGridCard(for: document)
                     }
                 }
             }

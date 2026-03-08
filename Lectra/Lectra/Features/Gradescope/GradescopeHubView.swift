@@ -74,30 +74,34 @@ struct GradescopeHubView: View {
             Spacer(minLength: 0)
 
             if gradescopeManager.isAuthenticated {
-                Button("Refresh") {
+                Button {
                     Task {
                         await gradescopeManager.refreshCourses()
                         bootstrapAuthenticatedState()
                     }
+                } label: {
+                    Text("Refresh")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: LectraSizing.minHitTarget)
+                        .background(Color(hex: 0xE84D4D).opacity(0.12))
+                        .clipShape(Capsule())
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(Color(hex: 0xE84D4D))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color(hex: 0xE84D4D).opacity(0.12))
-                .clipShape(Capsule())
 
-                Button("Sign Out") {
+                Button {
                     gradescopeManager.logout()
                     selectedCourseID = ""
                     localMessage = nil
+                } label: {
+                    Text("Sign Out")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: LectraSizing.minHitTarget)
+                        .background(Color(hex: 0xE84D4D).opacity(0.12))
+                        .clipShape(Capsule())
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(Color(hex: 0xE84D4D))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color(hex: 0xE84D4D).opacity(0.12))
-                .clipShape(Capsule())
             }
         }
     }
@@ -105,7 +109,7 @@ struct GradescopeHubView: View {
     private var authBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sign in with your Gradescope account to sync assignments and import templates.")
-                .font(.system(size: 14, weight: .regular))
+                .font(.body)
                 .foregroundColor(.white.opacity(0.74))
 
             TextField("Email", text: $email)
@@ -136,13 +140,13 @@ struct GradescopeHubView: View {
                             .tint(.white)
                     }
                     Text("Sign In")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.headline.weight(.semibold))
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 44)
+                .frame(minHeight: LectraSizing.minHitTarget)
                 .background(Color(hex: 0x4A222A))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(Capsule())
             }
             .disabled(gradescopeManager.isBusy)
 
@@ -150,22 +154,22 @@ struct GradescopeHubView: View {
                 showWebLoginSheet = true
             } label: {
                 Text("Sign In via Gradescope Web")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.headline.weight(.semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 42)
+                    .frame(minHeight: LectraSizing.minHitTarget)
                     .background(Color.white.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(Capsule())
             }
             .disabled(gradescopeManager.isBusy)
 
             Text("Use web sign-in for Google or school-credential Gradescope accounts.")
-                .font(.system(size: 12, weight: .regular))
+                .font(.callout)
                 .foregroundColor(.white.opacity(0.62))
 
             if let error = gradescopeManager.errorMessage {
                 Text(error)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundColor(Color(hex: 0xE84D4D))
             }
 
@@ -195,7 +199,7 @@ struct GradescopeHubView: View {
 
             if assignments.isEmpty, !gradescopeManager.isBusy {
                 Text("No assignments available for this course.")
-                    .font(.system(size: 14, weight: .regular))
+                    .font(.body)
                     .foregroundColor(.white.opacity(0.72))
                     .padding(.top, 8)
             }
@@ -210,7 +214,7 @@ struct GradescopeHubView: View {
 
             if let localMessage {
                 Text(localMessage)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundColor(
                         localMessage.contains("Imported")
                         ? Color(hex: 0x35B77A)
@@ -220,13 +224,13 @@ struct GradescopeHubView: View {
 
             if let error = gradescopeManager.errorMessage {
                 Text(error)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundColor(Color(hex: 0xE84D4D))
             }
 
             if let assignmentDebugMessage {
                 Text(assignmentDebugMessage)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .font(.system(.footnote, design: .monospaced))
                     .foregroundColor(.white.opacity(0.62))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
@@ -236,18 +240,22 @@ struct GradescopeHubView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("Diagnostics")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundColor(.white.opacity(0.9))
                         Spacer(minLength: 0)
                         Button("Copy") {
                             UIPasteboard.general.string = diagnosticsMessage
                         }
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(Color(hex: 0xE84D4D))
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: LectraSizing.minHitTarget)
+                        .background(Color(hex: 0xE84D4D).opacity(0.12))
+                        .clipShape(Capsule())
                     }
 
                     Text(diagnosticsMessage)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(.system(.footnote, design: .monospaced))
                         .foregroundColor(.white.opacity(0.62))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
@@ -294,7 +302,7 @@ struct GradescopeHubView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    .frame(minHeight: LectraSizing.minHitTarget)
                     .background(Color(hex: 0x4A222A))
                     .clipShape(Capsule())
                 }

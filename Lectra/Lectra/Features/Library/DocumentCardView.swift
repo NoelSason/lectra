@@ -23,15 +23,12 @@ struct LibraryGridMetrics {
     let documentShadowRadius: CGFloat
     let documentShadowYOffset: CGFloat
 
-    let titleRowHeight: CGFloat = 30
-    let metadataRowHeight: CGFloat = 14
-
     static func root(cardWidth: CGFloat) -> LibraryGridMetrics {
         LibraryGridMetrics(
             cardWidth: cardWidth,
             pdfPreviewHeight: 88,
-            pdfFooterHeight: 44,
-            pdfTotalHeight: 140,
+            pdfFooterHeight: 52,
+            pdfTotalHeight: 148,
             folderArtworkHeight: 128,
             folderFooterHeight: 44,
             folderTotalHeight: 180,
@@ -48,8 +45,8 @@ struct LibraryGridMetrics {
         LibraryGridMetrics(
             cardWidth: cardWidth,
             pdfPreviewHeight: 84,
-            pdfFooterHeight: 44,
-            pdfTotalHeight: 136,
+            pdfFooterHeight: 52,
+            pdfTotalHeight: 144,
             folderArtworkHeight: 128,
             folderFooterHeight: 44,
             folderTotalHeight: 180,
@@ -73,48 +70,17 @@ struct DocumentCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay {
-                        cardContents
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
-                    )
-                    .shadow(
-                        color: metrics.documentShadowColor,
-                        radius: metrics.documentShadowRadius,
-                        x: 0,
-                        y: metrics.documentShadowYOffset
-                    )
+            previewCard
 
-                Button {
-                    onFavoriteToggle?()
-                } label: {
-                    Image(systemName: document.isFavorite ? "star.fill" : "star")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(document.isFavorite ? Color.yellow : Color.gray.opacity(0.8))
-                        .padding(12)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: metrics.pdfPreviewHeight)
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
                     Text(displayTitle)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color.white.opacity(0.95))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 0)
 
                     if let onOptionsTap {
                         Button(action: onOptionsTap) {
@@ -122,15 +88,14 @@ struct DocumentCardView: View {
                                 .symbolRenderingMode(.hierarchical)
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(Color.white.opacity(0.8))
-                                .frame(width: 24, height: 24)
+                                .frame(width: 22, height: 22)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .frame(height: metrics.titleRowHeight, alignment: .top)
 
-                HStack(alignment: .center, spacing: 6) {
+                HStack(spacing: 6) {
                     if document.syncState != .idle {
                         DocumentSyncBadgeView(
                             state: document.syncState,
@@ -140,15 +105,14 @@ struct DocumentCardView: View {
                         .fixedSize()
                     }
 
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                    Text("Last modified \(subtitle)")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.62))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .truncationMode(.tail)
 
                     Spacer(minLength: 0)
                 }
-                .frame(height: metrics.metadataRowHeight, alignment: .center)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: metrics.pdfFooterHeight, alignment: .topLeading)
@@ -158,33 +122,62 @@ struct DocumentCardView: View {
         .clipped()
     }
 
-    @ViewBuilder
-    private var cardContents: some View {
-        if document.localPDFURL != nil {
-            CachedDocumentThumbnailView(
-                document: document,
-                size: CGSize(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
-            )
-        } else {
-            ZStack {
-                LinearGradient(
-                    colors: [Color(hex: 0xD86A6A), Color(hex: 0xB54747)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+    private var previewCard: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if document.localPDFURL != nil {
+                    CachedDocumentThumbnailView(
+                        document: document,
+                        size: CGSize(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+                    )
+                } else {
+                    ZStack {
+                        LinearGradient(
+                            colors: [Color(hex: 0xD86A6A), Color(hex: 0xB54747)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
 
-                VStack(spacing: 4) {
-                    Image(systemName: document.status == .downloading ? "arrow.down.circle" : "doc.text")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.85))
+                        VStack(spacing: 4) {
+                            Image(systemName: document.status == .downloading ? "arrow.down.circle" : "doc.text")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.85))
 
-                    if document.status == .downloading {
-                        ProgressView()
-                            .tint(.white)
+                            if document.status == .downloading {
+                                ProgressView()
+                                    .tint(.white)
+                            }
+                        }
                     }
                 }
             }
+            .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+            )
+            .shadow(
+                color: Color.black.opacity(0.2),
+                radius: LectraElevation.libraryCardRadius,
+                x: 0,
+                y: LectraElevation.libraryCardYOffset
+            )
+            .clipped()
+
+            Button {
+                onFavoriteToggle?()
+            } label: {
+                Image(systemName: document.isFavorite ? "star.fill" : "star")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(document.isFavorite ? Color.yellow : Color.gray.opacity(0.8))
+                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
+        .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
     }
 
     private var displayTitle: String {

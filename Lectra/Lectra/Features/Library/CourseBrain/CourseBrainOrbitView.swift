@@ -98,17 +98,25 @@ struct CourseBrainOrbitView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "flame.fill")
-                    .foregroundColor(Color(hex: 0xFF5E5E))
+                    .foregroundColor(LectraColor.accent)
                     .font(.system(size: 16, weight: .bold))
                 Text("Due Soon")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.white)
                 Text("\(urgentItems.count)")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(hex: 0xFF5E5E))
+                    .foregroundColor(LectraColor.accent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color(hex: 0xFF5E5E).opacity(0.15))
+                    .background(
+                        Capsule()
+                            .fill(.regularMaterial)
+                            .environment(\.colorScheme, .dark)
+                            .overlay {
+                                Capsule()
+                                    .fill(LectraGlass.urgentCardCritical)
+                            }
+                    )
                     .clipShape(Capsule())
             }
             .padding(.top, 8)
@@ -169,14 +177,22 @@ struct CourseBrainOrbitView: View {
                         .fill(.regularMaterial)
                         .environment(\.colorScheme, .dark)
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(urgencyGradient(for: node.metadata.dueAt).opacity(0.85))
+                        .fill(urgencyGradient(for: node.metadata.dueAt))
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [LectraGlass.innerHighlight, Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                 }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
+            .shadow(color: Color.black.opacity(0.18), radius: 12, x: 0, y: 6)
         }
         .buttonStyle(.plain)
     }
@@ -313,8 +329,26 @@ struct CourseBrainOrbitView: View {
                             }
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
-                            .frame(height: 32)
-                            .background(accent.opacity(0.8))
+                            .frame(minHeight: LectraSizing.minHitTarget)
+                            .background(
+                                Capsule()
+                                    .fill(.regularMaterial)
+                                    .environment(\.colorScheme, .dark)
+                                    .overlay {
+                                        Capsule()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: [accent.opacity(0.58), accent.opacity(0.22)],
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
+                                            )
+                                    }
+                                    .overlay {
+                                        Capsule()
+                                            .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+                                    }
+                            )
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
@@ -326,13 +360,28 @@ struct CourseBrainOrbitView: View {
                             Image(systemName: "arrow.up.right")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.white.opacity(0.9))
-                                .frame(width: 44, height: 44)
+                                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                                 .background(
-                                    Circle()
-                                        .fill(Color.white.opacity(0.1))
-                                        .frame(width: 32, height: 32)
+                                    Capsule()
+                                        .fill(.regularMaterial)
+                                        .environment(\.colorScheme, .dark)
+                                        .overlay {
+                                            Capsule()
+                                                .fill(
+                                                    LinearGradient(
+                                                        colors: [accent.opacity(0.16), Color.white.opacity(0.04)],
+                                                        startPoint: .topLeading,
+                                                        endPoint: .bottomTrailing
+                                                    )
+                                                )
+                                        }
+                                        .overlay {
+                                            Capsule()
+                                                .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+                                        }
                                 )
-                                .contentShape(Rectangle())
+                                .clipShape(Capsule())
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -499,25 +548,16 @@ struct CourseBrainOrbitView: View {
 
     private func urgencyGradient(for dueDate: Date?) -> LinearGradient {
         guard let due = dueDate else {
-            return LinearGradient(colors: [Color(hex: 0x1A1A1E)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            return LectraGlass.urgentCardDefault
         }
 
         let hours = Calendar.current.dateComponents([.hour], from: Date(), to: due).hour ?? 999
         if hours < 24 {
-            return LinearGradient(
-                colors: [Color(hex: 0x5C1616), Color(hex: 0x2A0B0B)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+            return LectraGlass.urgentCardCritical
         } else if hours < 72 {
-            return LinearGradient(
-                colors: [Color(hex: 0x4D3312), Color(hex: 0x261705)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+            return LectraGlass.urgentCardWarning
         }
-        return LinearGradient(
-            colors: [Color(hex: 0x24242A), Color(hex: 0x141416)],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
+        return LectraGlass.urgentCardDefault
     }
 
     private func abbreviate(_ text: String, max: Int) -> String {
