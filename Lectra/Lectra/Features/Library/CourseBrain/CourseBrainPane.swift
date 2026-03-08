@@ -10,6 +10,8 @@ private extension CGSize {
 
 struct CourseBrainPane: View {
     let documents: [LocalDocument]
+    /// Called when user wants to download a PDF from a URL and import it into Lectra.
+    var onImportPDF: ((URL, String) -> Void)?
 
     @StateObject private var viewModel = CourseBrainViewModel()
     @Environment(\.openURL) private var openURL
@@ -409,34 +411,26 @@ struct CourseBrainPane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.displayMode == .timeline {
                 timelinePanel
-            } else if let graph = viewModel.graph, !graph.nodes.isEmpty {
-                CourseBrainGraphCanvas(
-                    graph: graph,
-                    positions: viewModel.nodePositions,
+            } else if !viewModel.allNodes.isEmpty {
+                CourseBrainOrbitView(
+                    allNodes: viewModel.allNodes,
+                    courseSummaries: viewModel.courseSummaries,
                     selectedNodeID: $viewModel.selectedNodeID,
                     highlightedNodeIDs: viewModel.highlightedNodeIDs,
+                    searchText: viewModel.searchText,
                     onNodeTap: { nodeID in
                         viewModel.selectNode(nodeID)
+                    },
+                    onNodeOpen: { nodeID in
+                        if let node = viewModel.node(for: nodeID),
+                           let url = node.resourceURL {
+                            openURL(url)
+                        }
+                    },
+                    onImportPDF: { url, title in
+                        onImportPDF?(url, title)
                     }
                 )
-                .clipped()
-
-                HStack(spacing: 8) {
-                    Button {
-                        viewModel.setFocusSelectionOnly(!viewModel.focusSelectionOnly)
-                    } label: {
-                        Text(viewModel.focusSelectionOnly ? "Show Full Graph" : "Expand Connections")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color(hex: 0x251E21).opacity(0.95))
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.leading, 16)
-                .padding(.top, 14)
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "brain.head.profile")
@@ -1198,319 +1192,4 @@ private struct CourseBrainSearchBar: View {
     }
 }
 
-private struct CourseBrainGraphCanvas: View {
-    let graph: CourseBrainGraph
-    let positions: [String: CGPoint]
-    @Binding var selectedNodeID: String?
-    let highlightedNodeIDs: Set<String>
-    let onNodeTap: (String) -> Void
-
-    @State private var scale: CGFloat = 1.0
-    @State private var scaleAnchor: CGFloat = 1.0
-    @State private var panOffset: CGSize = .zero
-    @State private var dragOffset: CGSize = .zero
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            let selectedContext = selectedContextNodeIDs()
-
-            ZStack {
-                Color(hex: 0x070708)
-                    .ignoresSafeArea()
-
-                Canvas { context, _ in
-                    drawEdges(in: &context, size: size, selectedContext: selectedContext)
-                }
-                .clipped()
-
-                ForEach(graph.nodes) { node in
-                    if let position = positions[node.id] {
-                        let isInContext = selectedContext.contains(node.id) || highlightedNodeIDs.contains(node.id)
-                        let isDimmed = selectedNodeID != nil && !isInContext
-
-                        Button {
-                            onNodeTap(node.id)
-                        } label: {
-                            CourseBrainNodeBubble(
-                                node: node,
-                                isSelected: selectedNodeID == node.id,
-                                isHighlighted: highlightedNodeIDs.contains(node.id),
-                                isDimmed: isDimmed,
-                                showLabels: scale > 1.35
-                            )
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .animation(.easeInOut(duration: 0.18), value: isDimmed)
-                        .position(screenPoint(for: position, size: size))
-                    }
-                }
-            }
-            .contentShape(Rectangle())
-            .clipped()
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    selectedNodeID = nil
-                }
-            }
-            .simultaneousGesture(
-                DragGesture()
-                    .onChanged { value in
-                        let candidate = CGSize(
-                            width: panOffset.width + value.translation.width,
-                            height: panOffset.height + value.translation.height
-                        )
-                        let clamped = clampedPanOffset(candidate, viewport: size)
-                        dragOffset = CGSize(
-                            width: clamped.width - panOffset.width,
-                            height: clamped.height - panOffset.height
-                        )
-                    }
-                    .onEnded { value in
-                        let candidate = CGSize(
-                            width: panOffset.width + value.translation.width,
-                            height: panOffset.height + value.translation.height
-                        )
-                        panOffset = clampedPanOffset(candidate, viewport: size)
-                        dragOffset = .zero
-                    }
-            )
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { value in
-                        scale = min(max(scaleAnchor * value, 0.65), 2.20)
-                        panOffset = clampedPanOffset(panOffset, viewport: size)
-                    }
-                    .onEnded { _ in
-                        scaleAnchor = scale
-                    }
-            )
-            .onChange(of: graph.fingerprint) { _, _ in
-                scale = 1.0
-                scaleAnchor = 1.0
-                panOffset = .zero
-                dragOffset = .zero
-                if let selectedNodeID, let point = positions[selectedNodeID] {
-                    center(on: point, viewport: size)
-                }
-            }
-            .onChange(of: selectedNodeID) { _, newValue in
-                guard let newValue, let point = positions[newValue] else { return }
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.86, blendDuration: 0.14)) {
-                    center(on: point, viewport: size)
-                }
-            }
-            .onAppear {
-                if let selectedNodeID, let point = positions[selectedNodeID] {
-                    center(on: point, viewport: size)
-                }
-            }
-        }
-    }
-
-    private func selectedContextNodeIDs() -> Set<String> {
-        guard let selectedNodeID else {
-            return Set(graph.nodes.map(\.id))
-        }
-
-        var selected = Set([selectedNodeID])
-        for edge in graph.edges {
-            if edge.source == selectedNodeID {
-                selected.insert(edge.target)
-            } else if edge.target == selectedNodeID {
-                selected.insert(edge.source)
-            }
-        }
-        return selected
-    }
-
-    private func drawEdges(in context: inout GraphicsContext, size: CGSize, selectedContext: Set<String>) {
-        for edge in graph.edges {
-            guard let source = positions[edge.source], let target = positions[edge.target] else { continue }
-            let sourcePoint = screenPoint(for: source, size: size)
-            let targetPoint = screenPoint(for: target, size: size)
-
-            var path = Path()
-            path.move(to: sourcePoint)
-            path.addLine(to: targetPoint)
-
-            let isInContext = selectedContext.contains(edge.source) && selectedContext.contains(edge.target)
-            let isSelectedEdge = edge.source == selectedNodeID || edge.target == selectedNodeID
-
-            let baseColor: Color = edge.relationship == .manualLink ? Color(hex: 0xE84D4D) : .white
-            let opacity: Double
-            if selectedNodeID == nil {
-                opacity = edge.relationship == .manualLink ? 0.70 : 0.17
-            } else if isInContext {
-                opacity = isSelectedEdge ? 0.44 : 0.24
-            } else {
-                opacity = 0.05
-            }
-
-            let strokeColor = baseColor.opacity(opacity)
-            let width: CGFloat = edge.relationship == .manualLink ? (isSelectedEdge ? 2.1 : 1.7) : (isSelectedEdge ? 1.3 : 0.9)
-            context.stroke(path, with: .color(strokeColor), style: StrokeStyle(lineWidth: width, lineCap: .round))
-
-            if edge.directional && (selectedNodeID == nil || isInContext) {
-                let arrowPath = arrowHead(from: sourcePoint, to: targetPoint)
-                context.fill(arrowPath, with: .color(strokeColor.opacity(0.90)))
-            }
-        }
-    }
-
-    private func arrowHead(from start: CGPoint, to end: CGPoint) -> Path {
-        let angle = atan2(end.y - start.y, end.x - start.x)
-        let length: CGFloat = 7
-        let spread: CGFloat = .pi / 7
-
-        let p1 = CGPoint(
-            x: end.x - cos(angle - spread) * length,
-            y: end.y - sin(angle - spread) * length
-        )
-        let p2 = CGPoint(
-            x: end.x - cos(angle + spread) * length,
-            y: end.y - sin(angle + spread) * length
-        )
-
-        var path = Path()
-        path.move(to: end)
-        path.addLine(to: p1)
-        path.addLine(to: p2)
-        path.closeSubpath()
-        return path
-    }
-
-    private func screenPoint(for worldPoint: CGPoint, size: CGSize) -> CGPoint {
-        CGPoint(
-            x: ((worldPoint.x - 0.5) * size.width * scale) + (size.width / 2) + panOffset.width + dragOffset.width,
-            y: ((worldPoint.y - 0.5) * size.height * scale) + (size.height / 2) + panOffset.height + dragOffset.height
-        )
-    }
-
-    private func center(on worldPoint: CGPoint, viewport: CGSize) {
-        let centered = CGSize(
-            width: -((worldPoint.x - 0.5) * viewport.width * scale),
-            height: -((worldPoint.y - 0.5) * viewport.height * scale)
-        )
-        panOffset = clampedPanOffset(centered, viewport: viewport)
-    }
-
-    private func clampedPanOffset(_ candidate: CGSize, viewport: CGSize) -> CGSize {
-        guard !graph.nodes.isEmpty else { return .zero }
-
-        let padding: CGFloat = 20
-        let contentRect: CGRect = contentBounds(panOffset: candidate, viewport: viewport)
-        var adjusted = candidate
-
-        if contentRect.width <= viewport.width - (padding * 2) {
-            let centerX = contentRect.origin.x + (contentRect.size.width / 2)
-            adjusted.width += ((viewport.width / 2) - centerX)
-        } else {
-            if contentRect.minX > padding {
-                adjusted.width -= (contentRect.minX - padding)
-            }
-            if contentRect.maxX < viewport.width - padding {
-                adjusted.width += ((viewport.width - padding) - contentRect.maxX)
-            }
-        }
-
-        let adjustedContentRect: CGRect = contentBounds(panOffset: adjusted, viewport: viewport)
-        if adjustedContentRect.height <= viewport.height - (padding * 2) {
-            let centerY = adjustedContentRect.origin.y + (adjustedContentRect.size.height / 2)
-            adjusted.height += ((viewport.height / 2) - centerY)
-        } else {
-            if adjustedContentRect.minY > padding {
-                adjusted.height -= (adjustedContentRect.minY - padding)
-            }
-            if adjustedContentRect.maxY < viewport.height - padding {
-                adjusted.height += ((viewport.height - padding) - adjustedContentRect.maxY)
-            }
-        }
-
-        return adjusted
-    }
-
-    private func contentBounds(panOffset: CGSize, viewport: CGSize) -> CGRect {
-        let points = graph.nodes.compactMap { node in
-            positions[node.id]
-        }
-
-        guard !points.isEmpty else {
-            return CGRect(x: viewport.width / 2, y: viewport.height / 2, width: 0, height: 0)
-        }
-
-        let rendered = points.map { point in
-            CGPoint(
-                x: ((point.x - 0.5) * viewport.width * scale) + (viewport.width / 2) + panOffset.width,
-                y: ((point.y - 0.5) * viewport.height * scale) + (viewport.height / 2) + panOffset.height
-            )
-        }
-
-        let fallbackX = viewport.width / 2
-        let fallbackY = viewport.height / 2
-        let minX = rendered.map(\ .x).min() ?? fallbackX
-        let maxX = rendered.map(\ .x).max() ?? fallbackX
-        let minY = rendered.map(\ .y).min() ?? fallbackY
-        let maxY = rendered.map(\ .y).max() ?? fallbackY
-
-        return CGRect(x: minX - 72, y: minY - 34, width: (maxX - minX) + 144, height: (maxY - minY) + 68)
-    }
-}
-
-private struct CourseBrainNodeBubble: View {
-    let node: CourseBrainNode
-    let isSelected: Bool
-    let isHighlighted: Bool
-    let isDimmed: Bool
-    let showLabels: Bool
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Circle()
-                .fill(nodeColor)
-                .frame(width: isSelected ? 22 : 18, height: isSelected ? 22 : 18)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isSelected || isHighlighted ? 0.9 : 0.25), lineWidth: isSelected ? 2 : 1)
-                )
-                .shadow(color: nodeColor.opacity(isSelected ? 0.48 : 0.28), radius: isSelected ? 11 : 7, x: 0, y: 0)
-
-            if showLabels || isSelected || isHighlighted {
-                Text(node.title)
-                    .font(.system(size: isSelected ? 13 : 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(.white.opacity(isSelected || isHighlighted ? 0.95 : 0.75))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.black.opacity(isSelected || isHighlighted ? 0.58 : 0.34))
-                    )
-                    .frame(width: 136)
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .opacity(isDimmed ? 0.15 : 1.0)
-    }
-
-    private var nodeColor: Color {
-        switch node.type {
-        case .topic:
-            return Color(hex: 0xD5648A)
-        case .lecture:
-            return Color(hex: 0x4C8DFF)
-        case .assignment:
-            return Color(hex: 0xFF9F45)
-        case .note:
-            return Color(hex: 0x46C97A)
-        case .file:
-            return Color(hex: 0x9AA0AA)
-        case .concept:
-            return Color(hex: 0xA06DFF)
-        }
-    }
-}
+// NOTE: The graph canvas is now rendered via CourseBrainSpriteScene + CourseBrainSpriteView (SpriteKit).

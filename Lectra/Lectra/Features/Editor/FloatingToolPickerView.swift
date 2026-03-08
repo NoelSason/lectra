@@ -65,15 +65,21 @@ struct FloatingToolPickerView: View {
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
-                    .fill(Color(hex: 0x121B2E, opacity: 0.96))
+                    .fill(.regularMaterial)
+                    .environment(\.colorScheme, .dark)
+
                 RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
-                    .fill(LectraGradient.spotlight.opacity(0.35))
+                    .fill(Color(hex: 0x121B2E, opacity: 0.6))
+
                 RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
-                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    .fill(LectraGradient.spotlight.opacity(0.25))
+
+                RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: isVertical ? 24 : 28, style: .continuous))
-        .shadow(color: .black.opacity(0.36), radius: 14, x: 0, y: 8)
+        .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 12)
         .overlay(alignment: .top) {
             if let index = activeWidthEditorIndex {
                 thicknessEditor(for: index)

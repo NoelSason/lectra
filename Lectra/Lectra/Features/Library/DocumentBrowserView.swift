@@ -22,6 +22,7 @@ struct SavedLocalDocument: Codable {
     let localPath: String
     var createdAt: Date?
     var updatedAt: Date?
+    var isFavorite: Bool?
 }
 
 struct SavedLocalFolder: Codable {
@@ -55,6 +56,7 @@ private struct LibraryBackupSnapshot: Codable {
         let updatedAt: Date
         let relativePDFPath: String?
         let folderId: UUID?
+        var isFavorite: Bool?
     }
 
     let createdAt: Date
@@ -174,6 +176,7 @@ struct DocumentBrowserView: View {
     @State private var showBulkMoveSheet = false
 
     @State private var featureNotice: String?
+    @State private var activePDFDownloader: CourseBrainPDFDownloader?
     @State private var backgroundSyncToast: String?
     @State private var backgroundSyncToastTask: Task<Void, Never>? = nil
     @State private var hasPendingBackgroundSyncToast = false
@@ -639,16 +642,17 @@ struct DocumentBrowserView: View {
                 }
             } label: {
                 Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundColor(Color(hex: 0xE84D4D))
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .padding(.top, 8)
+            .contentShape(Rectangle())
 
             if !isSidebarCollapsed {
                 Text("Lectra")
-                    .font(.system(size: 34, weight: .semibold))
+                    .font(.largeTitle.weight(.bold))
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
                     .foregroundStyle(Color.white.opacity(0.95))
@@ -665,11 +669,18 @@ struct DocumentBrowserView: View {
         .padding(.horizontal, isSidebarCollapsed ? 10 : 16)
         .padding(.vertical, 16)
         .background(
-            LinearGradient(
-                colors: [Color(hex: 0x1C1618), Color(hex: 0x131417), Color(hex: 0x1A1114)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+                
+                LinearGradient(
+                    colors: [Color(hex: 0x1C1618).opacity(0.75), Color(hex: 0x131417).opacity(0.85)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .ignoresSafeArea()
         )
     }
 
@@ -683,12 +694,12 @@ struct DocumentBrowserView: View {
             VStack(alignment: .leading, spacing: isSidebarCollapsed ? 0 : 2) {
                 HStack(spacing: isSidebarCollapsed ? 0 : 12) {
                     Image(systemName: section.icon)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .frame(width: 28)
 
                     if !isSidebarCollapsed {
                         Text(section.title)
-                            .font(.system(size: 18, weight: .regular))
+                            .font(.headline)
                             .lineLimit(1)
                     }
 
@@ -701,11 +712,11 @@ struct DocumentBrowserView: View {
             }
             .foregroundColor(Color.white.opacity(0.95))
             .padding(.horizontal, isSidebarCollapsed ? 0 : 10)
-            .padding(.vertical, isSidebarCollapsed ? 8 : 10)
-            .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
+            .padding(.vertical, isSidebarCollapsed ? 12 : 12)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: isSidebarCollapsed ? .center : .leading)
             .contentShape(Rectangle())
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(activeSection == section ? Color(hex: 0x4A222A) : Color.clear)
             )
         }
@@ -827,18 +838,45 @@ struct DocumentBrowserView: View {
 
     private var favoritesPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            genericTopBar(title: "Favorites", filterTitle: "All", includeSearch: false)
+            genericTopBar(title: "Favorites", filterTitle: "All Favorites", includeSearch: false)
                 .padding(.horizontal, 18)
                 .padding(.top, 10)
 
-            Spacer()
-            GenericEmptyStateView(
-                symbol: "folder.badge.star",
-                title: "Find things quicker with Favorites",
-                subtitle: "Simply tap star to add documents or bookmark a page."
-            )
-            .frame(maxWidth: .infinity)
-            Spacer()
+            let favDocs = documents.filter { $0.isFavorite }
+
+            if favDocs.isEmpty {
+                Spacer()
+                GenericEmptyStateView(
+                    symbol: "folder.badge.star",
+                    title: "Find things quicker with Favorites",
+                    subtitle: "Simply tap the star to add documents to favorites."
+                )
+                .frame(maxWidth: .infinity)
+                Spacer()
+            } else {
+                ScrollView {
+                    if isGridView {
+                        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 34) {
+                            ForEach(favDocs) { doc in
+                                documentGridCard(for: doc)
+                            }
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.top, 18)
+                        .padding(.bottom, 44)
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(favDocs) { doc in
+                                documentListRow(for: doc)
+                            }
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.top, 18)
+                        .padding(.bottom, 60)
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
         }
     }
 
@@ -860,7 +898,31 @@ struct DocumentBrowserView: View {
     }
 
     private var courseBrainPane: some View {
-        CourseBrainPane(documents: documents)
+        CourseBrainPane(documents: documents, onImportPDF: { url, title in
+            downloadAndImportCourseBrainPDF(from: url, suggestedTitle: title)
+        })
+    }
+
+    /// Downloads a PDF from a Canvas URL using an in-app WKWebView
+    /// (which shares Safari's session cookies) and imports it into Lectra.
+    private func downloadAndImportCourseBrainPDF(from url: URL, suggestedTitle: String) {
+        featureNotice = "Downloading \"\(suggestedTitle)\"…"
+
+        let downloader = CourseBrainPDFDownloader()
+        // Retain the downloader for the duration of the download
+        self.activePDFDownloader = downloader
+
+        downloader.download(from: url, title: suggestedTitle) { result in
+            activePDFDownloader = nil
+
+            switch result {
+            case .success(let fileURL):
+                importLocalPDF(from: fileURL)
+                featureNotice = "Imported \"\(suggestedTitle)\" into Lectra."
+            case .failure(let error):
+                featureNotice = "Download failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private var gradescopePane: some View {
@@ -1110,6 +1172,16 @@ struct DocumentBrowserView: View {
                             .lineLimit(1)
 
                         if !isSelectionMode {
+                            Button {
+                                toggleFavorite(for: doc)
+                            } label: {
+                                Image(systemName: doc.isFavorite ? "star.fill" : "star")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundColor(doc.isFavorite ? .yellow : Color.gray.opacity(0.8))
+                                    .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(.plain)
+
                             Button {
                                 selectedDocumentForOptions = doc
                             } label: {
@@ -2176,7 +2248,8 @@ struct DocumentBrowserView: View {
                     createdAt: doc.createdAt,
                     updatedAt: doc.updatedAt,
                     relativePDFPath: relativePDFPath,
-                    folderId: folderId(for: doc)
+                    folderId: folderId(for: doc),
+                    isFavorite: doc.isFavorite
                 )
             )
         }
@@ -2397,6 +2470,7 @@ struct DocumentBrowserView: View {
                 title: savedItem.title,
                 localURL: fileURL,
                 id: savedItem.id,
+                isFavorite: savedItem.isFavorite ?? false,
                 createdAt: createdAt,
                 updatedAt: updatedAt
             )
@@ -2839,12 +2913,18 @@ struct DocumentBrowserView: View {
             existingSaved = saved
         }
 
+        var isFav = false
+        if let index = existingSaved.firstIndex(where: { $0.id == docId }) {
+            isFav = existingSaved[index].isFavorite ?? false
+        }
+
         let updated = SavedLocalDocument(
             id: docId,
             title: title,
             localPath: relativePath,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            isFavorite: isFav
         )
 
         if let index = existingSaved.firstIndex(where: { $0.id == docId }) {
@@ -3060,9 +3140,22 @@ struct DocumentBrowserView: View {
             title: title,
             localPath: saved[index].localPath,
             createdAt: saved[index].createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            isFavorite: saved[index].isFavorite
         )
 
+        if let encoded = try? JSONEncoder().encode(saved) {
+            UserDefaults.standard.set(encoded, forKey: localPDFsDefaultsKey)
+        }
+    }
+
+    private func toggleFavorite(for doc: LocalDocument) {
+        doc.isFavorite.toggle()
+        guard let data = UserDefaults.standard.data(forKey: localPDFsDefaultsKey),
+              var saved = try? JSONDecoder().decode([SavedLocalDocument].self, from: data),
+              let index = saved.firstIndex(where: { $0.id == doc.id }) else { return }
+        
+        saved[index].isFavorite = doc.isFavorite
         if let encoded = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(encoded, forKey: localPDFsDefaultsKey)
         }

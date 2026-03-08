@@ -867,102 +867,40 @@ final class CourseBrainGraphBuilder {
     }
 
     private func extractConcepts(from nodes: [CourseBrainNode]) -> [CourseBrainConceptCacheConcept] {
-        struct CandidateStats {
-            var score: Double
-            var appearances: Int
-            var nodeTypes: Set<CourseBrainNodeType>
-        }
-
-        var stats: [String: CandidateStats] = [:]
-
-        for node in nodes where node.type == .lecture || node.type == .assignment || node.type == .note || node.type == .file {
-            let baseWeight: Double
-            switch node.type {
-            case .lecture:
-                baseWeight = 1.25
-            case .assignment:
-                baseWeight = 1.15
-            case .file:
-                baseWeight = 1.0
-            case .note:
-                baseWeight = 1.05
-            default:
-                baseWeight = 1.0
+        let sources = nodes.compactMap { node -> CourseBrainConceptSource? in
+            guard node.type == .lecture || node.type == .assignment || node.type == .note || node.type == .file else {
+                return nil
             }
 
             let text: String
-            if node.type == .note {
+            let kind: CourseBrainConceptSourceKind
+
+            switch node.type {
+            case .lecture:
+                text = topicEvidenceText(for: node)
+                kind = .lecture
+            case .assignment:
+                text = topicEvidenceText(for: node)
+                kind = .assignment
+            case .file:
+                text = topicEvidenceText(for: node)
+                kind = .file
+            case .note:
                 text = [node.title, node.metadata.bestInstructionText, node.metadata.moduleName, node.metadata.folderPath]
                     .compactMap { $0 }
                     .joined(separator: " ")
-            } else {
-                text = topicEvidenceText(for: node)
+                kind = .note
+            case .topic, .concept:
+                return nil
             }
-            let phrases = conceptPhrases(from: text)
-            for phrase in phrases {
-                let slug = "concept:\(slugify(phrase))"
-                var entry = stats[slug] ?? CandidateStats(score: 0, appearances: 0, nodeTypes: [])
-                entry.score += baseWeight
-                entry.appearances += 1
-                entry.nodeTypes.insert(node.type)
-                stats[slug] = entry
-            }
+
+            guard !normalizeWhitespace(text).isEmpty else { return nil }
+            return CourseBrainConceptSource(id: node.id, text: text, kind: kind)
         }
 
-        var concepts: [CourseBrainConceptCacheConcept] = []
-        concepts.reserveCapacity(stats.count)
-
-        for (id, info) in stats {
-            guard info.appearances >= 2 || info.nodeTypes.count >= 2 else { continue }
-            let title = titleFromConceptID(id)
-            guard title.count >= 3 && title.count <= 40 else { continue }
-            concepts.append(.init(id: id, title: title, score: info.score + Double(info.nodeTypes.count)))
+        return CourseBrainConceptExtractor.shared.extractClusters(from: sources).map {
+            CourseBrainConceptCacheConcept(id: $0.id, title: $0.title, score: $0.score)
         }
-
-        concepts.sort { lhs, rhs in
-            if lhs.score == rhs.score {
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-            return lhs.score > rhs.score
-        }
-
-        if concepts.count > 28 {
-            concepts = Array(concepts.prefix(28))
-        }
-
-        return concepts
-    }
-
-    private func conceptPhrases(from text: String) -> Set<String> {
-        let separators = CharacterSet(charactersIn: "-:|()[]{}").union(.newlines)
-        let segments = text
-            .components(separatedBy: separators)
-            .map(normalizeForMatching)
-            .filter { !$0.isEmpty }
-
-        var results: Set<String> = []
-
-        for segment in segments {
-            let tokens = segment
-                .split(separator: " ")
-                .map(String.init)
-                .filter { token in
-                    token.count >= 3 && !stopwords.contains(token)
-                }
-
-            guard !tokens.isEmpty else { continue }
-
-            for n in 1...3 {
-                guard tokens.count >= n else { continue }
-                for i in 0...(tokens.count - n) {
-                    let phrase = tokens[i..<(i + n)].joined(separator: " ")
-                    guard phrase.count >= 3 && phrase.count <= 40 else { continue }
-                    results.insert(phrase)
-                }
-            }
-        }
-
-        return results
     }
 
     private func buildCourseSummaries(from records: [CourseBrainSourceRecord]) -> [CourseBrainCourseSummary] {
@@ -1142,7 +1080,7 @@ final class CourseBrainGraphBuilder {
     }
 }
 
-func courseBrainStableHash(_ input: String) -> Int64 {
+nonisolated func courseBrainStableHash(_ input: String) -> Int64 {
     var hasher = Hasher()
     hasher.combine(input)
     let value = hasher.finalize()

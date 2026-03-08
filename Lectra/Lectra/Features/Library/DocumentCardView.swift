@@ -12,6 +12,7 @@ struct DocumentCardView: View {
     @ObservedObject var document: LocalDocument
     let subtitle: String
     var onOptionsTap: (() -> Void)? = nil
+    var onFavoriteToggle: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -27,35 +28,47 @@ struct DocumentCardView: View {
                     }
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.black.opacity(0.12), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
                     )
+                    .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
 
-                Image(systemName: "star")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Color.gray.opacity(0.65))
-                    .padding(8)
+                Button {
+                    onFavoriteToggle?()
+                } label: {
+                    Image(systemName: document.isFavorite ? "star.fill" : "star")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(document.isFavorite ? Color.yellow : Color.gray.opacity(0.8))
+                        .padding(12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
 
             HStack(alignment: .top, spacing: 4) {
                 Text(document.title)
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundColor(.white)
+                    .font(.headline)
+                    .foregroundColor(Color.white.opacity(0.95))
                     .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let onOptionsTap {
                     Button(action: onOptionsTap) {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                            .frame(width: 24, height: 24)
+                        Image(systemName: "ellipsis.circle.fill")
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.8))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .offset(x: 10, y: -10)
                 }
             }
+            .padding(.top, 4)
 
             Text(subtitle)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.58))
+                .font(.subheadline)
+                .foregroundColor(.secondary)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

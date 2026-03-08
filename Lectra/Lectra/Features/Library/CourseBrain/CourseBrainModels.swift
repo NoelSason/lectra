@@ -64,7 +64,7 @@ enum CourseBrainJSONValue: Codable, Hashable {
         }
     }
 
-    var stringValue: String? {
+    nonisolated var stringValue: String? {
         switch self {
         case .string(let value):
             return value
@@ -80,7 +80,7 @@ enum CourseBrainJSONValue: Codable, Hashable {
         }
     }
 
-    var intValue: Int? {
+    nonisolated var intValue: Int? {
         switch self {
         case .number(let value):
             return Int(value)
@@ -91,7 +91,7 @@ enum CourseBrainJSONValue: Codable, Hashable {
         }
     }
 
-    var doubleValue: Double? {
+    nonisolated var doubleValue: Double? {
         switch self {
         case .number(let value):
             return value
@@ -102,7 +102,7 @@ enum CourseBrainJSONValue: Codable, Hashable {
         }
     }
 
-    var boolValue: Bool? {
+    nonisolated var boolValue: Bool? {
         switch self {
         case .bool(let value):
             return value
@@ -113,14 +113,14 @@ enum CourseBrainJSONValue: Codable, Hashable {
         }
     }
 
-    var objectValue: [String: CourseBrainJSONValue]? {
+    nonisolated var objectValue: [String: CourseBrainJSONValue]? {
         if case .object(let value) = self {
             return value
         }
         return nil
     }
 
-    var arrayValue: [CourseBrainJSONValue]? {
+    nonisolated var arrayValue: [CourseBrainJSONValue]? {
         if case .array(let value) = self {
             return value
         }
@@ -129,31 +129,31 @@ enum CourseBrainJSONValue: Codable, Hashable {
 }
 
 extension Dictionary where Key == String, Value == CourseBrainJSONValue {
-    func string(_ key: String) -> String? {
+    nonisolated func string(_ key: String) -> String? {
         self[key]?.stringValue
     }
 
-    func int(_ key: String) -> Int? {
+    nonisolated func int(_ key: String) -> Int? {
         self[key]?.intValue
     }
 
-    func double(_ key: String) -> Double? {
+    nonisolated func double(_ key: String) -> Double? {
         self[key]?.doubleValue
     }
 
-    func bool(_ key: String) -> Bool? {
+    nonisolated func bool(_ key: String) -> Bool? {
         self[key]?.boolValue
     }
 
-    func object(_ key: String) -> [String: CourseBrainJSONValue]? {
+    nonisolated func object(_ key: String) -> [String: CourseBrainJSONValue]? {
         self[key]?.objectValue
     }
 
-    func array(_ key: String) -> [CourseBrainJSONValue]? {
+    nonisolated func array(_ key: String) -> [CourseBrainJSONValue]? {
         self[key]?.arrayValue
     }
 
-    func firstString(keys: [String]) -> String? {
+    nonisolated func firstString(keys: [String]) -> String? {
         for key in keys {
             if let value = string(key), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return value
@@ -371,7 +371,7 @@ struct CourseBrainCourseSummary: Identifiable, Hashable {
 }
 
 extension DateFormatter {
-    static let courseBrainTimelineFormatter: DateFormatter = {
+    nonisolated static let courseBrainTimelineFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-'W'ww"
         return formatter
@@ -379,20 +379,20 @@ extension DateFormatter {
 }
 
 extension ISO8601DateFormatter {
-    static let courseBrainFlexible: ISO8601DateFormatter = {
+    nonisolated static let courseBrainFlexible: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
 
-    static let courseBrainStandard: ISO8601DateFormatter = {
+    nonisolated static let courseBrainStandard: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
 }
 
-func courseBrainParseISODate(_ raw: String?) -> Date? {
+nonisolated func courseBrainParseISODate(_ raw: String?) -> Date? {
     guard let raw else { return nil }
     if let parsed = ISO8601DateFormatter.courseBrainFlexible.date(from: raw) {
         return parsed

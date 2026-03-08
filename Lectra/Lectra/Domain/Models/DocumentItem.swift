@@ -62,6 +62,7 @@ final class LocalDocument: Identifiable, ObservableObject {
     let courseId: Int?
     let storagePath: String
     let supabaseRowId: UUID
+    @Published var isFavorite: Bool
     @Published var status: DocumentStatus
     @Published var localPDFURL: URL?
     let createdAt: Date
@@ -85,6 +86,7 @@ final class LocalDocument: Identifiable, ObservableObject {
         self.courseId = item.itemData.courseId
         self.storagePath = item.itemData.storagePath
         self.supabaseRowId = item.id
+        self.isFavorite = false
         self.status = DocumentStatus(rawValue: item.itemData.status) ?? .pendingAnnotation
         let created = Self.parseISODate(item.createdAt) ?? Date()
         self.createdAt = created
@@ -96,11 +98,13 @@ final class LocalDocument: Identifiable, ObservableObject {
         title: String,
         localURL: URL,
         id: UUID = UUID(),
+        isFavorite: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
         self.title = title
+        self.isFavorite = isFavorite
         self.courseId = nil
         self.storagePath = ""
         self.supabaseRowId = UUID()

@@ -68,7 +68,7 @@ struct GradescopeHubView: View {
     private var topBar: some View {
         HStack {
             Text("Gradescope")
-                .font(.system(size: 42, weight: .semibold))
+                .font(.largeTitle.weight(.bold))
                 .foregroundColor(.white.opacity(0.96))
 
             Spacer(minLength: 0)
@@ -80,16 +80,24 @@ struct GradescopeHubView: View {
                         bootstrapAuthenticatedState()
                     }
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(Color(hex: 0xE84D4D))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color(hex: 0xE84D4D).opacity(0.12))
+                .clipShape(Capsule())
 
                 Button("Sign Out") {
                     gradescopeManager.logout()
                     selectedCourseID = ""
                     localMessage = nil
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundColor(Color(hex: 0xE84D4D))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color(hex: 0xE84D4D).opacity(0.12))
+                .clipShape(Capsule())
             }
         }
     }
@@ -258,14 +266,14 @@ struct GradescopeHubView: View {
     private func assignmentRow(_ assignment: GSAssignment) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(assignment.name)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.headline)
                 .foregroundColor(.white)
                 .multilineTextAlignment(.leading)
 
             HStack {
                 if let due = assignment.dueDate {
                     Text("Due \(due.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.subheadline)
                         .foregroundColor(.white.opacity(0.72))
                 }
 
@@ -283,12 +291,12 @@ struct GradescopeHubView: View {
                         Image(systemName: "square.and.arrow.down")
                         Text("Import Template")
                     }
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .background(Color(hex: 0x4A222A))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(Capsule())
                 }
                 .disabled(isImportingTemplate)
             }

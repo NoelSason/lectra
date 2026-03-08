@@ -6,9 +6,13 @@ struct CourseBrainRepositorySnapshot {
     let manualLinks: [CourseBrainManualLink]
     let syncedNoteNodes: [CourseBrainNode]
     let collapsedTimelineBuckets: Set<String>
+    let courseTwins: [CourseTwin]
+    let evidenceLinks: [CourseBrainEvidenceLink]
+    let missionArtifacts: [CourseBrainMissionArtifact]
+    let studyPlans: [CourseBrainStudyPlanArtifact]
 }
 
-private struct CourseBrainSyncedItemRow: Codable, Identifiable {
+struct CourseBrainSyncedItemRow: Codable, Identifiable {
     let id: UUID
     let userId: UUID
     let itemType: String
@@ -55,6 +59,50 @@ private struct CourseBrainTimelineMetaPayload: Codable {
     let updatedAt: String
 }
 
+private struct CourseBrainAssignmentMissionPayload: Codable {
+    let version: Int
+    let courseId: Int
+    let assignmentId: String
+    let snapshotFingerprint: String
+    let briefMarkdown: String?
+    let shortlistedResourceIDs: [String]
+    let conceptIDs: [String]
+    let evidenceIDs: [String]
+    let createdAt: String
+    let updatedAt: String
+    let extras: [String: CourseBrainJSONValue]
+}
+
+private struct CourseBrainEvidenceLinkPayload: Codable {
+    let version: Int
+    let courseId: Int?
+    let assignmentId: String?
+    let snapshotFingerprint: String?
+    let sourceKind: String
+    let targetKind: String
+    let targetId: String
+    let sourceNodeId: String?
+    let sourceDocumentId: String?
+    let selectionText: String?
+    let excerpt: String?
+    let pageIndex: Int?
+    let pageRect: CourseBrainRect?
+    let createdAt: String
+    let updatedAt: String
+    let extras: [String: CourseBrainJSONValue]
+}
+
+private struct CourseBrainStudyPlanPayload: Codable {
+    let version: Int
+    let courseId: Int
+    let assignmentId: String
+    let snapshotFingerprint: String
+    let sprints: [StudySprint]
+    let createdAt: String
+    let updatedAt: String
+    let extras: [String: CourseBrainJSONValue]
+}
+
 private struct CourseBrainInsertPayload<T: Encodable>: Encodable {
     let user_id: UUID
     let item_type: String
@@ -62,11 +110,15 @@ private struct CourseBrainInsertPayload<T: Encodable>: Encodable {
 }
 
 final class CourseBrainRepository {
-    private let client = SupabaseManager.shared.client
+    private lazy var client = SupabaseManager.shared.client
+    private let missionNormalizer = CourseBrainMissionNormalizer()
 
     private let manualLinkItemType = "course_brain_manual_link"
     private let conceptCacheItemType = "course_brain_concept_cache"
     private let timelineMetaItemType = "course_brain_timeline_meta"
+    private let assignmentMissionItemType = "course_brain_assignment_mission_v1"
+    private let evidenceLinkItemType = "course_brain_evidence_link_v1"
+    private let studyPlanItemType = "course_brain_study_plan_v1"
 
     func fetchSnapshot() async throws -> CourseBrainRepositorySnapshot {
         let userId = try await resolveUserId()
@@ -79,16 +131,34 @@ final class CourseBrainRepository {
             .execute()
             .value
 
+        return snapshot(from: rows)
+    }
+
+    func snapshot(from rows: [CourseBrainSyncedItemRow]) -> CourseBrainRepositorySnapshot {
         let sourceRecords = extractSourceRecords(from: rows)
         let manualLinks = extractManualLinks(from: rows)
+        let evidenceLinks = extractEvidenceLinks(from: rows)
+        let missionArtifacts = extractMissionArtifacts(from: rows)
+        let studyPlans = extractStudyPlans(from: rows)
         let syncedNoteNodes = extractSyncedNotes(from: rows)
         let collapsedTimelineBuckets = extractCollapsedTimelineBuckets(from: rows)
+        let courseTwins = missionNormalizer.buildCourseTwins(
+            from: rows,
+            manualLinks: manualLinks,
+            evidenceLinks: evidenceLinks,
+            missionArtifacts: missionArtifacts,
+            studyPlans: studyPlans
+        )
 
         return CourseBrainRepositorySnapshot(
             sourceRecords: sourceRecords,
             manualLinks: manualLinks,
             syncedNoteNodes: syncedNoteNodes,
-            collapsedTimelineBuckets: collapsedTimelineBuckets
+            collapsedTimelineBuckets: collapsedTimelineBuckets,
+            courseTwins: courseTwins,
+            evidenceLinks: evidenceLinks,
+            missionArtifacts: missionArtifacts,
+            studyPlans: studyPlans
         )
     }
 
@@ -159,6 +229,162 @@ final class CourseBrainRepository {
         try await replaceSingletonItem(itemType: timelineMetaItemType, itemData: payload)
     }
 
+    func upsertMissionArtifact(
+        courseId: Int,
+        assignmentId: String,
+        snapshotFingerprint: String,
+        briefMarkdown: String?,
+        shortlistedResourceIDs: [String],
+        conceptIDs: [String],
+        evidenceIDs: [String],
+        extras: [String: CourseBrainJSONValue] = [:]
+    ) async throws -> CourseBrainMissionArtifact {
+        let userId = try await resolveUserId()
+        let nowString = ISO8601DateFormatter.courseBrainStandard.string(from: Date())
+        let existingRows = try await fetchRows(forItemType: assignmentMissionItemType, userId: userId)
+        let matchingArtifacts = existingRows.compactMap(parseMissionArtifact).filter {
+            $0.courseId == courseId && $0.assignmentId == assignmentId
+        }
+
+        try await deleteRows(matchingArtifacts.map(\.rowId), userId: userId, itemType: assignmentMissionItemType)
+
+        let payload = CourseBrainAssignmentMissionPayload(
+            version: 1,
+            courseId: courseId,
+            assignmentId: assignmentId,
+            snapshotFingerprint: snapshotFingerprint,
+            briefMarkdown: briefMarkdown,
+            shortlistedResourceIDs: shortlistedResourceIDs,
+            conceptIDs: conceptIDs,
+            evidenceIDs: evidenceIDs,
+            createdAt: matchingArtifacts.first.map { ISO8601DateFormatter.courseBrainStandard.string(from: $0.createdAt) } ?? nowString,
+            updatedAt: nowString,
+            extras: extras
+        )
+
+        let inserted: [CourseBrainSyncedItemRow] = try await client
+            .from("synced_items")
+            .insert(CourseBrainInsertPayload(user_id: userId, item_type: assignmentMissionItemType, item_data: payload))
+            .select()
+            .execute()
+            .value
+
+        guard let row = inserted.first,
+              let artifact = parseMissionArtifact(row) else {
+            throw NSError(domain: "CourseBrainRepository", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save Course Brain mission artifact."])
+        }
+
+        return artifact
+    }
+
+    func deleteMissionArtifact(rowId: UUID) async throws {
+        let userId = try await resolveUserId()
+        try await deleteRows([rowId], userId: userId, itemType: assignmentMissionItemType)
+    }
+
+    func createEvidenceLink(
+        courseId: Int?,
+        assignmentId: String?,
+        snapshotFingerprint: String?,
+        sourceKind: CourseBrainEvidenceSourceKind,
+        targetKind: CourseBrainEvidenceTargetKind,
+        targetId: String,
+        sourceNodeId: String?,
+        sourceDocumentId: UUID?,
+        selectionText: String?,
+        excerpt: String?,
+        pageIndex: Int?,
+        pageRect: CourseBrainRect?,
+        extras: [String: CourseBrainJSONValue] = [:]
+    ) async throws -> CourseBrainEvidenceLink {
+        let userId = try await resolveUserId()
+        let nowString = ISO8601DateFormatter.courseBrainStandard.string(from: Date())
+        let payload = CourseBrainEvidenceLinkPayload(
+            version: 1,
+            courseId: courseId,
+            assignmentId: assignmentId,
+            snapshotFingerprint: snapshotFingerprint,
+            sourceKind: sourceKind.rawValue,
+            targetKind: targetKind.rawValue,
+            targetId: targetId,
+            sourceNodeId: sourceNodeId,
+            sourceDocumentId: sourceDocumentId?.uuidString,
+            selectionText: selectionText,
+            excerpt: excerpt,
+            pageIndex: pageIndex,
+            pageRect: pageRect,
+            createdAt: nowString,
+            updatedAt: nowString,
+            extras: extras
+        )
+
+        let inserted: [CourseBrainSyncedItemRow] = try await client
+            .from("synced_items")
+            .insert(CourseBrainInsertPayload(user_id: userId, item_type: evidenceLinkItemType, item_data: payload))
+            .select()
+            .execute()
+            .value
+
+        guard let row = inserted.first,
+              let evidenceLink = parseEvidenceLink(row) else {
+            throw NSError(domain: "CourseBrainRepository", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save Course Brain evidence link."])
+        }
+
+        return evidenceLink
+    }
+
+    func deleteEvidenceLink(rowId: UUID) async throws {
+        let userId = try await resolveUserId()
+        try await deleteRows([rowId], userId: userId, itemType: evidenceLinkItemType)
+    }
+
+    func upsertStudyPlan(
+        courseId: Int,
+        assignmentId: String,
+        snapshotFingerprint: String,
+        sprints: [StudySprint],
+        extras: [String: CourseBrainJSONValue] = [:]
+    ) async throws -> CourseBrainStudyPlanArtifact {
+        let userId = try await resolveUserId()
+        let nowString = ISO8601DateFormatter.courseBrainStandard.string(from: Date())
+        let existingRows = try await fetchRows(forItemType: studyPlanItemType, userId: userId)
+        let matchingPlans = existingRows.compactMap(parseStudyPlan).filter {
+            $0.courseId == courseId && $0.assignmentId == assignmentId
+        }
+
+        try await deleteRows(matchingPlans.map(\.rowId), userId: userId, itemType: studyPlanItemType)
+
+        let payload = CourseBrainStudyPlanPayload(
+            version: 1,
+            courseId: courseId,
+            assignmentId: assignmentId,
+            snapshotFingerprint: snapshotFingerprint,
+            sprints: sprints,
+            createdAt: matchingPlans.first.map { ISO8601DateFormatter.courseBrainStandard.string(from: $0.createdAt) } ?? nowString,
+            updatedAt: nowString,
+            extras: extras
+        )
+
+        let inserted: [CourseBrainSyncedItemRow] = try await client
+            .from("synced_items")
+            .insert(CourseBrainInsertPayload(user_id: userId, item_type: studyPlanItemType, item_data: payload))
+            .select()
+            .execute()
+            .value
+
+        guard let row = inserted.first,
+              let artifact = parseStudyPlan(row) else {
+            throw NSError(domain: "CourseBrainRepository", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save Course Brain study plan."])
+        }
+
+        return artifact
+    }
+
+    func deleteStudyPlan(rowId: UUID) async throws {
+        let userId = try await resolveUserId()
+        try await deleteRows([rowId], userId: userId, itemType: studyPlanItemType)
+    }
+
     private func replaceSingletonItem<T: Encodable>(itemType: String, itemData: T) async throws {
         let userId = try await resolveUserId()
 
@@ -194,12 +420,51 @@ final class CourseBrainRepository {
         return session.user.id
     }
 
+    private func fetchRows(forItemType itemType: String, userId: UUID) async throws -> [CourseBrainSyncedItemRow] {
+        try await client
+            .from("synced_items")
+            .select()
+            .eq("user_id", value: userId.uuidString)
+            .eq("item_type", value: itemType)
+            .order("updated_at", ascending: false)
+            .execute()
+            .value
+    }
+
+    private func deleteRows(_ rowIDs: [UUID], userId: UUID, itemType: String) async throws {
+        for rowID in rowIDs {
+            _ = try await client
+                .from("synced_items")
+                .delete()
+                .eq("id", value: rowID.uuidString)
+                .eq("user_id", value: userId.uuidString)
+                .eq("item_type", value: itemType)
+                .execute()
+        }
+    }
+
     private func extractSourceRecords(from rows: [CourseBrainSyncedItemRow]) -> [CourseBrainSourceRecord] {
         var result: [CourseBrainSourceRecord] = []
         result.reserveCapacity(rows.count)
 
         for row in rows {
             guard let data = row.itemData.objectValue else { continue }
+
+            if let snapshots = data.array("courseSnapshots") {
+                for snapshotValue in snapshots {
+                    guard let snapshotObject = snapshotValue.objectValue else { continue }
+                    if let indexedContent = snapshotObject.array("indexedContent") {
+                        for entry in indexedContent {
+                            guard let entryObject = entry.objectValue,
+                                  let record = parseIndexedRecord(entryObject, row: row) else {
+                                continue
+                            }
+                            result.append(record)
+                        }
+                    }
+                }
+                continue
+            }
 
             if let indexedContent = data.array("indexedContent") {
                 for entry in indexedContent {
@@ -294,6 +559,97 @@ final class CourseBrainRepository {
         )
     }
 
+    private func extractMissionArtifacts(from rows: [CourseBrainSyncedItemRow]) -> [CourseBrainMissionArtifact] {
+        rows.compactMap(parseMissionArtifact)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func parseMissionArtifact(_ row: CourseBrainSyncedItemRow) -> CourseBrainMissionArtifact? {
+        guard row.itemType == assignmentMissionItemType,
+              let object = row.itemData.objectValue,
+              let courseId = object.int("courseId"),
+              let assignmentId = object.string("assignmentId"),
+              let snapshotFingerprint = object.string("snapshotFingerprint") else {
+            return nil
+        }
+
+        return CourseBrainMissionArtifact(
+            rowId: row.id,
+            courseId: courseId,
+            assignmentId: assignmentId,
+            snapshotFingerprint: snapshotFingerprint,
+            briefMarkdown: object.firstString(keys: ["briefMarkdown"]),
+            shortlistedResourceIDs: object.stringArray("shortlistedResourceIDs"),
+            conceptIDs: object.stringArray("conceptIDs"),
+            evidenceIDs: object.stringArray("evidenceIDs"),
+            createdAt: courseBrainParseISODate(object.firstString(keys: ["createdAt"])) ?? courseBrainParseISODate(row.createdAt) ?? Date(),
+            updatedAt: courseBrainParseISODate(object.firstString(keys: ["updatedAt"])) ?? courseBrainParseISODate(row.updatedAt) ?? Date(),
+            rawPayload: object
+        )
+    }
+
+    private func extractEvidenceLinks(from rows: [CourseBrainSyncedItemRow]) -> [CourseBrainEvidenceLink] {
+        rows.compactMap(parseEvidenceLink)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func parseEvidenceLink(_ row: CourseBrainSyncedItemRow) -> CourseBrainEvidenceLink? {
+        guard row.itemType == evidenceLinkItemType,
+              let object = row.itemData.objectValue,
+              let targetId = object.string("targetId") else {
+            return nil
+        }
+
+        let rect = object["pageRect"].flatMap { decodeJSONValue($0, as: CourseBrainRect.self) }
+
+        return CourseBrainEvidenceLink(
+            rowId: row.id,
+            courseId: object.int("courseId"),
+            assignmentId: object.string("assignmentId"),
+            snapshotFingerprint: object.string("snapshotFingerprint"),
+            sourceKind: CourseBrainEvidenceSourceKind(rawValue: object.string("sourceKind") ?? "") ?? .noteNode,
+            targetKind: CourseBrainEvidenceTargetKind(rawValue: object.string("targetKind") ?? "") ?? .resource,
+            targetId: targetId,
+            sourceNodeId: object.string("sourceNodeId"),
+            sourceDocumentId: object.string("sourceDocumentId").flatMap(UUID.init(uuidString:)),
+            selectionText: object.firstString(keys: ["selectionText"]),
+            excerpt: object.firstString(keys: ["excerpt"]),
+            pageIndex: object.int("pageIndex"),
+            pageRect: rect,
+            createdAt: courseBrainParseISODate(object.firstString(keys: ["createdAt"])) ?? courseBrainParseISODate(row.createdAt) ?? Date(),
+            updatedAt: courseBrainParseISODate(object.firstString(keys: ["updatedAt"])) ?? courseBrainParseISODate(row.updatedAt) ?? Date(),
+            rawPayload: object
+        )
+    }
+
+    private func extractStudyPlans(from rows: [CourseBrainSyncedItemRow]) -> [CourseBrainStudyPlanArtifact] {
+        rows.compactMap(parseStudyPlan)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func parseStudyPlan(_ row: CourseBrainSyncedItemRow) -> CourseBrainStudyPlanArtifact? {
+        guard row.itemType == studyPlanItemType,
+              let object = row.itemData.objectValue,
+              let courseId = object.int("courseId"),
+              let assignmentId = object.string("assignmentId"),
+              let snapshotFingerprint = object.string("snapshotFingerprint"),
+              let sprintsValue = object["sprints"],
+              let sprints = decodeJSONValue(sprintsValue, as: [StudySprint].self) else {
+            return nil
+        }
+
+        return CourseBrainStudyPlanArtifact(
+            rowId: row.id,
+            courseId: courseId,
+            assignmentId: assignmentId,
+            snapshotFingerprint: snapshotFingerprint,
+            sprints: sprints,
+            createdAt: courseBrainParseISODate(object.firstString(keys: ["createdAt"])) ?? courseBrainParseISODate(row.createdAt) ?? Date(),
+            updatedAt: courseBrainParseISODate(object.firstString(keys: ["updatedAt"])) ?? courseBrainParseISODate(row.updatedAt) ?? Date(),
+            rawPayload: object
+        )
+    }
+
     private func extractSyncedNotes(from rows: [CourseBrainSyncedItemRow]) -> [CourseBrainNode] {
         var notes: [CourseBrainNode] = []
         notes.reserveCapacity(48)
@@ -357,5 +713,40 @@ final class CourseBrainRepository {
         }
 
         return []
+    }
+
+    private func decodeJSONValue<T: Decodable>(_ value: CourseBrainJSONValue, as type: T.Type) -> T? {
+        func convert(_ value: CourseBrainJSONValue) -> Any {
+            switch value {
+            case .string(let value):
+                return value
+            case .number(let value):
+                return value
+            case .bool(let value):
+                return value
+            case .null:
+                return NSNull()
+            case .array(let values):
+                return values.map(convert)
+            case .object(let object):
+                return Dictionary(uniqueKeysWithValues: object.map { ($0.key, convert($0.value)) })
+            }
+        }
+
+        let jsonObject = convert(value)
+        guard JSONSerialization.isValidJSONObject(jsonObject),
+              let data = try? JSONSerialization.data(withJSONObject: jsonObject),
+              let decoded = try? JSONDecoder().decode(type, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+}
+
+private extension Dictionary where Key == String, Value == CourseBrainJSONValue {
+    func stringArray(_ key: String) -> [String] {
+        array(key)?
+            .compactMap { $0.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
     }
 }
