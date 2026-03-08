@@ -228,6 +228,14 @@ struct DocumentBrowserView: View {
         isSidebarCollapsed ? 86 : 292
     }
 
+    private var visibleSidebarSections: [LibrarySection] {
+        [.documents, .courseBrain, .gradescope]
+    }
+
+    private var expandedSidebarContentMaxWidth: CGFloat {
+        1220
+    }
+
     private var currentFolder: LocalFolder? {
         guard let currentFolderId else { return nil }
         return folders.first(where: { $0.id == currentFolderId })
@@ -827,7 +835,7 @@ struct DocumentBrowserView: View {
                     .padding(.bottom, 10)
             }
 
-            ForEach(LibrarySection.allCases) { section in
+            ForEach(visibleSidebarSections) { section in
                 sidebarRow(for: section)
             }
 
@@ -937,6 +945,15 @@ struct DocumentBrowserView: View {
                         documentsListView
                     }
                 }
+                .frame(
+                    maxWidth: isSidebarCollapsed ? .infinity : expandedSidebarContentMaxWidth,
+                    alignment: .leading
+                )
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: isSidebarCollapsed ? .topLeading : .top
+                )
 
                 if showSearchOverlay {
                     searchOverlay
@@ -1006,7 +1023,6 @@ struct DocumentBrowserView: View {
                 selectButton
                 newButton
                 viewModeButton
-                cloudButton
             }
         }
     }
