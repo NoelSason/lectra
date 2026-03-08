@@ -110,6 +110,15 @@ private struct CourseBrainInsertPayload<T: Encodable>: Encodable {
 }
 
 final class CourseBrainRepository {
+    nonisolated static let derivedItemTypesToPurge: Set<String> = [
+        "course_brain_manual_link",
+        "course_brain_concept_cache",
+        "course_brain_timeline_meta",
+        "course_brain_assignment_mission_v1",
+        "course_brain_evidence_link_v1",
+        "course_brain_study_plan_v1",
+    ]
+
     private lazy var client = SupabaseManager.shared.client
     private let missionNormalizer = CourseBrainMissionNormalizer()
 
@@ -385,6 +394,17 @@ final class CourseBrainRepository {
         try await deleteRows([rowId], userId: userId, itemType: studyPlanItemType)
     }
 
+    func purgeDerivedState() async throws {
+        let userId = try await resolveUserId()
+        for itemType in Self.derivedItemTypesToPurge.sorted() {
+            try await deleteAllRows(forItemType: itemType, userId: userId)
+        }
+    }
+
+    func rowsRemainingAfterPurgingDerivedState(_ rows: [CourseBrainSyncedItemRow]) -> [CourseBrainSyncedItemRow] {
+        rows.filter { !Self.derivedItemTypesToPurge.contains($0.itemType) }
+    }
+
     private func replaceSingletonItem<T: Encodable>(itemType: String, itemData: T) async throws {
         let userId = try await resolveUserId()
 
@@ -429,6 +449,15 @@ final class CourseBrainRepository {
             .order("updated_at", ascending: false)
             .execute()
             .value
+    }
+
+    private func deleteAllRows(forItemType itemType: String, userId: UUID) async throws {
+        _ = try await client
+            .from("synced_items")
+            .delete()
+            .eq("user_id", value: userId.uuidString)
+            .eq("item_type", value: itemType)
+            .execute()
     }
 
     private func deleteRows(_ rowIDs: [UUID], userId: UUID, itemType: String) async throws {
@@ -499,8 +528,16 @@ final class CourseBrainRepository {
 
         let courseId = object.int("courseId") ?? object.int("course_id")
         let courseName = object.firstString(keys: ["courseName", "course_name"])
+        let assignmentId = object.string("assignmentId")
+            ?? object.string("assignment_id")
+            ?? object.int("assignmentId").map(String.init)
+            ?? object.int("assignment_id").map(String.init)
         let moduleName = object.firstString(keys: ["moduleName", "module", "section"])
         let folderPath = object.firstString(keys: ["folderPath", "folder_path"])
+        let submissionStatus = CourseBrainSubmissionStatus.parseCanvasValue(
+            object.firstString(keys: ["submissionStatus", "submission_status"])
+        )
+        let submissionSummary = CourseBrainSubmissionSummary.parseCanvasObject(object)
 
         let urlString = object.firstString(keys: ["url", "sourceUrl", "source_url"])?.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = urlString.flatMap(URL.init(string:))
@@ -515,6 +552,7 @@ final class CourseBrainRepository {
             sourceItemType: row.itemType,
             courseId: courseId,
             courseName: courseName,
+            assignmentId: assignmentId,
             type: type,
             title: title,
             moduleName: moduleName,
@@ -525,6 +563,9 @@ final class CourseBrainRepository {
             scannedAt: scannedAt,
             url: url,
             platform: object.firstString(keys: ["platform", "sourcePlatform"]),
+            submitted: object.bool("submitted"),
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary,
             instructions: object.firstString(keys: ["instructions"]),
             description: object.firstString(keys: ["description"]),
             body: object.firstString(keys: ["body"]),
@@ -669,6 +710,10 @@ final class CourseBrainRepository {
             let metadata = CourseBrainNodeMetadata(
                 courseName: data.firstString(keys: ["courseName", "course_name"]),
                 moduleName: data.firstString(keys: ["moduleName", "module"]),
+                assignmentId: data.string("assignmentId")
+                    ?? data.string("assignment_id")
+                    ?? data.int("assignmentId").map(String.init)
+                    ?? data.int("assignment_id").map(String.init),
                 dueAt: courseBrainParseISODate(data.firstString(keys: ["dueAt", "due_at"])),
                 unlockAt: courseBrainParseISODate(data.firstString(keys: ["unlockAt", "unlock_at"])),
                 lockAt: courseBrainParseISODate(data.firstString(keys: ["lockAt", "lock_at"])),
@@ -678,6 +723,11 @@ final class CourseBrainRepository {
                 sourceItemType: row.itemType,
                 sourceSyncedItemId: row.id,
                 sourceURLString: url?.absoluteString,
+                submitted: data.bool("submitted"),
+                submissionStatus: CourseBrainSubmissionStatus.parseCanvasValue(
+                    data.firstString(keys: ["submissionStatus", "submission_status"])
+                ),
+                submissionSummary: CourseBrainSubmissionSummary.parseCanvasObject(data),
                 instructions: data.firstString(keys: ["instructions"]),
                 description: data.firstString(keys: ["description"]),
                 body: data.firstString(keys: ["body"]),

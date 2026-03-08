@@ -14,6 +14,16 @@ final class GradescopeHTTPClient {
 
     var csrfToken: String?
 
+    var sessionExpirationDate: Date? {
+        let gradescopeCookies = cookies(domainContains: "gradescope.com")
+        // Typically, the "_gradescope_session" handles actual auth.
+        // It might be a session cookie (expires=nil) or explicit.
+        if let authCookie = gradescopeCookies.first(where: { $0.name == "_gradescope_session" }) {
+            return authCookie.expiresDate
+        }
+        return nil
+    }
+
     init(
         baseURL: URL = URL(string: "https://www.gradescope.com")!,
         cookieStorage: HTTPCookieStorage = .shared

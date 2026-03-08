@@ -12,6 +12,10 @@ final class GradescopeManager: ObservableObject {
     @Published private(set) var diagnosticsReport: String?
     @Published var errorMessage: String?
 
+    var sessionExpirationDate: Date? {
+        authService.sessionExpirationDate
+    }
+
     private let authService: GradescopeAuthService
     private let catalogService: GradescopeCatalogService
     private let templateService: GradescopeTemplateService

@@ -32,14 +32,7 @@ struct CourseBrainOrbitView: View {
     }
 
     private var urgentItems: [CourseBrainNode] {
-        let now = Date()
-        let oneWeekFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
-
-        return allNodes.filter { node in
-            guard let due = node.metadata.dueAt else { return false }
-            return due > now && due <= oneWeekFromNow
-        }
-        .sorted { ($0.metadata.dueAt ?? .distantFuture) < ($1.metadata.dueAt ?? .distantFuture) }
+        Self.dueSoonNodes(from: allNodes)
     }
 
     private var filteredNodes: [CourseBrainNode] {
@@ -69,6 +62,34 @@ struct CourseBrainOrbitView: View {
             .padding(.top, 12)
         }
         .background(Color(hex: 0x070708))
+    }
+
+    static func dueSoonNodes(from nodes: [CourseBrainNode], now: Date = Date()) -> [CourseBrainNode] {
+        let oneWeekFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
+
+        return nodes
+            .filter { node in
+                guard let due = node.metadata.dueAt else { return false }
+                if node.metadata.headlineSubmissionStatus?.isCompletionState == true {
+                    return false
+                }
+                return due > now && due <= oneWeekFromNow
+            }
+            .sorted { lhs, rhs in
+                let lhsRank = lhs.metadata.headlineSubmissionStatus?.attentionSortRank ?? CourseBrainSubmissionStatus.unknown.attentionSortRank
+                let rhsRank = rhs.metadata.headlineSubmissionStatus?.attentionSortRank ?? CourseBrainSubmissionStatus.unknown.attentionSortRank
+                if lhsRank != rhsRank {
+                    return lhsRank < rhsRank
+                }
+
+                let lhsDate = lhs.metadata.dueAt ?? .distantFuture
+                let rhsDate = rhs.metadata.dueAt ?? .distantFuture
+                if lhsDate != rhsDate {
+                    return lhsDate < rhsDate
+                }
+
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
     }
 
     // MARK: - Urgent Section
@@ -131,6 +152,10 @@ struct CourseBrainOrbitView: View {
                     .foregroundColor(.white)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
+
+                if let submissionStatus = node.metadata.headlineSubmissionStatus {
+                    submissionBadge(submissionStatus)
+                }
 
                 if let due = node.metadata.dueAt {
                     dueBadge(due)
@@ -265,6 +290,10 @@ struct CourseBrainOrbitView: View {
                 Spacer()
 
                 // Due date or action indicator
+                if let submissionStatus = node.metadata.headlineSubmissionStatus {
+                    submissionBadge(submissionStatus)
+                }
+
                 if let due = node.metadata.dueAt {
                     dueBadge(due)
                 }
@@ -339,7 +368,15 @@ struct CourseBrainOrbitView: View {
                     .foregroundColor(.white.opacity(0.8))
                     .lineLimit(1)
 
-                if node.metadata.dueAt != nil {
+                if let submissionStatus = node.metadata.headlineSubmissionStatus {
+                    Text(submissionStatus.displayTitle)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(submissionBadgeForegroundColor(for: submissionStatus))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(submissionBadgeBackgroundColor(for: submissionStatus))
+                        .clipShape(Capsule())
+                } else if node.metadata.dueAt != nil {
                     Circle()
                         .fill(Color(hex: 0xFF5E5E))
                         .frame(width: 6, height: 6)
@@ -396,6 +433,50 @@ struct CourseBrainOrbitView: View {
             .padding(.vertical, 3)
             .background(color.opacity(0.1))
             .clipShape(Capsule())
+    }
+
+    private func submissionBadge(_ status: CourseBrainSubmissionStatus) -> some View {
+        Text(status.displayTitle)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(submissionBadgeForegroundColor(for: status))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(submissionBadgeBackgroundColor(for: status))
+            .clipShape(Capsule())
+    }
+
+    private func submissionBadgeForegroundColor(for status: CourseBrainSubmissionStatus) -> Color {
+        switch status {
+        case .submitted:
+            return Color(hex: 0xC4F7D2)
+        case .late:
+            return Color(hex: 0xFFE2B3)
+        case .missing:
+            return Color(hex: 0xFFB5BA)
+        case .excused:
+            return Color(hex: 0xD2D8FF)
+        case .notSubmitted:
+            return Color.white.opacity(0.82)
+        case .unknown:
+            return Color.white.opacity(0.78)
+        }
+    }
+
+    private func submissionBadgeBackgroundColor(for status: CourseBrainSubmissionStatus) -> Color {
+        switch status {
+        case .submitted:
+            return Color(hex: 0x1D4D2B)
+        case .late:
+            return Color(hex: 0x5A3414)
+        case .missing:
+            return Color(hex: 0x5A1F27)
+        case .excused:
+            return Color(hex: 0x2E355F)
+        case .notSubmitted:
+            return Color.white.opacity(0.08)
+        case .unknown:
+            return Color.white.opacity(0.06)
+        }
     }
 
     // MARK: - Helpers
@@ -487,6 +568,9 @@ struct CourseBrainOrbitView: View {
                 let lhsWeight = typeWeight(lhs.type)
                 let rhsWeight = typeWeight(rhs.type)
                 if lhsWeight != rhsWeight { return lhsWeight < rhsWeight }
+                let lhsSubmissionRank = lhs.metadata.headlineSubmissionStatus?.attentionSortRank ?? CourseBrainSubmissionStatus.unknown.attentionSortRank
+                let rhsSubmissionRank = rhs.metadata.headlineSubmissionStatus?.attentionSortRank ?? CourseBrainSubmissionStatus.unknown.attentionSortRank
+                if lhsSubmissionRank != rhsSubmissionRank { return lhsSubmissionRank < rhsSubmissionRank }
                 let lhsDate = lhs.metadata.dueAt ?? .distantFuture
                 let rhsDate = rhs.metadata.dueAt ?? .distantFuture
                 if lhsDate != rhsDate { return lhsDate < rhsDate }

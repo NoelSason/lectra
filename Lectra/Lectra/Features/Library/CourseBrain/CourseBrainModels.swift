@@ -186,6 +186,7 @@ enum CourseBrainRelationship: String, Codable, CaseIterable {
 struct CourseBrainNodeMetadata: Hashable {
     var courseName: String?
     var moduleName: String?
+    var assignmentId: String?
     var dueAt: Date?
     var unlockAt: Date?
     var lockAt: Date?
@@ -195,6 +196,9 @@ struct CourseBrainNodeMetadata: Hashable {
     var sourceItemType: String?
     var sourceSyncedItemId: UUID?
     var sourceURLString: String?
+    var submitted: Bool?
+    var submissionStatus: CourseBrainSubmissionStatus?
+    var submissionSummary: CourseBrainSubmissionSummary?
     var instructions: String?
     var description: String?
     var body: String?
@@ -208,6 +212,14 @@ struct CourseBrainNodeMetadata: Hashable {
             }
         }
         return nil
+    }
+
+    var headlineSubmissionStatus: CourseBrainSubmissionStatus? {
+        CourseBrainSubmissionStatus.resolveHeadlineStatus(
+            submitted: submitted,
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary
+        )
     }
 }
 
@@ -272,6 +284,7 @@ struct CourseBrainSourceRecord: Hashable {
     let sourceItemType: String
     let courseId: Int?
     let courseName: String?
+    let assignmentId: String?
     let type: String
     let title: String
     let moduleName: String?
@@ -282,6 +295,9 @@ struct CourseBrainSourceRecord: Hashable {
     let scannedAt: Date?
     let url: URL?
     let platform: String?
+    let submitted: Bool?
+    let submissionStatus: CourseBrainSubmissionStatus?
+    let submissionSummary: CourseBrainSubmissionSummary?
     let instructions: String?
     let description: String?
     let body: String?
@@ -290,6 +306,14 @@ struct CourseBrainSourceRecord: Hashable {
 
     var normalizedType: String {
         type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    var headlineSubmissionStatus: CourseBrainSubmissionStatus? {
+        CourseBrainSubmissionStatus.resolveHeadlineStatus(
+            submitted: submitted,
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary
+        )
     }
 }
 
@@ -332,11 +356,23 @@ struct CourseBrainLeafSummary: Identifiable, Hashable {
     let courseId: Int?
     let courseName: String?
     let moduleName: String?
+    let assignmentId: String?
     let dueAt: Date?
     let unlockAt: Date?
     let lockAt: Date?
     let url: URL?
+    let submitted: Bool?
+    let submissionStatus: CourseBrainSubmissionStatus?
+    let submissionSummary: CourseBrainSubmissionSummary?
     let instructionPreview: String?
+
+    var headlineSubmissionStatus: CourseBrainSubmissionStatus? {
+        CourseBrainSubmissionStatus.resolveHeadlineStatus(
+            submitted: submitted,
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary
+        )
+    }
 }
 
 enum CourseBrainLeftSection: String, CaseIterable, Identifiable {

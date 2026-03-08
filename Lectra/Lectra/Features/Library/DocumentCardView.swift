@@ -8,19 +8,75 @@
 import SwiftUI
 import PDFKit
 
+struct LibraryGridMetrics {
+    let cardWidth: CGFloat
+    let pdfPreviewHeight: CGFloat
+    let pdfFooterHeight: CGFloat
+    let pdfTotalHeight: CGFloat
+    let folderArtworkHeight: CGFloat
+    let folderFooterHeight: CGFloat
+    let folderTotalHeight: CGFloat
+    let sectionGap: CGFloat
+    let folderGridSpacing: CGFloat
+    let documentGridSpacing: CGFloat
+    let documentShadowColor: Color
+    let documentShadowRadius: CGFloat
+    let documentShadowYOffset: CGFloat
+
+    let titleRowHeight: CGFloat = 30
+    let metadataRowHeight: CGFloat = 14
+
+    static func root(cardWidth: CGFloat) -> LibraryGridMetrics {
+        LibraryGridMetrics(
+            cardWidth: cardWidth,
+            pdfPreviewHeight: 88,
+            pdfFooterHeight: 44,
+            pdfTotalHeight: 140,
+            folderArtworkHeight: 128,
+            folderFooterHeight: 44,
+            folderTotalHeight: 180,
+            sectionGap: 32,
+            folderGridSpacing: 28,
+            documentGridSpacing: 34,
+            documentShadowColor: Color.black.opacity(0.12),
+            documentShadowRadius: 4,
+            documentShadowYOffset: 1
+        )
+    }
+
+    static func nested(cardWidth: CGFloat) -> LibraryGridMetrics {
+        LibraryGridMetrics(
+            cardWidth: cardWidth,
+            pdfPreviewHeight: 84,
+            pdfFooterHeight: 44,
+            pdfTotalHeight: 136,
+            folderArtworkHeight: 128,
+            folderFooterHeight: 44,
+            folderTotalHeight: 180,
+            sectionGap: 24,
+            folderGridSpacing: 24,
+            documentGridSpacing: 30,
+            documentShadowColor: Color.black.opacity(0.12),
+            documentShadowRadius: 4,
+            documentShadowYOffset: 1
+        )
+    }
+}
+
 struct DocumentCardView: View {
     @ObservedObject var document: LocalDocument
     let subtitle: String
+    let metrics: LibraryGridMetrics
     var onOptionsTap: (() -> Void)? = nil
     var onFavoriteToggle: (() -> Void)? = nil
+    var onSyncRetryTap: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topTrailing) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 178)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         cardContents
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -30,7 +86,12 @@ struct DocumentCardView: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
                     )
-                    .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
+                    .shadow(
+                        color: metrics.documentShadowColor,
+                        radius: metrics.documentShadowRadius,
+                        x: 0,
+                        y: metrics.documentShadowYOffset
+                    )
 
                 Button {
                     onFavoriteToggle?()
@@ -43,43 +104,67 @@ struct DocumentCardView: View {
                 }
                 .buttonStyle(.plain)
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: metrics.pdfPreviewHeight)
 
-            HStack(alignment: .top, spacing: 4) {
-                Text(document.title)
-                    .font(.headline)
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(displayTitle)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.95))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                if let onOptionsTap {
-                    Button(action: onOptionsTap) {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .symbolRenderingMode(.hierarchical)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.8))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                    if let onOptionsTap {
+                        Button(action: onOptionsTap) {
+                            Image(systemName: "ellipsis.circle.fill")
+                                .symbolRenderingMode(.hierarchical)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(Color.white.opacity(0.8))
+                                .frame(width: 24, height: 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .offset(x: 10, y: -10)
                 }
-            }
-            .padding(.top, 4)
+                .frame(height: metrics.titleRowHeight, alignment: .top)
 
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+                HStack(alignment: .center, spacing: 6) {
+                    if document.syncState != .idle {
+                        DocumentSyncBadgeView(
+                            state: document.syncState,
+                            size: .compact,
+                            onRetryTap: onSyncRetryTap
+                        )
+                        .fixedSize()
+                    }
+
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+
+                    Spacer(minLength: 0)
+                }
+                .frame(height: metrics.metadataRowHeight, alignment: .center)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(height: metrics.pdfFooterHeight, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: metrics.pdfTotalHeight, alignment: .topLeading)
+        .clipped()
     }
 
     @ViewBuilder
     private var cardContents: some View {
-        if let url = document.localPDFURL,
-           let pdfDoc = PDFDocument(url: url),
-           let page = pdfDoc.page(at: 0) {
-            PDFThumbnailRepresentable(page: page)
+        if document.localPDFURL != nil {
+            CachedDocumentThumbnailView(
+                document: document,
+                size: CGSize(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+            )
         } else {
             ZStack {
                 LinearGradient(
@@ -101,32 +186,155 @@ struct DocumentCardView: View {
             }
         }
     }
-}
 
-// MARK: - PDF Thumbnail (UIKit bridge)
-
-struct PDFThumbnailRepresentable: UIViewRepresentable {
-    let page: PDFPage
-
-    func makeUIView(context: Context) -> UIImageView {
-        let imageView = NonIntrinsicImageView()
-        imageView.contentMode = .scaleAspectFill
-        imageView.backgroundColor = .white
-        imageView.clipsToBounds = true
-        return imageView
-    }
-
-    func updateUIView(_ imageView: UIImageView, context: Context) {
-        let bounds = page.bounds(for: .mediaBox)
-        let width = max(imageView.bounds.width, 220)
-        let height = max(imageView.bounds.height, 220)
-        let targetWidth = max(width, height * bounds.width / max(bounds.height, 1))
-        let size = CGSize(width: targetWidth, height: targetWidth * bounds.height / max(bounds.width, 1))
-        let thumbnail = page.thumbnail(of: size, for: .mediaBox)
-        imageView.image = thumbnail
+    private var displayTitle: String {
+        let trimmedTitle = document.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? "Untitled PDF" : trimmedTitle
     }
 }
 
-private final class NonIntrinsicImageView: UIImageView {
-    override var intrinsicContentSize: CGSize { .zero }
+struct DocumentSyncBadgeView: View {
+    enum Size {
+        case regular
+        case compact
+
+        var fontSize: CGFloat {
+            switch self {
+            case .regular:
+                return 11
+            case .compact:
+                return 9
+            }
+        }
+
+        var horizontalPadding: CGFloat {
+            switch self {
+            case .regular:
+                return 8
+            case .compact:
+                return 6
+            }
+        }
+
+        var height: CGFloat {
+            switch self {
+            case .regular:
+                return 24
+            case .compact:
+                return 14
+            }
+        }
+    }
+
+    let state: DocumentSyncState
+    var size: Size = .regular
+    var onRetryTap: (() -> Void)? = nil
+
+    var body: some View {
+        Group {
+            if state == .failed, let onRetryTap {
+                Button(action: onRetryTap) {
+                    badge(title: "Retry", color: LectraColor.accent)
+                }
+                .buttonStyle(.plain)
+            } else {
+                badge(title: title, color: color)
+            }
+        }
+    }
+
+    private var title: String {
+        switch state {
+        case .idle:
+            return ""
+        case .savingLocal, .flattening:
+            return "Saving"
+        case .queuedUpload:
+            return "Queued"
+        case .uploading:
+            return "Uploading"
+        case .synced:
+            return "Synced"
+        case .failed:
+            return "Retry"
+        }
+    }
+
+    private var color: Color {
+        switch state {
+        case .idle:
+            return .clear
+        case .savingLocal, .flattening, .uploading:
+            return Color(hex: 0x2E8DFF)
+        case .queuedUpload:
+            return Color(hex: 0xD0A13A)
+        case .synced:
+            return LectraColor.success
+        case .failed:
+            return LectraColor.accent
+        }
+    }
+
+    private func badge(title: String, color: Color) -> some View {
+        Text(title)
+            .font(.system(size: size.fontSize, weight: .bold))
+            .foregroundColor(color)
+            .padding(.horizontal, size.horizontalPadding)
+            .frame(height: size.height)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+    }
+}
+
+struct CachedDocumentThumbnailView: View {
+    @ObservedObject var document: LocalDocument
+    let size: CGSize
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .transition(.opacity)
+            } else {
+                placeholder
+            }
+        }
+        .task(id: taskID) {
+            await loadThumbnail()
+        }
+    }
+
+    private var taskID: String {
+        "\(document.id.uuidString)-\(document.thumbnailRevision)-\(Int(size.width))x\(Int(size.height))"
+    }
+
+    @MainActor
+    private func loadThumbnail() async {
+        guard let url = document.localPDFURL else {
+            image = nil
+            return
+        }
+        image = await ThumbnailCache.shared.loadThumbnail(
+            documentId: document.id,
+            pdfURL: url,
+            revision: document.thumbnailRevision,
+            size: size
+        )
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: 0xECECEC), Color(hex: 0xDADADA)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            ProgressView()
+                .tint(Color.gray.opacity(0.8))
+        }
+    }
 }

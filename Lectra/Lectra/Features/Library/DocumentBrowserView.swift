@@ -10,6 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 import PDFKit
+import CryptoKit
 
 // UUID needs Identifiable for fullScreenCover(item:)
 extension UUID: @retroactive Identifiable {
@@ -20,6 +21,7 @@ struct SavedLocalDocument: Codable {
     let id: UUID
     let title: String
     let localPath: String
+    let sourceURLString: String?
     var createdAt: Date?
     var updatedAt: Date?
     var isFavorite: Bool?
@@ -48,21 +50,10 @@ struct SharePayload: Identifiable {
     let urls: [URL]
 }
 
-private struct LibraryBackupSnapshot: Codable {
-    struct Item: Codable {
-        let id: UUID
-        let title: String
-        let createdAt: Date
-        let updatedAt: Date
-        let relativePDFPath: String?
-        let folderId: UUID?
-        var isFavorite: Bool?
-    }
-
-    let createdAt: Date
-    let source: String
-    let folders: [SavedLocalFolder]
-    let items: [Item]
+struct EditorRoute: Identifiable, Equatable {
+    let id = UUID()
+    let documentId: UUID
+    let initialPage: Int?
 }
 
 private enum LibrarySection: String, CaseIterable, Identifiable {
@@ -116,6 +107,11 @@ private enum BrowserViewMode: String {
     case list
 }
 
+private enum RecoveryRestoreMode {
+    case copy
+    case replace
+}
+
 private enum LibrarySortMode: String, CaseIterable {
     case dateCreated
     case lastModified
@@ -154,20 +150,21 @@ struct DocumentBrowserView: View {
     @State private var showCreateMenu = false
     @State private var showViewMenu = false
     @State private var showCloudStatus = false
-    @State private var showAccountMenu = false
-    @State private var showAccountSheet = false
+    @State private var showAccountSettingsModal = false
+    @State private var accountSettingsInitialTab: AccountSettingsView.SettingsTab = .account
     @State private var showCreateFolderAlert = false
     @State private var newFolderName = ""
 
-    @State private var showCloudSettingsModal = false
-    @State private var showSettingsModal = false
     @State private var showSearchOverlay = false
     @State private var searchText = ""
+    @State private var globalSearchResults: [DocumentSearchResult] = []
+    @State private var isSearchingDocuments = false
+    @State private var searchRefreshTask: Task<Void, Never>? = nil
     @State private var activeFolderOptionsID: UUID?
 
     @State private var selectedDocumentForOptions: LocalDocument?
     @State private var moveDocumentId: UUID?
-    @State private var editorDocumentId: UUID?
+    @State private var editorRoute: EditorRoute?
     @State private var sharePayload: SharePayload?
     @State private var isSelectionMode = false
     @State private var selectedFolderIDs: Set<UUID> = []
@@ -192,6 +189,7 @@ struct DocumentBrowserView: View {
     @State private var isICloudAvailable = false
     @State private var lastCloudSyncDate = Date()
     @State private var lastBackupDate = Date().addingTimeInterval(-20 * 60)
+    @State private var recoverySnapshots: [RecoverySnapshot] = []
 
     private let repository = DocumentRepository()
 
@@ -303,18 +301,18 @@ struct DocumentBrowserView: View {
         currentFolderId == nil ? 220 : 202
     }
 
+    private var libraryGridMetrics: LibraryGridMetrics {
+        currentFolderId == nil
+            ? .root(cardWidth: libraryCardWidth)
+            : .nested(cardWidth: libraryCardWidth)
+    }
+
     private var gridColumns: [GridItem] {
         [GridItem(.adaptive(minimum: libraryCardWidth, maximum: libraryCardWidth), spacing: 26, alignment: .top)]
     }
 
-    private var searchResults: [LocalDocument] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            return recentlyOpenedDocuments
-        }
-        return filteredDocuments.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-        }
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var recentlyOpenedDocuments: [LocalDocument] {
@@ -381,20 +379,8 @@ struct DocumentBrowserView: View {
         selectedItemCount > 0
     }
 
-    private var bulkDeletePromptTitle: String {
-        let folderCount = activeSelectedFolderIDs.count
-        let documentCount = resolvedSelectedDocuments.count
-        if folderCount > 0 && documentCount > 0 {
-            return "Delete \(folderCount) folder\(folderCount == 1 ? "" : "s") and \(documentCount) document\(documentCount == 1 ? "" : "s")?"
-        }
-        if folderCount > 0 {
-            return "Delete \(folderCount) folder\(folderCount == 1 ? "" : "s")?"
-        }
-        return "Delete \(documentCount) document\(documentCount == 1 ? "" : "s")?"
-    }
-
-    var body: some View {
-        ZStack {
+    private var mainContentLayout: AnyView {
+        AnyView(
             HStack(spacing: 0) {
                 sidebar
                     .frame(width: sidebarWidth)
@@ -408,215 +394,357 @@ struct DocumentBrowserView: View {
                     .background(Color.black)
             }
             .background(Color.black.ignoresSafeArea())
-
-            if showSettingsModal {
-                modalBackdrop {
-                    showSettingsModal = false
-                }
-
-                AppSettingsModalView {
-                    showSettingsModal = false
+        )
+    }
+    
+    private var overlays: AnyView {
+        AnyView(
+            Group {
+                if let message = backgroundSyncToast {
+                    VStack {
+                        Spacer()
+                        Text(message)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(LectraColor.success.opacity(0.92))
+                            )
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                            )
+                            .padding(.bottom, 26)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .allowsHitTesting(false)
                 }
             }
+        )
+    }
 
-            if showCloudSettingsModal {
-                modalBackdrop {
-                    showCloudSettingsModal = false
+    private var bulkDeletePromptTitle: String {
+        let folderCount = activeSelectedFolderIDs.count
+        let documentCount = resolvedSelectedDocuments.count
+        if folderCount > 0 && documentCount > 0 {
+            return "Delete \(folderCount) folder\(folderCount == 1 ? "" : "s") and \(documentCount) document\(documentCount == 1 ? "" : "s")?"
+        }
+        if folderCount > 0 {
+            return "Delete \(folderCount) folder\(folderCount == 1 ? "" : "s")?"
+        }
+        return "Delete \(documentCount) document\(documentCount == 1 ? "" : "s")?"
+    }
+
+    var body: some View {
+        let syncPublisher = NotificationCenter.default.publisher(for: .lectraDocumentSyncStateDidChange)
+        let iCloudPublisher = NotificationCenter.default.publisher(for: .lectraICloudSyncDidChange)
+
+        return presentedContent
+            .onReceive(syncPublisher, perform: handleDocumentSyncNotification)
+            .onReceive(iCloudPublisher, perform: handleICloudSyncNotification)
+            .onChange(of: editorRoute) { _, newValue in
+                handleEditorRouteChange(newValue)
+            }
+            .onChange(of: currentFolderId) { _, _ in
+                handleCurrentFolderChange()
+            }
+            .onChange(of: activeSection) { _, newSection in
+                handleActiveSectionChange(newSection)
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                handleScenePhaseChange(newPhase)
+            }
+            .onChange(of: searchText) { _, _ in
+                runGlobalSearch()
+            }
+            .task {
+                await performInitialLoadIfNeeded()
+            }
+            .onDisappear {
+                handleDisappear()
+            }
+            .preferredColorScheme(ColorScheme.dark)
+    }
+
+    private func handleDocumentSyncNotification(_ notification: Notification) {
+        guard let payload = notification.object as? DocumentSyncStatusPayload else { return }
+        applySyncPayload(payload)
+        guard activeSection == LibrarySection.documents else { return }
+
+        if payload.metadata.syncState == .synced {
+            if editorRoute == nil {
+                showBackgroundSyncToast("Synced to cloud ✓")
+            } else {
+                hasPendingBackgroundSyncToast = true
+            }
+        } else if payload.metadata.syncState == .failed {
+            featureNotice = payload.metadata.syncErrorMessage
+        } else if editorRoute != nil {
+            hasPendingBackgroundSyncToast = true
+        }
+    }
+
+    private func handleICloudSyncNotification(_ notification: Notification) {
+        guard let payload = notification.object as? ICloudSyncStatusPayload,
+              payload.errorMessage == nil else {
+            return
+        }
+
+        lastCloudSyncDate = payload.syncedAt
+        UserDefaults.standard.set(payload.syncedAt, forKey: lastCloudSyncDefaultsKey)
+    }
+
+    private func handleEditorRouteChange(_ newValue: EditorRoute?) {
+        if newValue == nil, hasPendingBackgroundSyncToast {
+            hasPendingBackgroundSyncToast = false
+            showBackgroundSyncToast("Synced to cloud ✓")
+        }
+    }
+
+    private func handleCurrentFolderChange() {
+        if isSelectionMode {
+            exitSelectionMode()
+        }
+        updateImportedFolderPolling()
+    }
+
+    private func handleActiveSectionChange(_ newSection: LibrarySection) {
+        if newSection != LibrarySection.documents && isSelectionMode {
+            exitSelectionMode()
+        }
+    }
+
+    private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        updateImportedFolderPolling()
+        guard newPhase == .active else { return }
+
+        isICloudAvailable = ICloudDocumentStore.shared.isAvailable()
+        loadRecoverySnapshots()
+        Task {
+            await DocumentSyncCoordinator.shared.resumePendingJobs()
+        }
+    }
+
+    private func performInitialLoadIfNeeded() async {
+        guard !hasLoaded else { return }
+        hasLoaded = true
+        loadRecentDocuments()
+        loadCloudPreferences()
+        await loadDocuments()
+        await DocumentSyncCoordinator.shared.resumePendingJobs()
+        if isCloudSyncEnabled {
+            await runCloudSync(triggeredByUser: false)
+        }
+    }
+
+    private func handleDisappear() {
+        backgroundSyncToastTask?.cancel()
+        searchRefreshTask?.cancel()
+        stopImportedFolderPolling()
+    }
+
+    private var presentedContent: some View {
+        presentationAlerts(
+            content: presentationSheets(
+                content: ZStack {
+                    mainContentLayout
+                    overlays
                 }
+            )
+        )
+    }
 
-                CloudBackupSettingsModalView(
+    private func presentationSheets<Content: View>(content: Content) -> some View {
+        content
+            .sheet(isPresented: $showAccountSettingsModal) {
+                AccountSettingsView(
+                    initialTab: accountSettingsInitialTab,
+                    userName: resolvedAccountDisplayName,
+                    userEmail: authManager.userEmail,
+                    avatarURL: authManager.avatarURL,
                     isCloudSyncEnabled: isCloudSyncEnabled,
                     isAutoBackupEnabled: isAutoBackupEnabled,
+                    isICloudAvailable: isICloudAvailable,
+                    isSyncInProgress: isSyncingCloud,
+                    lastCloudSyncDate: lastCloudSyncDate,
+                    lastBackupDate: lastBackupDate,
+                    recoverySnapshots: recoverySnapshots,
                     onSetCloudSyncEnabled: { isEnabled in
                         setCloudSyncEnabled(isEnabled)
                     },
                     onSetAutoBackupEnabled: { isEnabled in
                         setAutoBackupEnabled(isEnabled)
                     },
-                    onManualBackup: {
+                    onRunCloudSync: {
+                        Task {
+                            await runCloudSync(triggeredByUser: true)
+                        }
+                    },
+                    onRunManualBackup: {
                         Task {
                             await runManualBackup()
                         }
                     },
-                    onClose: {
-                    showCloudSettingsModal = false
+                    onReloadRecoverySnapshots: {
+                        loadRecoverySnapshots()
+                    },
+                    onRestoreSnapshotAsCopy: { snapshot in
+                        Task {
+                            await restoreSnapshot(snapshot, mode: .copy)
+                        }
+                    },
+                    onRestoreSnapshotReplacing: { snapshot in
+                        Task {
+                            await restoreSnapshot(snapshot, mode: .replace)
+                        }
+                    },
+                    onSignOut: {
+                        Task {
+                            await signOutFromLectra()
+                        }
                     }
                 )
+                .environmentObject(gradescopeManager)
+                .id(accountSettingsInitialTab)
             }
-
-            if let message = backgroundSyncToast {
-                VStack {
-                    Spacer()
-                    Text(message)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(LectraColor.success.opacity(0.92))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                        )
-                        .padding(.bottom, 26)
+            .sheet(isPresented: $showFilePicker) {
+                DocumentPickerView(contentTypes: filePickerContentTypes) { url in
+                    guard canModifyContents(of: currentFolderId) else { return }
+                    importPickedFile(from: url, folderId: currentFolderId)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .allowsHitTesting(false)
             }
-        }
-        .sheet(isPresented: $showFilePicker) {
-            DocumentPickerView(contentTypes: filePickerContentTypes) { url in
-                guard canModifyContents(of: currentFolderId) else { return }
-                importPickedFile(from: url, folderId: currentFolderId)
-            }
-        }
-        .sheet(isPresented: $showAccountSheet) {
-            AccountSheetView()
-                .environmentObject(authManager)
-        }
-        .sheet(item: $selectedDocumentForOptions) { doc in
-            DocumentOptionsSheetView(
-                documentTitle: doc.title,
-                onDuplicate: {
-                    duplicateDocument(doc)
-                },
-                onMove: {
-                    moveDocumentId = doc.id
-                },
-                onExport: {
-                    exportDocument(doc)
-                },
-                onDelete: {
-                    removeDocument(doc)
-                }
-            )
-        }
-        .sheet(item: $moveDocumentId) { docId in
-            if let doc = document(for: docId) {
-                MoveDocumentSheetView(
+            .sheet(item: $selectedDocumentForOptions) { doc in
+                DocumentOptionsSheetView(
                     documentTitle: doc.title,
+                    onDuplicate: { duplicateDocument(doc) },
+                    onMove: { moveDocumentId = doc.id },
+                    onExport: { exportDocument(doc) },
+                    onDelete: { removeDocument(doc) }
+                )
+            }
+            .sheet(item: $moveDocumentId) { docId in
+                if let doc = document(for: docId) {
+                    MoveDocumentSheetView(
+                        documentTitle: doc.title,
+                        folders: folders.filter { !isProtectedImportedFolder($0.id) },
+                        currentFolderId: folderId(for: doc),
+                        isLockedToImportedFolder: isDocumentLockedToImportedFolder(doc),
+                        importedFolderName: lockedImportedFolderName(for: doc),
+                        onMove: { targetFolderId in
+                            moveDocument(documentId: doc.id, to: targetFolderId)
+                        }
+                    )
+                }
+            }
+            .sheet(isPresented: $showBulkMoveSheet) {
+                BulkMoveDocumentsSheetView(
+                    selectedCount: selectedDocumentsOnly.count,
                     folders: folders.filter { !isProtectedImportedFolder($0.id) },
-                    currentFolderId: folderId(for: doc),
-                    isLockedToImportedFolder: isDocumentLockedToImportedFolder(doc),
-                    importedFolderName: lockedImportedFolderName(for: doc),
                     onMove: { targetFolderId in
-                        moveDocument(documentId: doc.id, to: targetFolderId)
+                        performBulkMove(to: targetFolderId)
                     }
                 )
             }
-        }
-        .sheet(isPresented: $showBulkMoveSheet) {
-            BulkMoveDocumentsSheetView(
-                selectedCount: selectedDocumentsOnly.count,
-                folders: folders.filter { !isProtectedImportedFolder($0.id) },
-                onMove: { targetFolderId in
-                    performBulkMove(to: targetFolderId)
+            .sheet(item: $sharePayload) { payload in
+                ShareSheetView(items: payload.urls)
+            }
+            .fullScreenCover(item: $editorRoute) { route in
+                if let doc = document(for: route.documentId) {
+                    PDFAnnotationView(
+                        document: doc,
+                        repository: repository,
+                        initialPage: route.initialPage,
+                        onRename: { newTitle in
+                            persistTitleRename(for: doc, newTitle: newTitle)
+                        }
+                    )
                 }
-            )
-        }
-        .sheet(item: $sharePayload) { payload in
-            ShareSheetView(items: payload.urls)
-        }
-        .alert("Create Folder", isPresented: $showCreateFolderAlert) {
-            TextField("Folder name", text: $newFolderName)
-            Button("Cancel", role: .cancel) {
-                newFolderName = ""
             }
-            Button("Create") {
-                createFolder(named: newFolderName)
-                newFolderName = ""
-            }
-        } message: {
-            Text("Add a new folder.")
-        }
-        .alert(
-            "Not Available Yet",
-            isPresented: .init(
-                get: { featureNotice != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        featureNotice = nil
-                    }
+    }
+
+    private func presentationAlerts<Content: View>(content: Content) -> some View {
+        content
+            .alert("Create Folder", isPresented: $showCreateFolderAlert) {
+                TextField("Folder name", text: $newFolderName)
+                Button("Cancel", role: .cancel) { newFolderName = "" }
+                Button("Create") {
+                    createFolder(named: newFolderName)
+                    newFolderName = ""
                 }
-            )
-        ) {
-            Button("OK", role: .cancel) {
-                featureNotice = nil
+            } message: {
+                Text("Add a new folder.")
             }
-        } message: {
-            Text(featureNotice ?? "")
-        }
-        .confirmationDialog(
-            bulkDeletePromptTitle,
-            isPresented: $showBulkDeleteConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                performBulkDelete()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This action cannot be undone.")
-        }
-        .fullScreenCover(item: $editorDocumentId) { docId in
-            if let doc = document(for: docId) {
-                PDFAnnotationView(
-                    document: doc,
-                    repository: repository,
-                    onRename: { newTitle in
-                        persistTitleRename(for: doc, newTitle: newTitle)
+            .alert(
+                featureNoticeTitle,
+                isPresented: Binding(
+                    get: { featureNotice != nil },
+                    set: { isPresented in
+                        if !isPresented { featureNotice = nil }
                     }
                 )
+            ) {
+                Button("OK", role: .cancel) { featureNotice = nil }
+            } message: {
+                Text(featureNotice ?? "")
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .lectraBackgroundSyncCompleted)) { notification in
-            if let documentId = notification.object as? UUID {
-                markDocumentAsEdited(documentId)
+            .confirmationDialog(
+                bulkDeletePromptTitle,
+                isPresented: $showBulkDeleteConfirm,
+                titleVisibility: Visibility.visible
+            ) {
+                Button("Delete", role: .destructive) { performBulkDelete() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This action cannot be undone.")
             }
-            guard activeSection == .documents else { return }
-            if editorDocumentId == nil {
-                showBackgroundSyncToast("Sync complete ✓")
-            } else {
-                hasPendingBackgroundSyncToast = true
-            }
+    }
+
+    private var featureNoticeTitle: String {
+        guard let featureNotice else { return "Notice" }
+
+        if featureNotice.hasPrefix("Sign in to iCloud") || featureNotice.contains("iCloud Drive is unavailable") {
+            return "iCloud Unavailable"
         }
-        .onChange(of: editorDocumentId) { _, newValue in
-            if newValue == nil, hasPendingBackgroundSyncToast {
-                hasPendingBackgroundSyncToast = false
-                showBackgroundSyncToast("Sync complete ✓")
-            }
+
+        if featureNotice.hasPrefix("Enable Cloud Sync") {
+            return "Cloud Sync Off"
         }
-        .onChange(of: currentFolderId) { _, _ in
-            if isSelectionMode {
-                exitSelectionMode()
-            }
-            updateImportedFolderPolling()
+
+        if featureNotice.hasPrefix("Manual backup failed")
+            || featureNotice.hasPrefix("Sync finished, but backup failed")
+            || featureNotice.hasPrefix("Saved locally, but iCloud sync did not finish")
+            || featureNotice.hasPrefix("Could not ")
+            || featureNotice.hasPrefix("Download failed") {
+            return "Something Went Wrong"
         }
-        .onChange(of: activeSection) { _, newSection in
-            if newSection != .documents && isSelectionMode {
-                exitSelectionMode()
-            }
+
+        return "Notice"
+    }
+
+    private var resolvedAccountDisplayName: String {
+        if let userName = authManager.userName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !userName.isEmpty {
+            return userName
         }
-        .onChange(of: scenePhase) { _, _ in
-            updateImportedFolderPolling()
+        if let userEmail = authManager.userEmail?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !userEmail.isEmpty {
+            return userEmail
         }
-        .task {
-            guard !hasLoaded else { return }
-            hasLoaded = true
-            loadRecentDocuments()
-            loadCloudPreferences()
-            await loadDocuments()
-            if isCloudSyncEnabled {
-                await runCloudSync(triggeredByUser: false)
-            }
-        }
-        .onDisappear {
-            backgroundSyncToastTask?.cancel()
-            stopImportedFolderPolling()
-        }
-        .preferredColorScheme(.dark)
+        return "Lectra Account"
+    }
+
+    private func openAccountSettings(at tab: AccountSettingsView.SettingsTab = .account) {
+        accountSettingsInitialTab = tab
+        showAccountSettingsModal = true
+    }
+
+    private func signOutFromLectra() async {
+        gradescopeManager.logout()
+        await CanvasCookieStore.clearPersistedSession()
+        await authManager.signOut()
+        showAccountSettingsModal = false
     }
 
     private func showBackgroundSyncToast(_ message: String) {
@@ -632,6 +760,13 @@ struct DocumentBrowserView: View {
                 backgroundSyncToast = nil
             }
         }
+    }
+
+    @MainActor
+    private func showCloudSuccessToast(_ message: String) {
+        featureNotice = nil
+        showCloudStatus = false
+        showBackgroundSyncToast(message)
     }
 
     private var sidebar: some View {
@@ -724,66 +859,67 @@ struct DocumentBrowserView: View {
         .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
     }
 
-    @ViewBuilder
-    private var mainPane: some View {
+    private var mainPane: AnyView {
         switch activeSection {
         case .documents:
-            documentsPane
+            return AnyView(documentsPane)
         case .favorites:
-            favoritesPane
+            return AnyView(favoritesPane)
         case .shared:
-            sharedPane
+            return AnyView(sharedPane)
         case .courseBrain:
-            courseBrainPane
+            return AnyView(courseBrainPane)
         case .gradescope:
-            gradescopePane
+            return AnyView(gradescopePane)
         }
     }
 
-    private var documentsPane: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 0) {
-                documentsTopBar
-                    .padding(.horizontal, 18)
-                    .padding(.top, 10)
+    private var documentsPane: AnyView {
+        AnyView(
+            ZStack(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    documentsTopBar
+                        .padding(.horizontal, 18)
+                        .padding(.top, 10)
 
-                if isLoading && documents.isEmpty && folders.isEmpty {
-                    Spacer()
-                    loadingView
-                        .frame(maxWidth: .infinity)
-                    Spacer()
-                } else if filteredFolders.isEmpty && filteredDocuments.isEmpty {
-                    Spacer()
-                    emptyDocumentsView
-                        .frame(maxWidth: .infinity)
-                    Spacer()
-                } else if viewMode == .grid {
-                    documentsGridView
-                } else {
-                    documentsListView
+                    if isLoading && documents.isEmpty && folders.isEmpty {
+                        Spacer()
+                        loadingView
+                            .frame(maxWidth: .infinity)
+                        Spacer()
+                    } else if filteredFolders.isEmpty && filteredDocuments.isEmpty {
+                        Spacer()
+                        emptyDocumentsView
+                            .frame(maxWidth: .infinity)
+                        Spacer()
+                    } else if viewMode == .grid {
+                        documentsGridView
+                    } else {
+                        documentsListView
+                    }
+                }
+
+                if showSearchOverlay {
+                    searchOverlay
+                        .transition(.opacity)
                 }
             }
-
-            if showSearchOverlay {
-                searchOverlay
-                    .transition(.opacity)
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            if isSelectionMode {
-                selectionActionBar
-                    .padding(.horizontal, 18)
-                    .padding(.top, 10)
-                    .padding(.bottom, 12)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.black.opacity(0.02), Color.black.opacity(0.86), Color.black.opacity(0.98)],
-                            startPoint: .top,
-                            endPoint: .bottom
+            .safeAreaInset(edge: .bottom) {
+                if isSelectionMode {
+                    selectionActionBar
+                        .padding(.horizontal, 18)
+                        .padding(.top, 10)
+                        .padding(.bottom, 12)
+                        .background(
+                            LinearGradient(
+                                colors: [Color.black.opacity(0.02), Color.black.opacity(0.86), Color.black.opacity(0.98)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
-                    )
+                }
             }
-        }
+        )
     }
 
     private var documentsTopBar: some View {
@@ -855,7 +991,7 @@ struct DocumentBrowserView: View {
                 Spacer()
             } else {
                 ScrollView {
-                    if isGridView {
+                    if viewMode == .grid {
                         LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 34) {
                             ForEach(favDocs) { doc in
                                 documentGridCard(for: doc)
@@ -898,14 +1034,28 @@ struct DocumentBrowserView: View {
     }
 
     private var courseBrainPane: some View {
-        CourseBrainPane(documents: documents, onImportPDF: { url, title in
-            downloadAndImportCourseBrainPDF(from: url, suggestedTitle: title)
-        })
+        CourseBrainPane(
+            documents: documents,
+            importedDocumentIDForResourceURL: { url in
+                existingLectraDocumentID(forSourceURL: url)
+            },
+            onImportPDF: { url, title in
+                downloadAndImportCourseBrainPDF(from: url, suggestedTitle: title)
+            },
+            onOpenDocument: { documentId in
+                openEditor(documentId: documentId)
+            }
+        )
     }
 
     /// Downloads a PDF from a Canvas URL using an in-app WKWebView
     /// (which shares Safari's session cookies) and imports it into Lectra.
     private func downloadAndImportCourseBrainPDF(from url: URL, suggestedTitle: String) {
+        if let existingDocumentID = existingLectraDocumentID(forSourceURL: url) {
+            openEditor(documentId: existingDocumentID)
+            return
+        }
+
         featureNotice = "Downloading \"\(suggestedTitle)\"…"
 
         let downloader = CourseBrainPDFDownloader()
@@ -917,7 +1067,7 @@ struct DocumentBrowserView: View {
 
             switch result {
             case .success(let fileURL):
-                importLocalPDF(from: fileURL)
+                importLocalPDF(from: fileURL, sourceURL: url)
                 featureNotice = "Imported \"\(suggestedTitle)\" into Lectra."
             case .failure(let error):
                 featureNotice = "Download failed: \(error.localizedDescription)"
@@ -961,14 +1111,23 @@ struct DocumentBrowserView: View {
     }
 
     private var documentsGridView: some View {
-        ScrollView {
-            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 34) {
-                ForEach(filteredFolders) { folder in
-                    folderGridCard(for: folder)
+        let metrics = libraryGridMetrics
+        return ScrollView {
+            VStack(alignment: .leading, spacing: metrics.sectionGap) {
+                if !filteredFolders.isEmpty {
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: metrics.folderGridSpacing) {
+                        ForEach(filteredFolders) { folder in
+                            folderGridCard(for: folder)
+                        }
+                    }
                 }
 
-                ForEach(filteredDocuments) { doc in
-                    documentGridCard(for: doc)
+                if !filteredDocuments.isEmpty {
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: metrics.documentGridSpacing) {
+                        ForEach(filteredDocuments) { doc in
+                            documentGridCard(for: doc)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 18)
@@ -1037,11 +1196,13 @@ struct DocumentBrowserView: View {
 
     @ViewBuilder
     private func folderGridCard(for folder: LocalFolder) -> some View {
+        let metrics = libraryGridMetrics
         let protectedFolderManagerName = importedFolderManagerName(for: folder.id)
         let isProtectedFolder = protectedFolderManagerName != nil
         GoodnotesFolderCardView(
             folderName: folder.name,
             subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
+            metrics: metrics,
             accent: folderAccentColor(for: folder),
             iconSystemName: folder.iconSystemName,
             showsOptionsButton: !isSelectionMode && !isProtectedFolder,
@@ -1062,7 +1223,7 @@ struct DocumentBrowserView: View {
                 }
             }
         )
-        .frame(width: libraryCardWidth, alignment: .leading)
+        .frame(width: metrics.cardWidth, height: metrics.folderTotalHeight, alignment: .topLeading)
         .overlay(alignment: .topLeading) {
             if isSelectionMode {
                 LibrarySelectionIndicatorView(isSelected: activeSelectedFolderIDs.contains(folder.id))
@@ -1126,14 +1287,19 @@ struct DocumentBrowserView: View {
 
     @ViewBuilder
     private func documentGridCard(for doc: LocalDocument) -> some View {
+        let metrics = libraryGridMetrics
         let baseCard = DocumentCardView(
             document: doc,
             subtitle: formattedDocumentDate(for: doc),
+            metrics: metrics,
             onOptionsTap: isSelectionMode ? nil : {
                     selectedDocumentForOptions = doc
-            }
+            },
+            onSyncRetryTap: doc.syncState == .failed ? {
+                Task { await DocumentSyncCoordinator.shared.retry(documentId: doc.id) }
+            } : nil
         )
-        .frame(width: libraryCardWidth, alignment: .leading)
+        .frame(width: metrics.cardWidth, height: metrics.pdfTotalHeight, alignment: .topLeading)
         .overlay(alignment: .topLeading) {
             if isSelectionMode {
                 LibrarySelectionIndicatorView(isSelected: selectedDocumentIDs.contains(doc.id))
@@ -1170,6 +1336,15 @@ struct DocumentBrowserView: View {
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.white)
                             .lineLimit(1)
+
+                        if doc.syncState != .idle {
+                            DocumentSyncBadgeView(
+                                state: doc.syncState,
+                                onRetryTap: doc.syncState == .failed ? {
+                                    Task { await DocumentSyncCoordinator.shared.retry(documentId: doc.id) }
+                                } : nil
+                            )
+                        }
 
                         if !isSelectionMode {
                             Button {
@@ -1238,7 +1413,7 @@ struct DocumentBrowserView: View {
             .buttonStyle(.plain)
 
             Button {
-                showAccountMenu = true
+                openAccountSettings()
             } label: {
                 ProfileAvatarView(
                     avatarURL: authManager.avatarURL,
@@ -1247,30 +1422,6 @@ struct DocumentBrowserView: View {
                 )
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showAccountMenu, arrowEdge: .top) {
-                AccountMenuPopoverView(
-                    userName: authManager.userName ?? "User",
-                    onViewAccount: {
-                        showAccountMenu = false
-                        showAccountSheet = true
-                    },
-                    onSettings: {
-                        showAccountMenu = false
-                        showSettingsModal = true
-                    },
-                    onCloudBackup: {
-                        showAccountMenu = false
-                        showCloudSettingsModal = true
-                    },
-                    onSignOut: {
-                        showAccountMenu = false
-                        Task { @MainActor in
-                            await authManager.signOut()
-                        }
-                    }
-                )
-                .presentationCompactAdaptation(.popover)
-            }
         }
     }
 
@@ -1473,7 +1624,7 @@ struct DocumentBrowserView: View {
                 },
                 onOpenSettings: {
                     showCloudStatus = false
-                    showCloudSettingsModal = true
+                    openAccountSettings(at: .cloudBackup)
                 }
             )
             .presentationCompactAdaptation(.popover)
@@ -1600,13 +1751,13 @@ struct DocumentBrowserView: View {
                 GoodnotesSearchBar(text: $searchText, placeholder: "Search", isEditable: true)
 
                 HStack {
-                    Text(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recently Opened Documents" : "Search Results")
+                    Text(trimmedSearchText.isEmpty ? "Recently Opened Documents" : "Search Results")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.white)
 
                     Spacer(minLength: 0)
 
-                    if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    if trimmedSearchText.isEmpty,
                        !recentlyOpenedDocuments.isEmpty {
                         Button("Clear") {
                             clearRecentDocuments()
@@ -1616,33 +1767,102 @@ struct DocumentBrowserView: View {
                     }
                 }
 
-                if searchResults.isEmpty {
+                if trimmedSearchText.isEmpty {
+                    if recentlyOpenedDocuments.isEmpty {
+                        Spacer(minLength: 0)
+                        Text("No recent documents yet")
+                            .font(.system(size: 16, weight: .regular))
+                            .foregroundColor(Color.white.opacity(0.65))
+                        Spacer(minLength: 0)
+                    } else {
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 14) {
+                                ForEach(recentlyOpenedDocuments) { doc in
+                                    Button {
+                                        showSearchOverlay = false
+                                        handleDocumentTap(doc)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 7) {
+                                            MiniDocumentPreview(document: doc)
+                                                .frame(width: 148, height: 192)
+                                            Text(doc.title)
+                                                .font(.system(size: 14, weight: .regular))
+                                                .foregroundColor(.white)
+                                                .lineLimit(2)
+                                                .frame(width: 148, alignment: .leading)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.bottom, 20)
+                        }
+                        .scrollIndicators(.hidden)
+                    }
+                } else if isSearchingDocuments && globalSearchResults.isEmpty {
                     Spacer(minLength: 0)
-                    Text("No documents found")
+                    ProgressView()
+                        .tint(Color(hex: 0xE84D4D))
+                    Spacer(minLength: 0)
+                } else if globalSearchResults.isEmpty {
+                    Spacer(minLength: 0)
+                    Text("No documents or page text matched \"\(trimmedSearchText)\"")
                         .font(.system(size: 16, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.65))
+                        .multilineTextAlignment(.center)
                     Spacer(minLength: 0)
                 } else {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 14) {
-                            ForEach(searchResults) { doc in
-                                Button {
-                                    showSearchOverlay = false
-                                    handleDocumentTap(doc)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 7) {
-                                        MiniDocumentPreview(document: doc)
-                                            .frame(width: 148, height: 192)
-                                        Text(doc.title)
-                                            .font(.system(size: 14, weight: .regular))
-                                            .foregroundColor(.white)
-                                            .lineLimit(2)
-                                            .frame(width: 148, alignment: .leading)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(globalSearchResults) { result in
+                                if let doc = document(for: result.documentId) {
+                                    Button {
+                                        showSearchOverlay = false
+                                        handleDocumentTap(doc, initialPage: result.pageIndex)
+                                    } label: {
+                                        HStack(alignment: .top, spacing: 14) {
+                                            MiniDocumentPreview(document: doc)
+                                                .frame(width: 72, height: 96)
+
+                                            VStack(alignment: .leading, spacing: 6) {
+                                                HStack(spacing: 8) {
+                                                    Text(result.title)
+                                                        .font(.system(size: 15, weight: .semibold))
+                                                        .foregroundColor(.white)
+                                                        .lineLimit(2)
+
+                                                    Text(result.kind == .pageText ? "Page Text" : "Metadata")
+                                                        .font(.system(size: 11, weight: .bold))
+                                                        .foregroundColor(result.kind == .pageText ? Color(hex: 0x2E8DFF) : LectraColor.success)
+                                                        .padding(.horizontal, 8)
+                                                        .frame(height: 22)
+                                                        .background((result.kind == .pageText ? Color(hex: 0x2E8DFF) : LectraColor.success).opacity(0.14))
+                                                        .clipShape(Capsule())
+                                                }
+
+                                                Text(result.subtitle)
+                                                    .font(.system(size: 13, weight: .medium))
+                                                    .foregroundColor(Color.white.opacity(0.6))
+
+                                                if let snippet = result.snippet, !snippet.isEmpty {
+                                                    Text(snippet)
+                                                        .font(.system(size: 13, weight: .regular))
+                                                        .foregroundColor(Color.white.opacity(0.76))
+                                                        .lineLimit(3)
+                                                }
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                        .padding(14)
+                                        .background(Color.white.opacity(0.04))
+                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                     }
+                                    .buttonStyle(.plain)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 20)
                     }
                     .scrollIndicators(.hidden)
@@ -1654,12 +1874,6 @@ struct DocumentBrowserView: View {
             .padding(.top, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func modalBackdrop(onDismiss: @escaping () -> Void) -> some View {
-        Color.black.opacity(0.62)
-            .ignoresSafeArea()
-            .onTapGesture(perform: onDismiss)
     }
 
     private func enterSelectionMode() {
@@ -2110,7 +2324,7 @@ struct DocumentBrowserView: View {
 
     private func loadCloudPreferences() {
         let defaults = UserDefaults.standard
-        isICloudAvailable = FileManager.default.url(forUbiquityContainerIdentifier: nil) != nil
+        isICloudAvailable = ICloudDocumentStore.shared.isAvailable()
         if defaults.object(forKey: cloudSyncEnabledDefaultsKey) != nil {
             isCloudSyncEnabled = defaults.bool(forKey: cloudSyncEnabledDefaultsKey)
         } else {
@@ -2133,6 +2347,16 @@ struct DocumentBrowserView: View {
     }
 
     private func setCloudSyncEnabled(_ isEnabled: Bool) {
+        if isEnabled {
+            isICloudAvailable = ICloudDocumentStore.shared.isAvailable()
+            guard isICloudAvailable else {
+                isCloudSyncEnabled = false
+                UserDefaults.standard.set(false, forKey: cloudSyncEnabledDefaultsKey)
+                featureNotice = "Sign in to iCloud and enable iCloud Drive to sync Lectra documents."
+                return
+            }
+        }
+
         isCloudSyncEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: cloudSyncEnabledDefaultsKey)
 
@@ -2150,13 +2374,22 @@ struct DocumentBrowserView: View {
 
     private func runCloudSync(triggeredByUser: Bool) async {
         await MainActor.run {
-            isICloudAvailable = FileManager.default.url(forUbiquityContainerIdentifier: nil) != nil
+            isICloudAvailable = ICloudDocumentStore.shared.isAvailable()
         }
 
         if !isCloudSyncEnabled {
             if triggeredByUser {
                 await MainActor.run {
                     featureNotice = "Enable Cloud Sync in Cloud & Backup Settings first."
+                }
+            }
+            return
+        }
+
+        guard isICloudAvailable else {
+            if triggeredByUser {
+                await MainActor.run {
+                    featureNotice = "iCloud Drive is unavailable. Your documents remain saved on this device."
                 }
             }
             return
@@ -2175,20 +2408,29 @@ struct DocumentBrowserView: View {
 
         await refreshRemoteDocuments()
 
-        await MainActor.run {
-            lastCloudSyncDate = Date()
-            UserDefaults.standard.set(lastCloudSyncDate, forKey: lastCloudSyncDefaultsKey)
+        do {
+            try await ICloudDocumentStore.shared.mirrorDocuments(documents, repository: repository)
+            await MainActor.run {
+                lastCloudSyncDate = Date()
+                UserDefaults.standard.set(lastCloudSyncDate, forKey: lastCloudSyncDefaultsKey)
+            }
+        } catch {
+            await MainActor.run {
+                featureNotice = "Saved locally, but iCloud sync did not finish: \(error.localizedDescription)"
+            }
         }
 
         guard isAutoBackupEnabled || triggeredByUser else { return }
 
         do {
-            let backupTarget = try createLibraryBackupSnapshot()
+            let backupTargets = try createLibraryBackupSnapshots()
             await MainActor.run {
                 lastBackupDate = Date()
                 UserDefaults.standard.set(lastBackupDate, forKey: lastBackupDefaultsKey)
+                loadRecoverySnapshots()
                 if triggeredByUser {
-                    featureNotice = "Sync complete. Backup saved to \(backupTarget)."
+                    let backupSummary = backupTargets.joined(separator: " + ")
+                    showCloudSuccessToast("Synced to iCloud. Backup saved to \(backupSummary).")
                 }
             }
         } catch {
@@ -2200,11 +2442,13 @@ struct DocumentBrowserView: View {
 
     private func runManualBackup() async {
         do {
-            let backupTarget = try createLibraryBackupSnapshot()
+            let backupTargets = try createLibraryBackupSnapshots()
             await MainActor.run {
                 lastBackupDate = Date()
                 UserDefaults.standard.set(lastBackupDate, forKey: lastBackupDefaultsKey)
-                featureNotice = "Backup saved to \(backupTarget)."
+                loadRecoverySnapshots()
+                let backupSummary = backupTargets.joined(separator: " + ")
+                showCloudSuccessToast("Backup saved to \(backupSummary).")
             }
         } catch {
             await MainActor.run {
@@ -2213,9 +2457,24 @@ struct DocumentBrowserView: View {
         }
     }
 
-    private func createLibraryBackupSnapshot() throws -> String {
+    private func createLibraryBackupSnapshots() throws -> [String] {
+        var savedTargets: [String] = []
+        savedTargets.append(try createLibraryBackupSnapshot(location: .onDevice))
+
+        if isCloudSyncEnabled,
+           isICloudAvailable,
+           backupRootURL(location: .iCloudDrive) != nil {
+            savedTargets.append(try createLibraryBackupSnapshot(location: .iCloudDrive))
+        }
+
+        return savedTargets
+    }
+
+    private func createLibraryBackupSnapshot(location: RecoverySnapshotLocation) throws -> String {
         let fileManager = FileManager.default
-        let backupRoot = backupRootURL()
+        guard let backupRoot = backupRootURL(location: location) else {
+            throw ICloudDocumentStoreError.unavailable
+        }
         try fileManager.createDirectory(at: backupRoot, withIntermediateDirectories: true)
 
         let formatter = ISO8601DateFormatter()
@@ -2224,13 +2483,15 @@ struct DocumentBrowserView: View {
         let snapshotFolder = backupRoot.appendingPathComponent("snapshot-\(timestamp)", isDirectory: true)
         try fileManager.createDirectory(at: snapshotFolder, withIntermediateDirectories: true)
 
-        var snapshotItems: [LibraryBackupSnapshot.Item] = []
+        var snapshotItems: [RecoverySnapshotManifestItem] = []
         snapshotItems.reserveCapacity(documents.count)
 
         for doc in documents {
             var relativePDFPath: String?
+            var pdfChecksum: String?
+            let candidateURL = existingPreferredBackupURL(for: doc)
 
-            if let localURL = doc.localPDFURL,
+            if let localURL = candidateURL,
                fileManager.fileExists(atPath: localURL.path) {
                 let docBackupFolder = snapshotFolder.appendingPathComponent(doc.id.uuidString, isDirectory: true)
                 try fileManager.createDirectory(at: docBackupFolder, withIntermediateDirectories: true)
@@ -2239,6 +2500,7 @@ struct DocumentBrowserView: View {
                 try? fileManager.removeItem(at: destination)
                 try fileManager.copyItem(at: localURL, to: destination)
                 relativePDFPath = "\(doc.id.uuidString)/document.pdf"
+                pdfChecksum = checksum(for: destination)
             }
 
             snapshotItems.append(
@@ -2249,14 +2511,15 @@ struct DocumentBrowserView: View {
                     updatedAt: doc.updatedAt,
                     relativePDFPath: relativePDFPath,
                     folderId: folderId(for: doc),
-                    isFavorite: doc.isFavorite
+                    isFavorite: doc.isFavorite,
+                    checksum: pdfChecksum
                 )
             )
         }
 
-        let snapshot = LibraryBackupSnapshot(
+        let snapshot = RecoverySnapshotManifest(
             createdAt: Date(),
-            source: backupRoot.path.contains("/Mobile Documents/") ? "iCloud Drive" : "On Device",
+            source: location == .iCloudDrive ? "iCloud Drive" : "On Device",
             folders: folders.map {
                 SavedLocalFolder(
                     id: $0.id,
@@ -2281,18 +2544,259 @@ struct DocumentBrowserView: View {
         return snapshot.source
     }
 
-    private func backupRootURL() -> URL {
+    private func backupRootURL(location: RecoverySnapshotLocation) -> URL? {
         let fileManager = FileManager.default
-        if isCloudSyncEnabled,
-           let ubiquitousRoot = fileManager.url(forUbiquityContainerIdentifier: nil) {
-            let iCloudBackupRoot = ubiquitousRoot
+        switch location {
+        case .onDevice:
+            return fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("LectraBackups", isDirectory: true)
+        case .iCloudDrive:
+            guard let ubiquitousRoot = fileManager.url(forUbiquityContainerIdentifier: nil) else {
+                return nil
+            }
+            return ubiquitousRoot
                 .appendingPathComponent("Documents", isDirectory: true)
                 .appendingPathComponent("LectraBackups", isDirectory: true)
-            return iCloudBackupRoot
+        }
+    }
+
+    private func existingPreferredBackupURL(for document: LocalDocument) -> URL? {
+        let annotatedURL = repository.localAnnotatedPDFURL(for: document.id)
+        if FileManager.default.fileExists(atPath: annotatedURL.path) {
+            return annotatedURL
         }
 
-        return fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("LectraBackups", isDirectory: true)
+        if let localURL = document.localPDFURL,
+           FileManager.default.fileExists(atPath: localURL.path) {
+            return localURL
+        }
+
+        return nil
+    }
+
+    private func checksum(for url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func loadRecoverySnapshots() {
+        let fileManager = FileManager.default
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        var snapshots: [RecoverySnapshot] = []
+
+        for (location, rootURL) in availableRecoveryRoots() {
+            guard fileManager.fileExists(atPath: rootURL.path),
+                  let snapshotFolders = try? fileManager.contentsOfDirectory(
+                    at: rootURL,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                  ) else {
+                continue
+            }
+
+            for snapshotFolder in snapshotFolders {
+                let values = try? snapshotFolder.resourceValues(forKeys: [.isDirectoryKey])
+                guard values?.isDirectory == true else { continue }
+
+                let manifestURL = snapshotFolder.appendingPathComponent("manifest.json")
+                guard fileManager.fileExists(atPath: manifestURL.path),
+                      let data = try? Data(contentsOf: manifestURL),
+                      let manifest = try? decoder.decode(RecoverySnapshotManifest.self, from: data) else {
+                    continue
+                }
+
+                snapshots.append(
+                    RecoverySnapshot(
+                        id: "\(location.rawValue)-\(snapshotFolder.lastPathComponent)",
+                        manifestURL: manifestURL,
+                        snapshotFolderURL: snapshotFolder,
+                        createdAt: manifest.createdAt,
+                        source: manifest.source,
+                        itemCount: manifest.items.count,
+                        location: location,
+                        items: manifest.items
+                    )
+                )
+            }
+        }
+
+        recoverySnapshots = snapshots.sorted { lhs, rhs in
+            lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    private func availableRecoveryRoots() -> [(RecoverySnapshotLocation, URL)] {
+        var roots: [(RecoverySnapshotLocation, URL)] = []
+
+        if let onDeviceRoot = backupRootURL(location: .onDevice) {
+            roots.append((.onDevice, onDeviceRoot))
+        }
+        if let iCloudRoot = backupRootURL(location: .iCloudDrive) {
+            roots.append((.iCloudDrive, iCloudRoot))
+        }
+
+        return roots
+    }
+
+    private func restoreSnapshot(_ snapshot: RecoverySnapshot, mode: RecoveryRestoreMode) async {
+        let fileManager = FileManager.default
+        let documentsRoot = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        guard let manifestData = try? Data(contentsOf: snapshot.manifestURL),
+              let manifest = try? decoder.decode(RecoverySnapshotManifest.self, from: manifestData) else {
+            featureNotice = "This recovery snapshot could not be read."
+            return
+        }
+
+        let folderMapping = resolveRestoredFolderIDs(from: manifest.folders)
+        var restoredDocumentCount = 0
+        var skippedDocumentCount = 0
+
+        for item in manifest.items {
+            guard let relativePDFPath = item.relativePDFPath else {
+                skippedDocumentCount += 1
+                continue
+            }
+
+            let sourceURL = snapshot.snapshotFolderURL.appendingPathComponent(relativePDFPath)
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                skippedDocumentCount += 1
+                continue
+            }
+
+            if let expectedChecksum = item.checksum,
+               let actualChecksum = checksum(for: sourceURL),
+               actualChecksum != expectedChecksum {
+                skippedDocumentCount += 1
+                continue
+            }
+
+            let targetDocumentId = mode == .replace ? item.id : UUID()
+            let destinationFolder = documentsRoot
+                .appendingPathComponent("pdfs", isDirectory: true)
+                .appendingPathComponent(targetDocumentId.uuidString, isDirectory: true)
+            let destinationURL = destinationFolder.appendingPathComponent("original.pdf")
+
+            do {
+                try fileManager.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+                try? fileManager.removeItem(at: destinationURL)
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            } catch {
+                skippedDocumentCount += 1
+                continue
+            }
+
+            let resolvedTitle = mode == .copy ? uniqueRestoredTitle(base: item.title) : item.title
+            let resolvedFolderID = item.folderId.flatMap { folderMapping[$0] }
+            let existingDocument = document(for: targetDocumentId)
+
+            if let existingDocument {
+                existingDocument.title = resolvedTitle
+                existingDocument.localPDFURL = destinationURL
+                existingDocument.updatedAt = item.updatedAt
+                existingDocument.isFavorite = item.isFavorite ?? false
+            } else {
+                let restoredDocument = LocalDocument(
+                    title: resolvedTitle,
+                    localURL: destinationURL,
+                    id: targetDocumentId,
+                    isFavorite: item.isFavorite ?? false,
+                    createdAt: item.createdAt,
+                    updatedAt: item.updatedAt
+                )
+                documents = [restoredDocument] + documents
+            }
+
+            storeLocalDocumentMetadata(
+                docId: targetDocumentId,
+                title: resolvedTitle,
+                relativePath: "pdfs/\(targetDocumentId.uuidString)/original.pdf",
+                folderId: resolvedFolderID,
+                createdAt: item.createdAt,
+                updatedAt: item.updatedAt
+            )
+            ThumbnailCache.shared.invalidate(documentId: targetDocumentId)
+            restoredDocumentCount += 1
+        }
+
+        refreshLibraryDerivatives(reloadRecoverySnapshots: true)
+        runGlobalSearch()
+
+        let restoredScope = snapshot.location == .iCloudDrive ? "iCloud Drive" : "on-device recovery"
+        if restoredDocumentCount == 0 {
+            featureNotice = "No documents could be restored from \(restoredScope)."
+            return
+        }
+
+        let modeTitle = mode == .copy ? "as copies" : "by replacing current versions"
+        if skippedDocumentCount > 0 {
+            featureNotice = "Restored \(restoredDocumentCount) document(s) \(modeTitle) from \(restoredScope). Skipped \(skippedDocumentCount) item(s)."
+        } else {
+            featureNotice = "Restored \(restoredDocumentCount) document(s) \(modeTitle) from \(restoredScope)."
+        }
+    }
+
+    private func resolveRestoredFolderIDs(from savedFolders: [SavedLocalFolder]) -> [UUID: UUID] {
+        var resolved: [UUID: UUID] = [:]
+        var didChangeFolders = false
+
+        for savedFolder in savedFolders {
+            if let systemTag = savedFolder.systemTag,
+               let existing = folders.first(where: { $0.systemTag == systemTag }) {
+                resolved[savedFolder.id] = existing.id
+                continue
+            }
+
+            if let existing = folders.first(where: { $0.id == savedFolder.id }) {
+                resolved[savedFolder.id] = existing.id
+                continue
+            }
+
+            if let existing = folders.first(where: {
+                $0.name.localizedCaseInsensitiveCompare(savedFolder.name) == .orderedSame &&
+                $0.systemTag == savedFolder.systemTag
+            }) {
+                resolved[savedFolder.id] = existing.id
+                continue
+            }
+
+            let restoredFolder = LocalFolder(
+                id: savedFolder.id,
+                name: savedFolder.name,
+                createdAt: savedFolder.createdAt,
+                colorHex: savedFolder.colorHex,
+                iconSystemName: savedFolder.iconSystemName,
+                systemTag: savedFolder.systemTag
+            )
+            folders = [restoredFolder] + folders
+            resolved[savedFolder.id] = restoredFolder.id
+            didChangeFolders = true
+        }
+
+        if didChangeFolders {
+            saveFolders()
+        }
+
+        return resolved
+    }
+
+    private func uniqueRestoredTitle(base: String) -> String {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let seed = trimmed.isEmpty ? "Recovered Document" : "\(trimmed) Restored"
+        var candidate = seed
+        var suffix = 2
+
+        while documents.contains(where: { $0.title.localizedCaseInsensitiveCompare(candidate) == .orderedSame }) {
+            candidate = "\(seed) \(suffix)"
+            suffix += 1
+        }
+
+        return candidate
     }
 
     private func canModifyContents(of folderId: UUID?) -> Bool {
@@ -2305,7 +2809,7 @@ struct DocumentBrowserView: View {
     }
 
     private func handleDrop(items: [String], into folderId: UUID) -> Bool {
-        guard canModifyContents(of: folderId) else { return false }
+        guard !isSelectionMode else { return false }
         let documentIDs = items.compactMap(UUID.init(uuidString:))
         guard !documentIDs.isEmpty else { return false }
 
@@ -2386,6 +2890,7 @@ struct DocumentBrowserView: View {
         let savedLocalDocs = loadSavedLocalDocuments()
         documents = savedLocalDocs
         applyTitleOverrides()
+        refreshLibraryDerivatives(reloadRecoverySnapshots: true)
         pruneFolderMappingForCurrentData()
 
         if let currentFolderId,
@@ -2431,6 +2936,7 @@ struct DocumentBrowserView: View {
                 }
 
                 routeNonLocalDocumentsToImportedFolder()
+                refreshLibraryDerivatives(reloadRecoverySnapshots: true)
                 pruneFolderMappingForCurrentData()
                 if let currentFolderId,
                    !folders.contains(where: { $0.id == currentFolderId }) {
@@ -2471,6 +2977,7 @@ struct DocumentBrowserView: View {
                 localURL: fileURL,
                 id: savedItem.id,
                 isFavorite: savedItem.isFavorite ?? false,
+                sourceURLString: savedItem.sourceURLString,
                 createdAt: createdAt,
                 updatedAt: updatedAt
             )
@@ -2495,9 +3002,136 @@ struct DocumentBrowserView: View {
         return merged
     }
 
+    private func openEditor(documentId: UUID, initialPage: Int? = nil) {
+        markDocumentAsRecentlyOpened(documentId)
+        editorRoute = EditorRoute(documentId: documentId, initialPage: initialPage)
+    }
+
+    private func existingLectraDocumentID(forSourceURL url: URL) -> UUID? {
+        let normalizedSourceURL = normalizedImportedSourceURL(url.absoluteString)
+        guard !normalizedSourceURL.isEmpty else { return nil }
+
+        return documents.first { document in
+            normalizedImportedSourceURL(document.sourceURLString) == normalizedSourceURL
+        }?.id
+    }
+
+    private func normalizedImportedSourceURL(_ raw: String?) -> String {
+        guard let raw else { return "" }
+
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        guard var components = URLComponents(string: trimmed) else {
+            return trimmed.lowercased()
+        }
+
+        components.fragment = nil
+
+        if let queryItems = components.queryItems, !queryItems.isEmpty {
+            components.queryItems = queryItems.sorted {
+                if $0.name == $1.name {
+                    return ($0.value ?? "") < ($1.value ?? "")
+                }
+                return $0.name < $1.name
+            }
+        }
+
+        return (components.url?.absoluteString ?? trimmed).lowercased()
+    }
+
+    private func applySyncPayload(_ payload: DocumentSyncStatusPayload) {
+        guard let doc = document(for: payload.documentId) else { return }
+        doc.apply(metadata: payload.metadata)
+
+        if let editedAt = payload.metadata.lastLocalEditAt {
+            doc.updatedAt = max(doc.updatedAt, editedAt)
+        }
+
+        documents = Array(documents)
+        DocumentSearchIndex.shared.refresh(
+            documents: [doc],
+            folderNameByDocumentID: folderNameByDocumentID()
+        )
+    }
+
+    private func applyPersistedMetadata() {
+        for doc in documents {
+            DocumentSyncCoordinator.shared.applyPersistedMetadata(to: doc)
+        }
+    }
+
+    private func folderNameByDocumentID() -> [UUID: String] {
+        Dictionary(
+            uniqueKeysWithValues: documents.compactMap { doc in
+                if let folderID = folderId(for: doc),
+                   let folder = folders.first(where: { $0.id == folderID }) {
+                    return (doc.id, folder.name)
+                }
+                if doc.isRemoteBacked {
+                    return (doc.id, importedCanvascopeFolderName)
+                }
+                return nil
+            }
+        )
+    }
+
+    private func refreshLibraryDerivatives(reloadRecoverySnapshots: Bool = false) {
+        applyPersistedMetadata()
+
+        let folderMap = folderNameByDocumentID()
+        DocumentSearchIndex.shared.refresh(documents: documents, folderNameByDocumentID: folderMap)
+
+        for doc in documents {
+            if let pdfURL = doc.localPDFURL {
+                ThumbnailCache.shared.warmThumbnail(
+                    documentId: doc.id,
+                    pdfURL: pdfURL,
+                    revision: doc.thumbnailRevision
+                )
+            }
+        }
+
+        if reloadRecoverySnapshots {
+            loadRecoverySnapshots()
+        }
+    }
+
+    private func runGlobalSearch() {
+        searchRefreshTask?.cancel()
+
+        guard !trimmedSearchText.isEmpty else {
+            globalSearchResults = []
+            isSearchingDocuments = false
+            return
+        }
+
+        let query = trimmedSearchText
+        isSearchingDocuments = true
+
+        func performSearch() -> [DocumentSearchResult] {
+            DocumentSearchIndex.shared.search(
+                query: query,
+                documents: documents,
+                folderNameByDocumentID: folderNameByDocumentID()
+            )
+        }
+
+        globalSearchResults = performSearch()
+        isSearchingDocuments = false
+
+        searchRefreshTask = Task { @MainActor in
+            for _ in 0..<3 {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled, query == trimmedSearchText else { return }
+                globalSearchResults = performSearch()
+            }
+        }
+    }
+
     // MARK: - Document Tap
 
-    private func handleDocumentTap(_ doc: LocalDocument) {
+    private func handleDocumentTap(_ doc: LocalDocument, initialPage: Int? = nil) {
         if isSelectionMode {
             toggleDocumentSelection(doc.id)
             return
@@ -2520,13 +3154,21 @@ struct DocumentBrowserView: View {
                         doc.localPDFURL = url
                         doc.status = .pendingAnnotation
                         doc.updatedAt = Date()
+                        ThumbnailCache.shared.warmThumbnail(
+                            documentId: doc.id,
+                            pdfURL: url,
+                            revision: doc.thumbnailRevision
+                        )
                         documents = Array(documents)
+                        DocumentSearchIndex.shared.refresh(
+                            documents: [doc],
+                            folderNameByDocumentID: folderNameByDocumentID()
+                        )
                     }
 
                     try? await Task.sleep(nanoseconds: 80_000_000)
                     await MainActor.run {
-                        markDocumentAsRecentlyOpened(doc.id)
-                        editorDocumentId = doc.id
+                        openEditor(documentId: doc.id, initialPage: initialPage)
                     }
                 } catch {
                     await MainActor.run {
@@ -2539,8 +3181,7 @@ struct DocumentBrowserView: View {
             return
         }
 
-        markDocumentAsRecentlyOpened(doc.id)
-        editorDocumentId = doc.id
+        openEditor(documentId: doc.id, initialPage: initialPage)
     }
 
     // MARK: - Import
@@ -2573,9 +3214,13 @@ struct DocumentBrowserView: View {
         featureNotice = "Unsupported file type. Please choose a PDF or image."
     }
 
-    private func importLocalPDF(from url: URL, folderId: UUID? = nil) {
+    private func importLocalPDF(from url: URL, folderId: UUID? = nil, sourceURL: URL? = nil) {
         let title = url.deletingPathExtension().lastPathComponent
-        let doc = LocalDocument(title: title, localURL: url)
+        let doc = LocalDocument(
+            title: title,
+            localURL: url,
+            sourceURLString: sourceURL.map(\.absoluteString)
+        )
 
         let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("pdfs", isDirectory: true)
@@ -2593,17 +3238,18 @@ struct DocumentBrowserView: View {
                 docId: doc.id,
                 title: title,
                 relativePath: relativePath,
+                sourceURLString: doc.sourceURLString,
                 folderId: folderId,
                 createdAt: doc.createdAt,
                 updatedAt: doc.updatedAt
             )
 
             documents = [doc] + documents
+            refreshLibraryDerivatives()
 
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 80_000_000)
-                markDocumentAsRecentlyOpened(doc.id)
-                editorDocumentId = doc.id
+                openEditor(documentId: doc.id)
             }
         } catch {
             featureNotice = "Could not import PDF: \(error.localizedDescription)"
@@ -2652,12 +3298,12 @@ struct DocumentBrowserView: View {
             )
 
             documents = [doc] + documents
+            refreshLibraryDerivatives()
             featureNotice = "Imported Gradescope template into \"\(importedGradescopeFolderName)\"."
 
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 80_000_000)
-                markDocumentAsRecentlyOpened(doc.id)
-                editorDocumentId = doc.id
+                openEditor(documentId: doc.id)
             }
         } catch {
             featureNotice = "Could not import Gradescope template: \(error.localizedDescription)"
@@ -2696,6 +3342,7 @@ struct DocumentBrowserView: View {
 
             doc.localPDFURL = destination
             documents = [doc] + documents
+            refreshLibraryDerivatives()
 
             let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
             storeLocalDocumentMetadata(
@@ -2709,8 +3356,7 @@ struct DocumentBrowserView: View {
 
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 80_000_000)
-                markDocumentAsRecentlyOpened(doc.id)
-                editorDocumentId = doc.id
+                openEditor(documentId: doc.id)
             }
         } catch {
             featureNotice = "Could not convert image to PDF: \(error.localizedDescription)"
@@ -2749,6 +3395,7 @@ struct DocumentBrowserView: View {
 
             doc.localPDFURL = destination
             documents = [doc] + documents
+            refreshLibraryDerivatives()
 
             let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
             storeLocalDocumentMetadata(
@@ -2762,8 +3409,7 @@ struct DocumentBrowserView: View {
 
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 80_000_000)
-                markDocumentAsRecentlyOpened(doc.id)
-                editorDocumentId = doc.id
+                openEditor(documentId: doc.id)
             }
         } catch {
             featureNotice = "Could not create a new file: \(error.localizedDescription)"
@@ -2788,6 +3434,7 @@ struct DocumentBrowserView: View {
         )
         folders = [folder] + folders
         saveFolders()
+        runGlobalSearch()
     }
 
     private func loadSavedFolders() {
@@ -2903,6 +3550,7 @@ struct DocumentBrowserView: View {
         docId: UUID,
         title: String,
         relativePath: String,
+        sourceURLString: String? = nil,
         folderId: UUID?,
         createdAt: Date,
         updatedAt: Date
@@ -2914,14 +3562,19 @@ struct DocumentBrowserView: View {
         }
 
         var isFav = false
+        var resolvedSourceURLString = sourceURLString
         if let index = existingSaved.firstIndex(where: { $0.id == docId }) {
             isFav = existingSaved[index].isFavorite ?? false
+            if resolvedSourceURLString == nil {
+                resolvedSourceURLString = existingSaved[index].sourceURLString
+            }
         }
 
         let updated = SavedLocalDocument(
             id: docId,
             title: title,
             localPath: relativePath,
+            sourceURLString: resolvedSourceURLString,
             createdAt: createdAt,
             updatedAt: updatedAt,
             isFavorite: isFav
@@ -2983,6 +3636,7 @@ struct DocumentBrowserView: View {
         }
 
         saveDocumentFolderMap()
+        runGlobalSearch()
     }
 
     private func moveDocument(documentId: UUID, to folderId: UUID?) {
@@ -3019,6 +3673,7 @@ struct DocumentBrowserView: View {
             )
 
             documents = [duplicated] + documents
+            refreshLibraryDerivatives()
 
             let relativePath = "pdfs/\(newId.uuidString)/original.pdf"
             storeLocalDocumentMetadata(
@@ -3065,11 +3720,17 @@ struct DocumentBrowserView: View {
 
         removeSavedLocalDocument(documentId: doc.id)
         removeTitleOverride(documentId: doc.id)
+        ThumbnailCache.shared.invalidate(documentId: doc.id)
+        Task {
+            await ICloudDocumentStore.shared.deleteMirroredDocument(documentId: doc.id)
+        }
 
         let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("pdfs", isDirectory: true)
             .appendingPathComponent(doc.id.uuidString, isDirectory: true)
         try? FileManager.default.removeItem(at: localFolder)
+        refreshLibraryDerivatives()
+        runGlobalSearch()
     }
 
     private func removeSavedLocalDocument(documentId: UUID) {
@@ -3099,6 +3760,7 @@ struct DocumentBrowserView: View {
         }
 
         documents = Array(documents)
+        runGlobalSearch()
     }
 
     private func applyTitleOverrides() {
@@ -3139,6 +3801,7 @@ struct DocumentBrowserView: View {
             id: saved[index].id,
             title: title,
             localPath: saved[index].localPath,
+            sourceURLString: saved[index].sourceURLString,
             createdAt: saved[index].createdAt,
             updatedAt: updatedAt,
             isFavorite: saved[index].isFavorite
@@ -3165,6 +3828,7 @@ struct DocumentBrowserView: View {
 private struct GoodnotesFolderCardView: View {
     let folderName: String
     let subtitle: String
+    let metrics: LibraryGridMetrics
     let accent: Color
     let iconSystemName: String?
     let showsOptionsButton: Bool
@@ -3177,7 +3841,7 @@ private struct GoodnotesFolderCardView: View {
             ZStack(alignment: .topTrailing) {
                 RoundedRectangle(cornerRadius: 17, style: .continuous)
                     .fill(accent)
-                    .frame(height: 128)
+                    .frame(height: metrics.folderArtworkHeight)
                     .overlay(alignment: .topLeading) {
                         RoundedRectangle(cornerRadius: 15, style: .continuous)
                             .fill(accent.opacity(0.9))
@@ -3206,28 +3870,39 @@ private struct GoodnotesFolderCardView: View {
             .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
             .onTapGesture(perform: onOpen)
 
-            HStack(spacing: 4) {
-                Text(folderName)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .onTapGesture(perform: onOpen)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 4) {
+                    Text(folderName)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .onTapGesture(perform: onOpen)
 
-                if showsOptionsButton {
-                    Button(action: onOptionsTap) {
-                        Image(systemName: isOptionsVisible ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                            .frame(width: 22, height: 22)
+                    if showsOptionsButton {
+                        Button(action: onOptionsTap) {
+                            Image(systemName: isOptionsVisible ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(Color(hex: 0xE84D4D))
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
-            }
+                .frame(height: 24, alignment: .topLeading)
 
-            Text(subtitle)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.58))
+                Text(subtitle)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.58))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(height: metrics.folderFooterHeight, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onOpen)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(height: metrics.folderTotalHeight, alignment: .topLeading)
     }
 }
 
@@ -3466,10 +4141,11 @@ private struct MiniDocumentPreview: View {
             .fill(Color.white)
             .overlay(
                 Group {
-                    if let url = document.localPDFURL,
-                       let pdfDoc = PDFDocument(url: url),
-                       let page = pdfDoc.page(at: 0) {
-                        PDFThumbnailRepresentable(page: page)
+                    if document.localPDFURL != nil {
+                        CachedDocumentThumbnailView(
+                            document: document,
+                            size: CGSize(width: 96, height: 128)
+                        )
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     } else {
                         VStack(spacing: 3) {
@@ -3777,264 +4453,6 @@ private struct CloudStatusPopoverView: View {
     }
 }
 
-private struct AccountMenuPopoverView: View {
-    let userName: String
-    let onViewAccount: () -> Void
-    let onSettings: () -> Void
-    let onCloudBackup: () -> Void
-    let onSignOut: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(Color(hex: 0xA88F63))
-                    .frame(width: 40, height: 40)
-                    .overlay(
-                        Text(initials)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
-                    )
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(userName)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.white)
-                    Text("Special Edition")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color(hex: 0xDDA5A5))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color(hex: 0x3A252A))
-                        .clipShape(Capsule())
-                }
-
-                Spacer(minLength: 0)
-
-                Button("View Account", action: onViewAccount)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.7))
-            }
-            .padding(10)
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            VStack(spacing: 0) {
-                PopoverActionRow(title: "Settings", icon: "slider.horizontal.3", action: onSettings)
-                PopoverActionRow(title: "Cloud & Backup", icon: "icloud", action: onCloudBackup)
-                PopoverActionRow(
-                    title: "Sign Out",
-                    icon: "rectangle.portrait.and.arrow.right",
-                    showDivider: false,
-                    isDestructive: true,
-                    action: onSignOut
-                )
-            }
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .padding(12)
-        .frame(width: 320)
-        .background(Color(hex: 0x1F2024, opacity: 0.97))
-    }
-
-    private var initials: String {
-        let comps = userName.split(separator: " ").prefix(2)
-        let letters = comps.compactMap { $0.first }
-        guard !letters.isEmpty else { return "NS" }
-        return String(letters).uppercased()
-    }
-}
-
-private struct PopoverActionRow: View {
-    let title: String
-    let icon: String
-    var showDivider: Bool = true
-    var isDestructive: Bool = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .regular))
-                    .frame(width: 24)
-                Text(title)
-                    .font(.system(size: 15, weight: .regular))
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(isDestructive ? Color(hex: 0xE84D4D) : .white)
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-        }
-        .buttonStyle(.plain)
-
-        if showDivider {
-            Divider()
-                .background(Color.white.opacity(0.12))
-                .padding(.leading, 12)
-        }
-    }
-}
-
-private struct AppSettingsModalView: View {
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Spacer(minLength: 0)
-                Text("Settings")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer(minLength: 0)
-                Button("Done", action: onClose)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(Color(hex: 0xE84D4D))
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 62)
-
-            Divider().background(Color.white.opacity(0.12))
-
-            VStack(spacing: 16) {
-                settingsGroup(["Document Editing", "Document Privacy", "Stylus & Palm Rejection"])
-                settingsGroup(["Document Language", "Handwriting Recognition", "Writing Aids"])
-                settingsGroup(["Notification Preferences", "Email to Lectra", "Feedback & Surveys", "Troubleshooting"])
-            }
-            .padding(14)
-
-            Spacer(minLength: 0)
-        }
-        .frame(width: 520, height: 460)
-        .background(Color(hex: 0x1E1F23, opacity: 0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private func settingsGroup(_ rows: [String]) -> some View {
-        VStack(spacing: 0) {
-            ForEach(rows, id: \.self) { row in
-                HStack {
-                    Text(row)
-                        .font(.system(size: 16, weight: .regular))
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(Color.white.opacity(0.35))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-
-                if row != rows.last {
-                    Divider()
-                        .background(Color.white.opacity(0.1))
-                        .padding(.leading, 12)
-                }
-            }
-        }
-        .background(Color.white.opacity(0.07))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-private struct CloudBackupSettingsModalView: View {
-    let isCloudSyncEnabled: Bool
-    let isAutoBackupEnabled: Bool
-    let onSetCloudSyncEnabled: (Bool) -> Void
-    let onSetAutoBackupEnabled: (Bool) -> Void
-    let onManualBackup: () -> Void
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Spacer(minLength: 0)
-                Text("Cloud & Backup")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer(minLength: 0)
-                Button("Done", action: onClose)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(Color(hex: 0xE84D4D))
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 62)
-
-            Divider().background(Color.white.opacity(0.12))
-
-            VStack(spacing: 12) {
-                cloudToggleRow(
-                    title: "Cloud Sync",
-                    subtitle: "Explicit opt-in only",
-                    isOn: isCloudSyncEnabled,
-                    onToggle: onSetCloudSyncEnabled
-                )
-
-                Button(action: onManualBackup) {
-                    HStack {
-                        Text("Manual Backup Documents")
-                            .font(.system(size: 16, weight: .regular))
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .frame(height: 44)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-                .buttonStyle(.plain)
-
-                cloudToggleRow(
-                    title: "Automatic Backup",
-                    subtitle: "Run backup after successful sync",
-                    isOn: isAutoBackupEnabled,
-                    onToggle: onSetAutoBackupEnabled
-                )
-            }
-            .padding(14)
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .padding(14)
-
-            Text("Cloud sync stays off until you explicitly enable it. Manual backup always keeps a local snapshot and uses iCloud Drive when available.")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.65))
-                .padding(.horizontal, 20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 0)
-        }
-        .frame(width: 520, height: 360)
-        .background(Color(hex: 0x1E1F23, opacity: 0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private func cloudToggleRow(
-        title: String,
-        subtitle: String,
-        isOn: Bool,
-        onToggle: @escaping (Bool) -> Void
-    ) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(.white)
-                Text(subtitle)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.6))
-            }
-            Spacer(minLength: 0)
-            Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
-                .labelsHidden()
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-    }
-}
-
 struct DocumentOptionsSheetView: View {
     let documentTitle: String
     let onDuplicate: () -> Void
@@ -4153,8 +4571,9 @@ struct MoveDocumentSheetView: View {
                             Image(systemName: "tray.full")
                             Text("Documents")
                             Spacer(minLength: 0)
-                            if currentFolderId == nil {
+                            if currentFolderId == nil && !isLockedToImportedFolder {
                                 Image(systemName: "checkmark")
+                                    .foregroundColor(Color(hex: 0xE84D4D))
                             }
                         }
                     }
@@ -4171,7 +4590,7 @@ struct MoveDocumentSheetView: View {
                                 Text(folder.name)
                                     .foregroundColor(.white)
                                 Spacer(minLength: 0)
-                                if currentFolderId == folder.id {
+                                if currentFolderId == folder.id && !isLockedToImportedFolder {
                                     Image(systemName: "checkmark")
                                         .foregroundColor(Color(hex: 0xE84D4D))
                                 }
@@ -4183,7 +4602,7 @@ struct MoveDocumentSheetView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.black.ignoresSafeArea())
-            .navigationTitle("Move \"\(documentTitle)\"")
+            .navigationTitle(isLockedToImportedFolder ? "Locked Document" : "Move \"\(documentTitle)\"")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -4306,61 +4725,6 @@ struct ProfileAvatarView: View {
             return String(initial).uppercased()
         }
         return "N"
-    }
-}
-
-struct AccountSheetView: View {
-    @EnvironmentObject private var authManager: AuthManager
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                ProfileAvatarView(
-                    avatarURL: authManager.avatarURL,
-                    fallbackName: authManager.userName ?? authManager.userEmail,
-                    size: 84
-                )
-                .padding(.top, 24)
-
-                VStack(spacing: 6) {
-                    Text(authManager.userName ?? "Google Account")
-                        .font(.title2.weight(.semibold))
-                        .foregroundColor(.white)
-                    Text(authManager.userEmail ?? "Signed in")
-                        .font(.subheadline)
-                        .foregroundColor(Color.white.opacity(0.62))
-                }
-
-                Spacer(minLength: 0)
-
-                Button(role: .destructive) {
-                    Task { @MainActor in
-                        await authManager.signOut()
-                        dismiss()
-                    }
-                } label: {
-                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background(Color.red.opacity(0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(20)
-            .background(Color.black.ignoresSafeArea())
-            .navigationTitle("Account")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                }
-            }
-        }
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 import PDFKit
 import PencilKit
 import QuartzCore
+import Combine
 
 // MARK: - SwiftUI Wrapper
 
@@ -23,7 +24,7 @@ struct PDFAnnotationView: View {
         }
     }
 
-    private enum ToolbarDockEdge {
+    private enum ToolbarDockEdge: String, CaseIterable {
         case left
         case right
         case top
@@ -36,9 +37,12 @@ struct PDFAnnotationView: View {
 
     @ObservedObject var document: LocalDocument
     let repository: DocumentRepository
+    var initialPage: Int? = nil
     var onRename: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var gradescopeManager: GradescopeManager
+    @StateObject private var editorBridge = PDFEditorBridge()
 
     @State private var currentPage: Int = 0
     @State private var totalPages: Int = 1
@@ -73,15 +77,23 @@ struct PDFAnnotationView: View {
     }
     
     // Custom Tool Picker State
-    @State private var selectedTool: AnnotationTool = .pen
-    @State private var selectedColor: AnnotationInkColor = .accent
-    @State private var selectedStrokeWidth: CGFloat = 2.0
-    @State private var selectedEraserMode: EraserMode = .stroke
-    @State private var toolbarDockEdge: ToolbarDockEdge = .bottom
+    @State private var selectedTool: AnnotationTool = EditorPreferencesStore.shared.load().selectedTool
+    @State private var selectedColor: AnnotationInkColor = EditorPreferencesStore.shared.load().selectedColor
+    @State private var selectedStrokeWidth: CGFloat = EditorPreferencesStore.shared.load().selectedStrokeWidth
+    @State private var selectedEraserMode: EraserMode = EditorPreferencesStore.shared.load().selectedEraserMode
+    @State private var toolbarDockEdge: ToolbarDockEdge = ToolbarDockEdge(rawValue: EditorPreferencesStore.shared.load().toolbarDockEdge) ?? .bottom
+    @State private var editorPreferences = EditorPreferencesStore.shared.load()
     @State private var toolbarSize: CGSize = .zero
     @State private var isToolbarDragging = false
     @State private var canvascopeDeliveryTask: Task<Void, Never>? = nil
     @State private var showGradescopeSubmitSheet = false
+    @State private var showDocumentSearchSheet = false
+    @State private var documentSearchQuery = ""
+    @State private var documentSearchResults: [DocumentSearchResult] = []
+    @State private var isSearchingDocument = false
+    @State private var showOutlineSheet = false
+    @State private var outlineItems: [DocumentOutlineDestination] = []
+    @State private var featureCoachMessage: String?
     private let canvascopeExportService = CanvascopeExportService()
 
     var body: some View {
@@ -99,13 +111,16 @@ struct PDFAnnotationView: View {
                             pdfURL: url,
                             documentId: document.id,
                             repository: repository,
+                            bridge: editorBridge,
                             currentPage: $currentPage,
                             totalPages: $totalPages,
                             selectedTool: $selectedTool,
                             selectedColor: $selectedColor,
                             selectedStrokeWidth: $selectedStrokeWidth,
                             selectedEraserMode: $selectedEraserMode,
-                            onScroll: { triggerPageIndicator() }
+                            initialPage: initialPage ?? max(document.lastOpenedPage, 0),
+                            onScroll: { triggerPageIndicator() },
+                            onPencilSqueeze: { performPencilSqueezeAction() }
                         )
                         .ignoresSafeArea(.keyboard)
 
@@ -189,6 +204,28 @@ struct PDFAnnotationView: View {
             GradescopeSubmitSheet(document: document, repository: repository)
                 .environmentObject(gradescopeManager)
         }
+        .sheet(isPresented: $showDocumentSearchSheet) {
+            documentSearchSheet
+        }
+        .sheet(isPresented: $showOutlineSheet) {
+            outlineSheet
+        }
+        .onAppear {
+            currentPage = initialPage ?? max(document.lastOpenedPage, 0)
+            outlineItems = loadOutlineItems()
+        }
+        .onChange(of: selectedTool) { _, _ in
+            persistEditorPreferences()
+            if selectedTool == .lasso && !editorPreferences.hasSeenLassoHint {
+                editorPreferences.hasSeenLassoHint = true
+                persistEditorPreferences()
+                setToast("Lasso is ready. Circle strokes to select them.", style: .info, autoHideAfter: 2.8)
+            }
+        }
+        .onChange(of: selectedColor) { _, _ in persistEditorPreferences() }
+        .onChange(of: selectedStrokeWidth) { _, _ in persistEditorPreferences() }
+        .onChange(of: selectedEraserMode) { _, _ in persistEditorPreferences() }
+        .onChange(of: toolbarDockEdge) { _, _ in persistEditorPreferences() }
         .onDisappear {
             indicatorTask?.cancel()
             canvascopeDeliveryTask?.cancel()
@@ -332,6 +369,24 @@ struct PDFAnnotationView: View {
             }
             .disabled(isSaving)
 
+            Button {
+                editorBridge.undo()
+            } label: {
+                toolbarIconButton(symbol: "arrow.uturn.backward")
+            }
+            .buttonStyle(.plain)
+            .disabled(!editorBridge.canUndo)
+            .keyboardShortcut("z", modifiers: [.command])
+
+            Button {
+                editorBridge.redo()
+            } label: {
+                toolbarIconButton(symbol: "arrow.uturn.forward")
+            }
+            .buttonStyle(.plain)
+            .disabled(!editorBridge.canRedo)
+            .keyboardShortcut("Z", modifiers: [.command, .shift])
+
             Spacer(minLength: 4)
 
             Group {
@@ -375,6 +430,44 @@ struct PDFAnnotationView: View {
             .frame(maxWidth: .infinity)
 
             Spacer(minLength: 4)
+
+            syncStatusAccessory
+
+            Menu {
+                Button("Search This PDF", systemImage: "magnifyingglass") {
+                    showDocumentSearchSheet = true
+                }
+
+                if !outlineItems.isEmpty {
+                    Button("Document Outline", systemImage: "list.bullet.indent") {
+                        showOutlineSheet = true
+                    }
+                }
+
+                Divider()
+
+                Menu("Handedness") {
+                    ForEach(EditorHandedness.allCases, id: \.self) { handedness in
+                        Button(handedness == .left ? "Left-Handed" : "Right-Handed") {
+                            editorPreferences.handedness = handedness
+                            persistEditorPreferences()
+                            toolbarDockEdge = handedness == .left ? .right : .left
+                        }
+                    }
+                }
+
+                Menu("Pencil Squeeze") {
+                    ForEach(PencilSqueezeAction.allCases, id: \.self) { action in
+                        Button(label(for: action)) {
+                            editorPreferences.squeezeAction = action
+                            persistEditorPreferences()
+                        }
+                    }
+                }
+            } label: {
+                toolbarIconButton(symbol: "slider.horizontal.3")
+            }
+            .buttonStyle(.plain)
 
             Button {
                 Task { @MainActor in await exportToCanvascope() }
@@ -452,6 +545,61 @@ struct PDFAnnotationView: View {
 
     // MARK: - Save & Sync
 
+    private func toolbarIconButton(symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.12))
+            )
+    }
+
+    private func label(for action: PencilSqueezeAction) -> String {
+        switch action {
+        case .togglePenEraser:
+            return "Toggle Pen and Eraser"
+        case .undo:
+            return "Undo"
+        case .redo:
+            return "Redo"
+        }
+    }
+
+    @ViewBuilder
+    private var syncStatusAccessory: some View {
+        switch document.syncState {
+        case .idle:
+            EmptyView()
+        case .savingLocal, .flattening:
+            syncBadge("Saving", color: Color(hex: 0x2E8DFF))
+        case .queuedUpload:
+            syncBadge("Queued", color: Color(hex: 0xD0A13A))
+        case .uploading:
+            syncBadge("Uploading", color: Color(hex: 0x2E8DFF))
+        case .synced:
+            syncBadge("Synced", color: LectraColor.success)
+        case .failed:
+            Button {
+                Task { await DocumentSyncCoordinator.shared.retry(documentId: document.id) }
+            } label: {
+                syncBadge("Retry", color: LectraColor.accent)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func syncBadge(_ title: String, color: Color) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .foregroundColor(color)
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(color.opacity(0.13))
+            .clipShape(Capsule())
+    }
+
     private func beginTitleRename() {
         titleDraft = document.title
         withAnimation(LectraMotion.quick) {
@@ -483,39 +631,80 @@ struct PDFAnnotationView: View {
     }
 
     @MainActor
-    private func saveLocally(showBlockingOverlay: Bool = true) async {
+    private func saveLocally(showBlockingOverlay: Bool = true) async -> Bool {
         if showBlockingOverlay {
             withAnimation(LectraMotion.quick) {
                 isSaving = true
             }
         }
-        NotificationCenter.default.post(name: .lectraSaveRequested, object: document.id)
+        var didSucceed = false
+        do {
+            let startingMetadata = DocumentLocalMetadata(
+                syncState: .savingLocal,
+                syncErrorMessage: nil,
+                dirtyPageIndexes: Array(document.dirtyPageIndexes).sorted(),
+                lastLocalEditAt: document.lastLocalEditAt,
+                lastRemoteSyncAt: document.lastRemoteSyncAt,
+                lastOpenedPage: currentPage,
+                thumbnailRevision: document.thumbnailRevision,
+                searchIndexRevision: document.searchIndexRevision
+            )
+            document.apply(metadata: startingMetadata)
+            repository.saveLocalMetadata(startingMetadata, documentId: document.id)
+
+            let result = try await editorBridge.exportCurrentDocument()
+            document.updatedAt = result.localEditAt
+            let metadata = DocumentLocalMetadata(
+                syncState: document.isRemoteBacked ? .queuedUpload : .synced,
+                syncErrorMessage: nil,
+                dirtyPageIndexes: result.dirtyPageIndexes,
+                lastLocalEditAt: result.localEditAt,
+                lastRemoteSyncAt: document.lastRemoteSyncAt,
+                lastOpenedPage: result.lastOpenedPage,
+                thumbnailRevision: document.thumbnailRevision + 1,
+                searchIndexRevision: document.searchIndexRevision + 1
+            )
+            document.apply(metadata: metadata)
+
+            if let pdfURL = document.localPDFURL {
+                ThumbnailCache.shared.warmThumbnail(
+                    documentId: document.id,
+                    pdfURL: pdfURL,
+                    revision: metadata.thumbnailRevision
+                )
+            }
+
+            await DocumentSyncCoordinator.shared.registerLocalSave(
+                result: result,
+                documentId: document.id,
+                title: document.title,
+                rowId: document.isRemoteBacked ? document.supabaseRowId : nil,
+                itemData: document.sourceDocumentData,
+                userId: authManager.userId
+            )
+            didSucceed = true
+        } catch {
+            setToast(error.localizedDescription, style: .error, autoHideAfter: 3.0)
+        }
         if showBlockingOverlay {
             withAnimation(LectraMotion.quick) {
                 isSaving = false
             }
         }
+        return didSucceed
     }
 
     @MainActor
     private func saveAndSync() async {
-        await saveLocally(showBlockingOverlay: false)
-        let documentId = document.id
-        document.updatedAt = Date()
-
+        guard await saveLocally(showBlockingOverlay: true) else { return }
         dismiss()
-
-        // Emit completion after returning to Vault so the browser can show a lightweight toast.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            NotificationCenter.default.post(name: .lectraBackgroundSyncCompleted, object: documentId)
-        }
     }
     
     // MARK: - Sharing
     
     private func shareDocument() {
         Task { @MainActor in
-            await saveLocally(showBlockingOverlay: true)
+            guard await saveLocally(showBlockingOverlay: true) else { return }
 
             guard let finalURL = preferredExportURL() else { return }
             
@@ -548,7 +737,7 @@ struct PDFAnnotationView: View {
         isExportingToCanvascope = true
         defer { isExportingToCanvascope = false }
 
-        await saveLocally(showBlockingOverlay: false)
+        guard await saveLocally(showBlockingOverlay: false) else { return }
 
         guard let exportURL = preferredExportURL() else {
             setToast("PDF not available for export.", style: .error, autoHideAfter: 2.6)
@@ -633,12 +822,295 @@ struct PDFAnnotationView: View {
             }
         }
     }
+
+    private func persistEditorPreferences() {
+        editorPreferences.selectedTool = selectedTool
+        editorPreferences.selectedColor = selectedColor
+        editorPreferences.selectedStrokeWidth = selectedStrokeWidth
+        editorPreferences.selectedEraserMode = selectedEraserMode
+        editorPreferences.toolbarDockEdge = toolbarDockEdge.rawValue
+        EditorPreferencesStore.shared.save(editorPreferences)
+    }
+
+    private func loadOutlineItems() -> [DocumentOutlineDestination] {
+        guard let pdfURL = document.localPDFURL,
+              let pdfDocument = PDFDocument(url: pdfURL),
+              let root = pdfDocument.outlineRoot else {
+            return []
+        }
+
+        var destinations: [DocumentOutlineDestination] = []
+
+        func walk(_ outline: PDFOutline, depth: Int) {
+            for index in 0..<outline.numberOfChildren {
+                guard let child = outline.child(at: index) else { continue }
+                let pageIndex = child.destination?.page.flatMap { page in
+                    pdfDocument.index(for: page)
+                }
+                if let pageIndex {
+                    destinations.append(
+                        DocumentOutlineDestination(
+                            title: child.label ?? "Untitled",
+                            pageIndex: pageIndex,
+                            depth: depth
+                        )
+                    )
+                }
+                walk(child, depth: depth + 1)
+            }
+        }
+
+        walk(root, depth: 0)
+        return destinations
+    }
+
+    private func performPencilSqueezeAction() {
+        switch editorPreferences.squeezeAction {
+        case .togglePenEraser:
+            withAnimation(LectraMotion.quick) {
+                selectedTool = selectedTool == .eraser ? .pen : .eraser
+            }
+            if !editorPreferences.hasSeenSqueezeHint {
+                editorPreferences.hasSeenSqueezeHint = true
+                persistEditorPreferences()
+                setToast("Pencil squeeze now toggles your active tool.", style: .info, autoHideAfter: 2.6)
+            }
+        case .undo:
+            editorBridge.undo()
+        case .redo:
+            editorBridge.redo()
+        }
+    }
+
+    private func searchCurrentDocument() {
+        guard let pdfURL = document.localPDFURL else { return }
+        let query = documentSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            documentSearchResults = []
+            return
+        }
+        let documentId = document.id
+        let title = document.title
+
+        isSearchingDocument = true
+        Task {
+            defer {
+                Task { @MainActor in
+                    isSearchingDocument = false
+                }
+            }
+
+            let results: [DocumentSearchResult] = await Task.detached(priority: .userInitiated) {
+                guard let pdfDocument = PDFDocument(url: pdfURL) else { return [] }
+                var matches: [DocumentSearchResult] = []
+                for index in 0..<pdfDocument.pageCount {
+                    let text = pdfDocument.page(at: index)?.string?
+                        .replacingOccurrences(of: "\n", with: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard !text.isEmpty else { continue }
+                    let nsText = text as NSString
+                    let range = nsText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive])
+                    guard range.location != NSNotFound else { continue }
+                    let start = max(range.location - 48, 0)
+                    let end = min(range.location + range.length + 48, nsText.length)
+                    let snippetRange = NSRange(location: start, length: max(end - start, 0))
+                    matches.append(
+                        DocumentSearchResult(
+                            documentId: documentId,
+                            title: title,
+                            subtitle: "Page \(index + 1)",
+                            snippet: nsText.substring(with: snippetRange),
+                            pageIndex: index,
+                            kind: .pageText
+                        )
+                    )
+                }
+                return matches
+            }.value
+
+            await MainActor.run {
+                documentSearchResults = results
+            }
+        }
+    }
+
+    private var documentSearchSheet: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                PDFEditorSearchBar(text: $documentSearchQuery)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .onChange(of: documentSearchQuery) { _, _ in
+                        searchCurrentDocument()
+                    }
+
+                if isSearchingDocument {
+                    ProgressView()
+                        .tint(.white)
+                } else if documentSearchResults.isEmpty {
+                    Spacer()
+                    Text(documentSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Start typing to search this PDF." : "No matches found.")
+                        .foregroundColor(Color.white.opacity(0.7))
+                    Spacer()
+                } else {
+                    List(documentSearchResults) { result in
+                        Button {
+                            if let pageIndex = result.pageIndex {
+                                currentPage = pageIndex
+                            }
+                            showDocumentSearchSheet = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(result.subtitle)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                                if let snippet = result.snippet {
+                                    Text(snippet)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(Color.white.opacity(0.72))
+                                        .multilineTextAlignment(.leading)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                    }
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                }
+            }
+            .background(Color(hex: 0x0E1628).ignoresSafeArea())
+            .navigationTitle("Search PDF")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showDocumentSearchSheet = false
+                    }
+                    .foregroundColor(Color(hex: 0xE84D4D))
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
+    }
+
+    private var outlineSheet: some View {
+        NavigationStack {
+            List(outlineItems) { item in
+                Button {
+                    currentPage = item.pageIndex
+                    showOutlineSheet = false
+                } label: {
+                    HStack(spacing: 12) {
+                        Text(item.title)
+                            .foregroundColor(.white)
+                            .padding(.leading, CGFloat(item.depth) * 12)
+                        Spacer(minLength: 0)
+                        Text("P\(item.pageIndex + 1)")
+                            .foregroundColor(Color.white.opacity(0.54))
+                    }
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color(hex: 0x0E1628).ignoresSafeArea())
+            .navigationTitle("Outline")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showOutlineSheet = false
+                    }
+                    .foregroundColor(Color(hex: 0xE84D4D))
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
+    }
 }
 
 // MARK: - Notification Name
 extension Notification.Name {
-    static let lectraSaveRequested = Notification.Name("lectraSaveRequested")
     static let lectraBackgroundSyncCompleted = Notification.Name("lectraBackgroundSyncCompleted")
+}
+
+private struct DocumentOutlineDestination: Identifiable, Hashable {
+    let title: String
+    let pageIndex: Int
+    let depth: Int
+
+    var id: String { "\(pageIndex)-\(title)-\(depth)" }
+}
+
+@MainActor
+final class PDFEditorBridge: ObservableObject {
+    enum BridgeError: LocalizedError {
+        case unavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "Editor is not ready yet. Please try again."
+            }
+        }
+    }
+
+    weak var controller: PageAnnotationViewController?
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+
+    func attach(controller: PageAnnotationViewController) {
+        self.controller = controller
+    }
+
+    func updateUndoRedo(canUndo: Bool, canRedo: Bool) {
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+    }
+
+    func exportCurrentDocument() async throws -> DocumentSaveResult {
+        guard let controller else { throw BridgeError.unavailable }
+        return try await controller.prepareSaveResult()
+    }
+
+    func undo() {
+        controller?.undoLastAction()
+    }
+
+    func redo() {
+        controller?.redoLastAction()
+    }
+}
+
+private struct PDFEditorSearchBar: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(Color.white.opacity(0.48))
+
+            TextField("Search pages", text: $text)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .foregroundColor(.white)
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(Color.white.opacity(0.48))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 48)
+        .background(Color(hex: 0x171A22))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
 }
 
 // MARK: - PDFEditorRepresentable (UIKit Bridge)
@@ -647,14 +1119,17 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
     let pdfURL: URL
     let documentId: UUID
     let repository: DocumentRepository
+    let bridge: PDFEditorBridge
     @Binding var currentPage: Int
     @Binding var totalPages: Int
     @Binding var selectedTool: AnnotationTool
     @Binding var selectedColor: AnnotationInkColor
     @Binding var selectedStrokeWidth: CGFloat
     @Binding var selectedEraserMode: EraserMode
+    let initialPage: Int
     var onScroll: (() -> Void)? = nil
     var onTypewriterAutoAdvance: ((Int, CGPoint) -> Void)? = nil
+    var onPencilSqueeze: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -664,9 +1139,16 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
         vc.documentId = documentId
         vc.repository = repository
         vc.coordinator = context.coordinator
+        vc.currentPageIndex = initialPage
+        vc.undoRedoDidChange = { [weak bridge] canUndo, canRedo in
+            Task { @MainActor in
+                bridge?.updateUndoRedo(canUndo: canUndo, canRedo: canRedo)
+            }
+        }
         vc.onTypewriterAutoAdvance = { [weak coordinator = context.coordinator] pageIndex, offset in
             coordinator?.typewriterAutoAdvanceDidTrigger(pageIndex: pageIndex, offset: offset)
         }
+        bridge.attach(controller: vc)
         return vc
     }
 
@@ -707,10 +1189,7 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
 
         func togglePenAndEraserFromPencilSqueeze() {
             DispatchQueue.main.async {
-                let nextTool: AnnotationTool = self.parent.selectedTool == .eraser ? .pen : .eraser
-                withAnimation(LectraMotion.quick) {
-                    self.parent.selectedTool = nextTool
-                }
+                self.parent.onPencilSqueeze?()
             }
         }
 
@@ -803,7 +1282,7 @@ private enum InkBlendMode: String, Codable {
     case normal
     case multiply
 
-    var cgBlendMode: CGBlendMode {
+    nonisolated var cgBlendMode: CGBlendMode {
         switch self {
         case .normal:
             return .normal
@@ -813,7 +1292,7 @@ private enum InkBlendMode: String, Codable {
     }
 }
 
-private struct InkColorComponents: Codable {
+private struct InkColorComponents: Codable, Equatable {
     var red: CGFloat
     var green: CGFloat
     var blue: CGFloat
@@ -835,28 +1314,28 @@ private struct InkColorComponents: Codable {
         self.init(red: red, green: green, blue: blue, alpha: alpha)
     }
 
-    var uiColor: UIColor {
+    nonisolated var uiColor: UIColor {
         UIColor(red: red, green: green, blue: blue, alpha: alpha)
     }
 }
 
-private struct InkPoint: Codable {
+private struct InkPoint: Codable, Equatable {
     var x: CGFloat
     var y: CGFloat
     var force: CGFloat
 }
 
-private struct InkStroke: Codable {
+private struct InkStroke: Codable, Equatable {
     var points: [InkPoint]
     var width: CGFloat
     var color: InkColorComponents
     var blendMode: InkBlendMode
 }
 
-private struct InkPageDrawing: Codable {
+private struct InkPageDrawing: Codable, Equatable {
     var strokes: [InkStroke] = []
 
-    var isEmpty: Bool {
+    nonisolated var isEmpty: Bool {
         strokes.isEmpty
     }
 }
@@ -1568,12 +2047,24 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         case centered
         case topLeading
     }
+
+    private struct DrawingHistoryStep {
+        let pageIndex: Int
+        let previous: InkPageDrawing
+        let updated: InkPageDrawing
+    }
+
+    private struct SavePageDescriptor: Sendable {
+        let pdfPageIndex: Int?
+        let pageBounds: CGRect
+    }
     
     var pdfURL: URL!
     var documentId: UUID!
     var repository: DocumentRepository!
     weak var coordinator: PDFEditorRepresentable.Coordinator?
     var onTypewriterAutoAdvance: ((Int, CGPoint) -> Void)?
+    var undoRedoDidChange: ((Bool, Bool) -> Void)?
 
     private let scrollView = UIScrollView()
     private let containerView = UIView()
@@ -1592,9 +2083,11 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private var scrollDirectionMode: ScrollDirectionMode = .horizontal
     private var pendingDoubleTapRecenteringPageIndex: Int?
     private var lastLaidOutViewportSize: CGSize = .zero
+    private var undoStack: [DrawingHistoryStep] = []
+    private var redoStack: [DrawingHistoryStep] = []
+    private var isApplyingHistoryChange = false
 
     private var currentTool: InkToolDescriptor = .default
-    private var saveObserver: NSObjectProtocol?
     private let pagePadding: CGFloat = 20.0
     private let zoomedOutThresholdScale: CGFloat = 1.05
     private let zoomedInFlingVelocityThreshold: CGFloat = 1.15
@@ -1615,15 +2108,6 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         
         // Report total pages mapping
         coordinator?.pageDidChange(to: 0, total: pdfDocument?.pageCount ?? 1)
-
-        // Listen for save requests from SwiftUI
-        saveObserver = NotificationCenter.default.addObserver(
-            forName: .lectraSaveRequested,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.saveEverything()
-        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -1643,13 +2127,6 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             lastLaidOutViewportSize = view.bounds.size
         }
     }
-
-    deinit {
-        if let obs = saveObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
-    }
-
     // MARK: - Setup
 
     private func setupScrollView() {
@@ -1742,6 +2219,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         currentPageIndex = min(max(currentPageIndex, 0), max(pageViews.count - 1, 0))
         updateVisiblePages()
         coordinator?.pageDidChange(to: currentPageIndex, total: pageViews.count)
+        reportUndoRedoState()
     }
 
     private func displayedCanvasSize(for pageBounds: CGRect) -> CGSize {
@@ -1784,7 +2262,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         pageView.canvasView.tool = currentTool
         pageView.canvasView.setDrawing(drawing)
         pageView.canvasView.onDrawingChanged = { [weak self] updatedDrawing in
-            self?.pageDrawings[index] = updatedDrawing
+            self?.handleDrawingChanged(at: index, updatedDrawing: updatedDrawing)
         }
 
         containerView.addSubview(pageView)
@@ -1793,6 +2271,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         displayScales.append(scale)
         pageFrames.append(frame)
         pageDrawings[index] = drawing
+        reportUndoRedoState()
         return index
     }
 
@@ -1813,6 +2292,13 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             return bounds
         }
         return fallbackPageBounds()
+    }
+
+    nonisolated private static func normalizedPageBounds(_ bounds: CGRect) -> CGRect {
+        if bounds.width > 0.0, bounds.height > 0.0 {
+            return bounds
+        }
+        return CGRect(x: 0, y: 0, width: 612, height: 792)
     }
 
     private func fallbackPageBounds() -> CGRect {
@@ -2452,28 +2938,117 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    private func handleDrawingChanged(at index: Int, updatedDrawing: InkPageDrawing) {
+        let previous = pageDrawings[index] ?? InkPageDrawing()
+        pageDrawings[index] = updatedDrawing
+
+        guard !isApplyingHistoryChange, previous != updatedDrawing else { return }
+        undoStack.append(
+            DrawingHistoryStep(
+                pageIndex: index,
+                previous: previous,
+                updated: updatedDrawing
+            )
+        )
+        redoStack.removeAll(keepingCapacity: true)
+        reportUndoRedoState()
+    }
+
+    func undoLastAction() {
+        guard let step = undoStack.popLast() else { return }
+        applyHistory(step.previous, to: step.pageIndex)
+        redoStack.append(step)
+        reportUndoRedoState()
+    }
+
+    func redoLastAction() {
+        guard let step = redoStack.popLast() else { return }
+        applyHistory(step.updated, to: step.pageIndex)
+        undoStack.append(step)
+        reportUndoRedoState()
+    }
+
+    private func applyHistory(_ drawing: InkPageDrawing, to pageIndex: Int) {
+        guard pageViews.indices.contains(pageIndex) else { return }
+        isApplyingHistoryChange = true
+        pageDrawings[pageIndex] = drawing
+        pageViews[pageIndex].canvasView.setDrawing(drawing)
+        isApplyingHistoryChange = false
+    }
+
+    private func reportUndoRedoState() {
+        undoRedoDidChange?(!undoStack.isEmpty, !redoStack.isEmpty)
+    }
+
     // MARK: - Save Everything
 
-    private func saveEverything() {
+    @MainActor
+    func prepareSaveResult() async throws -> DocumentSaveResult {
         // Capture drawing state from all loaded page views
         for (i, pageView) in pageViews.enumerated() {
             pageDrawings[i] = pageView.canvasView.currentDrawing()
         }
 
-        saveDrawingsToDisk()
-
-        if let annotatedData = createFlattenedPDF() {
-            let localURL = repository.localPDFURL(for: documentId)
-                .deletingLastPathComponent()
-                .appendingPathComponent("annotated.pdf")
-            try? annotatedData.write(to: localURL)
+        let snapshotDrawings = pageDrawings
+        let drawingsPayload = InkDrawingStore(
+            version: 1,
+            pages: snapshotDrawings.filter { !$0.value.isEmpty }
+        )
+        let encodedDrawings = try JSONEncoder().encode(drawingsPayload)
+        let displayScalesSnapshot = displayScales
+        let descriptorsSnapshot = pageDescriptors.map { descriptor in
+            switch descriptor.kind {
+            case let .pdf(index):
+                return SavePageDescriptor(pdfPageIndex: index, pageBounds: descriptor.pageBounds)
+            case .blank:
+                return SavePageDescriptor(pdfPageIndex: nil, pageBounds: descriptor.pageBounds)
+            }
         }
+        let annotatedURL = repository.localAnnotatedPDFURL(for: documentId)
+        let drawingsURL = repository.localDrawingsURL(for: documentId)
+        let localEditAt = Date()
+        let currentPage = currentPageIndex
+        let pdfURL = self.pdfURL!
+
+        let annotatedFilePath = try await Task.detached(priority: .userInitiated) { () -> String? in
+            try FileManager.default.createDirectory(
+                at: drawingsURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try encodedDrawings.write(to: drawingsURL, options: [.atomic])
+
+            guard let annotatedData = Self.createFlattenedPDF(
+                pdfURL: pdfURL,
+                pageDescriptors: descriptorsSnapshot,
+                pageDrawings: snapshotDrawings,
+                displayScales: displayScalesSnapshot
+            ) else {
+                return nil
+            }
+
+            try annotatedData.write(to: annotatedURL, options: [.atomic])
+            return annotatedURL.path
+        }.value
+
+        return DocumentSaveResult(
+            documentId: documentId,
+            annotatedFilePath: annotatedFilePath,
+            localEditAt: localEditAt,
+            lastOpenedPage: currentPage,
+            dirtyPageIndexes: Array(snapshotDrawings.keys).sorted()
+        )
     }
 
     // MARK: - Flatten Drawings onto PDF
 
-    private func createFlattenedPDF() -> Data? {
-        guard let pdfDocument = pdfDocument, !pageDescriptors.isEmpty else { return nil }
+    nonisolated private static func createFlattenedPDF(
+        pdfURL: URL,
+        pageDescriptors: [SavePageDescriptor],
+        pageDrawings: [Int: InkPageDrawing],
+        displayScales: [CGFloat]
+    ) -> Data? {
+        guard !pageDescriptors.isEmpty else { return nil }
+        let pdfDocument = PDFDocument(url: pdfURL)
 
         let mutableData = NSMutableData()
         guard let consumer = CGDataConsumer(data: mutableData as CFMutableData) else { return nil }
@@ -2497,8 +3072,8 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             pdfContext.restoreGState()
 
             pdfContext.saveGState()
-            if case let .pdf(documentPageIndex) = descriptor.kind,
-               let page = pdfDocument.page(at: documentPageIndex) {
+            if let documentPageIndex = descriptor.pdfPageIndex,
+               let page = pdfDocument?.page(at: documentPageIndex) {
                 page.draw(with: .mediaBox, to: pdfContext)
             }
             pdfContext.restoreGState()
@@ -2508,7 +3083,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                     displayScales.indices.contains(pageIndex) ? displayScales[pageIndex] : 1.0,
                     0.001
                 )
-                renderVectorInkDrawing(
+                Self.renderVectorInkDrawing(
                     drawing,
                     in: pdfContext,
                     pageRect: pageRect,
@@ -2523,7 +3098,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         return mutableData as Data
     }
 
-    private func renderVectorInkDrawing(
+    nonisolated private static func renderVectorInkDrawing(
         _ drawing: InkPageDrawing,
         in pdfContext: CGContext,
         pageRect: CGRect,
@@ -2567,7 +3142,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 )
                 pdfContext.fillEllipse(in: dotRect)
             } else {
-                let path = smoothedPath(from: points)
+                let path = Self.smoothedPath(from: points)
                 pdfContext.addPath(path)
                 pdfContext.strokePath()
             }
@@ -2594,7 +3169,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         return points
     }
 
-    private func smoothedPath(from points: [CGPoint]) -> CGPath {
+    nonisolated private static func smoothedPath(from points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
         guard let first = points.first else { return path }
         path.move(to: first)

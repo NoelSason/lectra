@@ -35,7 +35,7 @@ struct SyncedItem: Codable, Identifiable {
 // MARK: - PDF Document Metadata (inside item_data JSONB)
 
 /// The JSON payload stored inside `item_data` for pdf_document items.
-struct DocumentData: Codable {
+struct DocumentData: Codable, Equatable {
     var title: String
     let courseId: Int?
     let sourceUrl: String?
@@ -60,13 +60,23 @@ final class LocalDocument: Identifiable, ObservableObject {
     let id: UUID
     @Published var title: String
     let courseId: Int?
+    let sourceURLString: String?
     let storagePath: String
     let supabaseRowId: UUID
+    let sourceDocumentData: DocumentData?
     @Published var isFavorite: Bool
     @Published var status: DocumentStatus
     @Published var localPDFURL: URL?
     let createdAt: Date
     @Published var updatedAt: Date
+    @Published var syncState: DocumentSyncState = .idle
+    @Published var syncErrorMessage: String?
+    @Published var dirtyPageIndexes: Set<Int> = []
+    @Published var lastLocalEditAt: Date?
+    @Published var lastRemoteSyncAt: Date?
+    @Published var lastOpenedPage: Int = 0
+    @Published var thumbnailRevision: Int = 0
+    @Published var searchIndexRevision: Int = 0
 
     private static let isoParserWithFractionalSeconds: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -84,8 +94,10 @@ final class LocalDocument: Identifiable, ObservableObject {
         self.id = item.id
         self.title = item.itemData.title
         self.courseId = item.itemData.courseId
+        self.sourceURLString = item.itemData.sourceUrl
         self.storagePath = item.itemData.storagePath
         self.supabaseRowId = item.id
+        self.sourceDocumentData = item.itemData
         self.isFavorite = false
         self.status = DocumentStatus(rawValue: item.itemData.status) ?? .pendingAnnotation
         let created = Self.parseISODate(item.createdAt) ?? Date()
@@ -99,6 +111,7 @@ final class LocalDocument: Identifiable, ObservableObject {
         localURL: URL,
         id: UUID = UUID(),
         isFavorite: Bool = false,
+        sourceURLString: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -106,8 +119,10 @@ final class LocalDocument: Identifiable, ObservableObject {
         self.title = title
         self.isFavorite = isFavorite
         self.courseId = nil
+        self.sourceURLString = sourceURLString
         self.storagePath = ""
         self.supabaseRowId = UUID()
+        self.sourceDocumentData = nil
         self.status = .local
         self.localPDFURL = localURL
         self.createdAt = createdAt
@@ -119,6 +134,21 @@ final class LocalDocument: Identifiable, ObservableObject {
             return parsed
         }
         return isoParser.date(from: raw)
+    }
+
+    var isRemoteBacked: Bool {
+        sourceDocumentData != nil
+    }
+
+    func apply(metadata: DocumentLocalMetadata) {
+        syncState = metadata.syncState
+        syncErrorMessage = metadata.syncErrorMessage
+        dirtyPageIndexes = Set(metadata.dirtyPageIndexes)
+        lastLocalEditAt = metadata.lastLocalEditAt
+        lastRemoteSyncAt = metadata.lastRemoteSyncAt
+        lastOpenedPage = metadata.lastOpenedPage ?? 0
+        thumbnailRevision = metadata.thumbnailRevision
+        searchIndexRevision = metadata.searchIndexRevision
     }
 }
 

@@ -211,6 +211,16 @@ struct CourseBrainMissionNormalizer {
         return []
     }
 
+    private func parseSubmissionStatus(from object: [String: CourseBrainJSONValue]) -> CourseBrainSubmissionStatus? {
+        CourseBrainSubmissionStatus.parseCanvasValue(
+            object.firstString(keys: ["submissionStatus", "submission_status"])
+        )
+    }
+
+    private func parseSubmissionSummary(from object: [String: CourseBrainJSONValue]) -> CourseBrainSubmissionSummary? {
+        CourseBrainSubmissionSummary.parseCanvasObject(object)
+    }
+
     private func buildCourseTwin(
         snapshotObject: [String: CourseBrainJSONValue],
         manualLinks: [CourseBrainManualLink],
@@ -466,18 +476,28 @@ struct CourseBrainMissionNormalizer {
             let urlString = object.firstString(keys: ["url", "sourceUrl", "source_url"])?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let url = urlString.flatMap { URL(string: $0) }
-            let contentId = object.string("contentId") ?? object.int("contentId").map(String.init) ?? matchedModule?.item?.contentId
-            let assignmentId = kind == .assignment
-                ? (CourseBrainMissionNormalization.assignmentID(contentId: contentId, url: url) ?? CourseBrainMissionNormalization.stableResourceID(
-                    kind: kind,
-                    courseId: courseId,
-                    contentId: contentId,
-                    url: url,
-                    title: title,
-                    moduleName: moduleName,
-                    type: rawType
-                ))
-                : nil
+            let contentId = object.string("contentId")
+                ?? object.string("content_id")
+                ?? object.int("contentId").map(String.init)
+                ?? object.int("content_id").map(String.init)
+                ?? matchedModule?.item?.contentId
+            let explicitAssignmentId = object.string("assignmentId")
+                ?? object.string("assignment_id")
+                ?? object.int("assignmentId").map(String.init)
+                ?? object.int("assignment_id").map(String.init)
+            let assignmentId = explicitAssignmentId
+                ?? (kind == .assignment
+                    ? (CourseBrainMissionNormalization.assignmentID(contentId: contentId, url: url)
+                        ?? CourseBrainMissionNormalization.stableResourceID(
+                            kind: kind,
+                            courseId: courseId,
+                            contentId: contentId,
+                            url: url,
+                            title: title,
+                            moduleName: moduleName,
+                            type: rawType
+                        ))
+                    : nil)
             let resourceID = CourseBrainMissionNormalization.stableResourceID(
                 kind: kind,
                 courseId: courseId,
@@ -487,6 +507,8 @@ struct CourseBrainMissionNormalizer {
                 moduleName: moduleName,
                 type: rawType
             )
+            let submissionStatus = parseSubmissionStatus(from: object)
+            let submissionSummary = parseSubmissionSummary(from: object)
 
             return MissionResource(
                 id: resourceID,
@@ -518,6 +540,9 @@ struct CourseBrainMissionNormalizer {
                     ?? matchedModule?.item?.contentDetails.double("pointsPossible"),
                 submissionTypes: object.stringArray("submissionTypes"),
                 allowedExtensions: object.stringArray("allowedExtensions"),
+                submitted: object.bool("submitted"),
+                submissionStatus: submissionStatus,
+                submissionSummary: submissionSummary,
                 platform: object.firstString(keys: ["platform"]),
                 platformDomain: object.firstString(keys: ["platformDomain"]),
                 url: url,
@@ -565,6 +590,9 @@ struct CourseBrainMissionNormalizer {
                 pointsPossible: nil,
                 submissionTypes: [],
                 allowedExtensions: [],
+                submitted: nil,
+                submissionStatus: nil,
+                submissionSummary: nil,
                 platform: nil,
                 platformDomain: nil,
                 url: nil,
@@ -619,6 +647,9 @@ struct CourseBrainMissionNormalizer {
             pointsPossible: existing.pointsPossible ?? incoming.pointsPossible,
             submissionTypes: existing.submissionTypes.isEmpty ? incoming.submissionTypes : existing.submissionTypes,
             allowedExtensions: existing.allowedExtensions.isEmpty ? incoming.allowedExtensions : existing.allowedExtensions,
+            submitted: existing.submitted ?? incoming.submitted,
+            submissionStatus: existing.submissionStatus ?? incoming.submissionStatus,
+            submissionSummary: existing.submissionSummary ?? incoming.submissionSummary,
             platform: existing.platform ?? incoming.platform,
             platformDomain: existing.platformDomain ?? incoming.platformDomain,
             url: existing.url ?? incoming.url,
@@ -792,6 +823,9 @@ struct CourseBrainMissionNormalizer {
                     pointsPossible: resource.pointsPossible,
                     submissionTypes: resource.submissionTypes,
                     allowedExtensions: resource.allowedExtensions,
+                    submitted: resource.submitted,
+                    submissionStatus: resource.submissionStatus,
+                    submissionSummary: resource.submissionSummary,
                     instructions: resource.instructions ?? resource.description ?? resource.body ?? resource.content ?? resource.text,
                     url: resource.url,
                     linkedConceptIDs: linkedConcepts,

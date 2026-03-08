@@ -13,6 +13,10 @@ final class GradescopeAuthService: GradescopeAuthenticating {
     private(set) var isAuthenticated = false
     private(set) var lastWebSessionImportDebugReport: String?
 
+    var sessionExpirationDate: Date? {
+        httpClient.sessionExpirationDate
+    }
+
     init(
         httpClient: GradescopeHTTPClient,
         parser: GradescopeHTMLParser,

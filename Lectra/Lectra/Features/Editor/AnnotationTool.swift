@@ -8,7 +8,7 @@
 import SwiftUI
 import PencilKit
 
-enum AnnotationInkColor: String, CaseIterable, Hashable {
+enum AnnotationInkColor: String, CaseIterable, Hashable, Codable {
     case black
     case white
     case accent
@@ -35,7 +35,7 @@ enum AnnotationInkColor: String, CaseIterable, Hashable {
     }
 }
 
-enum AnnotationTool: Equatable {
+enum AnnotationTool: String, Equatable, Codable {
     case pen
     case highlighter
     case eraser
@@ -58,7 +58,7 @@ enum AnnotationTool: Equatable {
     }
 }
 
-enum EraserMode: String, CaseIterable, Hashable {
+enum EraserMode: String, CaseIterable, Hashable, Codable {
     case stroke
     case classic
 

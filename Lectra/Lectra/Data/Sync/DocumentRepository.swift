@@ -42,6 +42,23 @@ final class DocumentRepository {
         localFolder(for: documentId).appendingPathComponent("drawings.dat")
     }
 
+    /// Path to the flattened annotated PDF on disk.
+    func localAnnotatedPDFURL(for documentId: UUID) -> URL {
+        localFolder(for: documentId).appendingPathComponent("annotated.pdf")
+    }
+
+    /// Path to the local metadata sidecar.
+    func localMetadataURL(for documentId: UUID) -> URL {
+        localFolder(for: documentId).appendingPathComponent("metadata.json")
+    }
+
+    /// Shared sync queue store.
+    func syncQueueURL() -> URL {
+        let folder = documentsDirectory.appendingPathComponent("sync", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("pending-sync-jobs.json")
+    }
+
     // MARK: - Fetch Document List
 
     /// Pulls all `pdf_document` rows for the authenticated user.
@@ -120,6 +137,36 @@ final class DocumentRepository {
     func loadLocalDrawings(documentId: UUID) -> Data? {
         let url = localDrawingsURL(for: documentId)
         return try? Data(contentsOf: url)
+    }
+
+    func saveLocalMetadata(_ metadata: DocumentLocalMetadata, documentId: UUID) {
+        let url = localMetadataURL(for: documentId)
+        guard let data = try? JSONEncoder().encode(metadata) else { return }
+        try? data.write(to: url, options: [.atomic])
+    }
+
+    func loadLocalMetadata(documentId: UUID) -> DocumentLocalMetadata {
+        let url = localMetadataURL(for: documentId)
+        guard let data = try? Data(contentsOf: url),
+              let metadata = try? JSONDecoder().decode(DocumentLocalMetadata.self, from: data) else {
+            return DocumentLocalMetadata()
+        }
+        return metadata
+    }
+
+    func savePendingSyncJobs(_ jobs: [PendingSyncJob]) {
+        let url = syncQueueURL()
+        guard let data = try? JSONEncoder().encode(jobs) else { return }
+        try? data.write(to: url, options: [.atomic])
+    }
+
+    func loadPendingSyncJobs() -> [PendingSyncJob] {
+        let url = syncQueueURL()
+        guard let data = try? Data(contentsOf: url),
+              let jobs = try? JSONDecoder().decode([PendingSyncJob].self, from: data) else {
+            return []
+        }
+        return jobs
     }
 
     // MARK: - Check if PDF is cached

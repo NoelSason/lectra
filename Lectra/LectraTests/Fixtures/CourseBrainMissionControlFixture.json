@@ -77,11 +77,27 @@
               "courseName": "CS 101",
               "type": "assignment",
               "title": "Homework 1",
+              "assignmentId": 9001,
               "contentId": 9001,
               "url": "https://example.instructure.com/courses/101/assignments/9001?module_item_id=111",
               "assignmentGroupId": 7,
               "assignmentGroupName": "Homework",
               "instructions": "Solve the attached problems using limit laws and derivative rules.",
+              "submitted": true,
+              "submissionStatus": "submitted",
+              "submission": {
+                "workflowState": "submitted",
+                "submittedAt": "2026-03-09T02:15:00Z",
+                "attempt": 1,
+                "late": false,
+                "missing": false,
+                "excused": false,
+                "grade": "94 / 100",
+                "score": 94,
+                "submissionType": "online_upload",
+                "hasSubmittedSubmissions": true,
+                "gradeMatchesCurrentSubmission": true
+              },
               "submissionTypes": [
                 "online_upload"
               ],

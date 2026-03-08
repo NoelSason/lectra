@@ -23,6 +23,177 @@ enum CourseBrainEvidenceTargetKind: String, Codable, CaseIterable, Hashable {
     case lecture
 }
 
+enum CourseBrainSubmissionStatus: String, Codable, Hashable {
+    case submitted
+    case late
+    case missing
+    case excused
+    case notSubmitted = "not_submitted"
+    case unknown
+
+    var displayTitle: String {
+        switch self {
+        case .submitted:
+            return "Submitted"
+        case .late:
+            return "Late"
+        case .missing:
+            return "Missing"
+        case .excused:
+            return "Excused"
+        case .notSubmitted:
+            return "Not Submitted"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    var isCompletionState: Bool {
+        switch self {
+        case .submitted, .excused:
+            return true
+        case .late, .missing, .notSubmitted, .unknown:
+            return false
+        }
+    }
+
+    var attentionSortRank: Int {
+        switch self {
+        case .late, .missing, .notSubmitted:
+            return 0
+        case .unknown:
+            return 1
+        case .submitted, .excused:
+            return 2
+        }
+    }
+
+    static func parseCanvasValue(_ rawValue: String?) -> CourseBrainSubmissionStatus? {
+        guard let rawValue else { return nil }
+
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+
+        guard !normalized.isEmpty else { return nil }
+
+        switch normalized {
+        case "submitted", "complete", "completed":
+            return .submitted
+        case "late", "late_submission":
+            return .late
+        case "missing":
+            return .missing
+        case "excused":
+            return .excused
+        case "notsubmitted", "not_submitted", "unsubmitted", "not_turned_in":
+            return .notSubmitted
+        default:
+            return CourseBrainSubmissionStatus(rawValue: normalized) ?? .unknown
+        }
+    }
+
+    static func resolveHeadlineStatus(
+        submitted: Bool?,
+        submissionStatus: CourseBrainSubmissionStatus?,
+        submissionSummary: CourseBrainSubmissionSummary?
+    ) -> CourseBrainSubmissionStatus? {
+        if let submissionStatus, submissionStatus != .unknown {
+            return submissionStatus
+        }
+
+        if let summaryStatus = submissionSummary?.headlineSubmissionStatus {
+            return summaryStatus
+        }
+
+        if submitted == true {
+            return .submitted
+        }
+
+        if submitted == false {
+            return .notSubmitted
+        }
+
+        return submissionStatus
+    }
+}
+
+struct CourseBrainSubmissionSummary: Codable, Hashable {
+    let workflowState: String?
+    let submittedAt: Date?
+    let attempt: Int?
+    let late: Bool?
+    let missing: Bool?
+    let excused: Bool?
+    let grade: String?
+    let score: Double?
+    let submissionType: String?
+    let hasSubmittedSubmissions: Bool?
+    let gradeMatchesCurrentSubmission: Bool?
+
+    var headlineSubmissionStatus: CourseBrainSubmissionStatus? {
+        if excused == true {
+            return .excused
+        }
+
+        if missing == true {
+            return .missing
+        }
+
+        if late == true {
+            return .late
+        }
+
+        if let workflowStatus = CourseBrainSubmissionStatus.parseCanvasValue(workflowState),
+           workflowStatus != .unknown {
+            return workflowStatus
+        }
+
+        if submittedAt != nil || hasSubmittedSubmissions == true || gradeMatchesCurrentSubmission == true {
+            return .submitted
+        }
+
+        return nil
+    }
+
+    static func parseCanvasObject(_ object: [String: CourseBrainJSONValue]) -> CourseBrainSubmissionSummary? {
+        guard let submissionObject = object.object("submission") else { return nil }
+
+        let summary = CourseBrainSubmissionSummary(
+            workflowState: submissionObject.firstString(keys: ["workflowState", "workflow_state"]),
+            submittedAt: courseBrainParseISODate(submissionObject.firstString(keys: ["submittedAt", "submitted_at"])),
+            attempt: submissionObject.int("attempt"),
+            late: submissionObject.bool("late"),
+            missing: submissionObject.bool("missing"),
+            excused: submissionObject.bool("excused"),
+            grade: submissionObject.firstString(keys: ["grade"]),
+            score: submissionObject.double("score"),
+            submissionType: submissionObject.firstString(keys: ["submissionType", "submission_type"]),
+            hasSubmittedSubmissions: submissionObject.bool("hasSubmittedSubmissions")
+                ?? submissionObject.bool("has_submitted_submissions"),
+            gradeMatchesCurrentSubmission: submissionObject.bool("gradeMatchesCurrentSubmission")
+                ?? submissionObject.bool("grade_matches_current_submission")
+        )
+
+        let hasMeaningfulValue =
+            summary.workflowState != nil
+            || summary.submittedAt != nil
+            || summary.attempt != nil
+            || summary.late != nil
+            || summary.missing != nil
+            || summary.excused != nil
+            || summary.grade != nil
+            || summary.score != nil
+            || summary.submissionType != nil
+            || summary.hasSubmittedSubmissions != nil
+            || summary.gradeMatchesCurrentSubmission != nil
+
+        return hasMeaningfulValue ? summary : nil
+    }
+}
+
 struct CourseBrainRect: Codable, Hashable {
     let x: Double
     let y: Double
@@ -136,6 +307,9 @@ struct MissionResource: Identifiable, Hashable {
     let pointsPossible: Double?
     let submissionTypes: [String]
     let allowedExtensions: [String]
+    let submitted: Bool?
+    let submissionStatus: CourseBrainSubmissionStatus?
+    let submissionSummary: CourseBrainSubmissionSummary?
     let platform: String?
     let platformDomain: String?
     let url: URL?
@@ -177,6 +351,14 @@ struct MissionResource: Identifiable, Hashable {
         .compactMap { $0 }
         .joined(separator: " ")
     }
+
+    var headlineSubmissionStatus: CourseBrainSubmissionStatus? {
+        CourseBrainSubmissionStatus.resolveHeadlineStatus(
+            submitted: submitted,
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary
+        )
+    }
 }
 
 struct CourseMission: Identifiable, Hashable {
@@ -196,6 +378,9 @@ struct CourseMission: Identifiable, Hashable {
     let pointsPossible: Double?
     let submissionTypes: [String]
     let allowedExtensions: [String]
+    let submitted: Bool?
+    let submissionStatus: CourseBrainSubmissionStatus?
+    let submissionSummary: CourseBrainSubmissionSummary?
     let instructions: String?
     let url: URL?
     let linkedConceptIDs: [String]
@@ -204,6 +389,14 @@ struct CourseMission: Identifiable, Hashable {
     let studyPlan: CourseBrainStudyPlanArtifact?
 
     var id: String { assignmentId }
+
+    var headlineSubmissionStatus: CourseBrainSubmissionStatus? {
+        CourseBrainSubmissionStatus.resolveHeadlineStatus(
+            submitted: submitted,
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary
+        )
+    }
 }
 
 struct ConceptCluster: Identifiable, Hashable {

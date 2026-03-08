@@ -19,6 +19,9 @@ final class CourseBrainMissionControlPhase1Tests: XCTestCase {
         XCTAssertEqual(homework.assignmentId, "9001")
         XCTAssertEqual(homework.title, "Homework 1")
         XCTAssertTrue(homework.instructions?.contains("limit laws") == true)
+        XCTAssertEqual(homework.submitted, true)
+        XCTAssertEqual(homework.headlineSubmissionStatus, .submitted)
+        XCTAssertEqual(homework.submissionSummary?.submittedAt, isoDate("2026-03-09T02:15:00Z"))
 
         let limitsOverview = try XCTUnwrap(cs101.resources.first { $0.title == "Limits Overview" && $0.kind == .page })
         XCTAssertEqual(limitsOverview.moduleName, "Week 1: Limits")
@@ -30,6 +33,7 @@ final class CourseBrainMissionControlPhase1Tests: XCTestCase {
 
         let hist202 = try XCTUnwrap(snapshot.courseTwins.first { $0.courseId == 202 })
         XCTAssertEqual(hist202.missions.map(\.assignmentId), ["3001"])
+        XCTAssertNil(hist202.missions.first?.headlineSubmissionStatus)
     }
 
     func testAssignmentFingerprintAndResourceIDsAreDeterministic() throws {
@@ -225,6 +229,9 @@ final class CourseBrainMissionControlPhase1Tests: XCTestCase {
                     pointsPossible: nil,
                     submissionTypes: ["online_upload"],
                     allowedExtensions: ["pdf"],
+                    submitted: nil,
+                    submissionStatus: nil,
+                    submissionSummary: nil,
                     platform: nil,
                     platformDomain: nil,
                     url: assignmentURL,
@@ -354,6 +361,530 @@ final class CourseBrainMissionControlPhase1Tests: XCTestCase {
         XCTAssertEqual(selectionEvidence.targetId, "9901")
         XCTAssertEqual(selectionEvidence.pageIndex, 2)
     }
+
+    func testSubmissionStateFlowsThroughAssignmentBackedResources() throws {
+        let submissionSummary: [String: CourseBrainJSONValue] = [
+            "workflowState": .string("submitted"),
+            "submittedAt": .string("2026-03-08T17:30:00Z"),
+            "attempt": .number(2),
+            "late": .bool(true),
+            "missing": .bool(false),
+            "excused": .bool(false),
+            "grade": .string("18 / 20"),
+            "score": .number(18),
+            "submissionType": .string("online_upload"),
+            "hasSubmittedSubmissions": .bool(true),
+            "gradeMatchesCurrentSubmission": .bool(true),
+        ]
+
+        var snapshotObject = simpleAssignmentSnapshot(
+            courseId: 606,
+            courseName: "Chem 606",
+            assignmentId: "4100",
+            assignmentTitle: "Problem Set 4",
+            assignmentURL: "https://example.instructure.com/courses/606/assignments/4100",
+            instructions: "Show each equilibrium step clearly.",
+            moduleId: "46",
+            moduleName: "Week 4",
+            submitted: true,
+            submissionStatus: .late,
+            submissionSummary: submissionSummary
+        )
+
+        if case var .array(indexedContent)? = snapshotObject["indexedContent"] {
+            indexedContent.append(
+                .object([
+                    "courseId": .number(606),
+                    "courseName": .string("Chem 606"),
+                    "type": .string("quiz"),
+                    "title": .string("Problem Set 4 Quiz Mirror"),
+                    "assignmentId": .string("4100"),
+                    "url": .string("https://example.instructure.com/courses/606/quizzes/9900"),
+                    "submitted": .bool(true),
+                    "submissionStatus": .string(CourseBrainSubmissionStatus.late.rawValue),
+                    "submission": .object(submissionSummary),
+                ])
+            )
+            indexedContent.append(
+                .object([
+                    "courseId": .number(606),
+                    "courseName": .string("Chem 606"),
+                    "type": .string("discussion"),
+                    "title": .string("Problem Set 4 Discussion"),
+                    "assignmentId": .string("4100"),
+                    "url": .string("https://example.instructure.com/courses/606/discussion_topics/8800"),
+                    "body": .string("Use this thread for clarifications."),
+                    "submitted": .bool(true),
+                    "submissionStatus": .string(CourseBrainSubmissionStatus.late.rawValue),
+                    "submission": .object(submissionSummary),
+                ])
+            )
+            snapshotObject["indexedContent"] = .array(indexedContent)
+        }
+
+        let row = snapshotRow(
+            id: "00000000-0000-0000-0000-000000000606",
+            snapshotObject: snapshotObject,
+            envelope: false
+        )
+
+        let twin = try XCTUnwrap(
+            CourseBrainMissionNormalizer()
+                .buildCourseTwins(from: [row], manualLinks: [], evidenceLinks: [], missionArtifacts: [], studyPlans: [])
+                .first
+        )
+
+        let mission = try XCTUnwrap(twin.missions.first { $0.assignmentId == "4100" })
+        XCTAssertEqual(mission.submitted, true)
+        XCTAssertEqual(mission.submissionStatus, .late)
+        XCTAssertEqual(mission.submissionSummary?.attempt, 2)
+        XCTAssertEqual(mission.submissionSummary?.submittedAt, isoDate("2026-03-08T17:30:00Z"))
+
+        let quizResource = try XCTUnwrap(twin.resources.first { $0.title == "Problem Set 4 Quiz Mirror" })
+        XCTAssertEqual(quizResource.assignmentId, "4100")
+        XCTAssertEqual(quizResource.submissionStatus, .late)
+        XCTAssertEqual(quizResource.headlineSubmissionStatus, .late)
+
+        let discussionResource = try XCTUnwrap(twin.resources.first { $0.title == "Problem Set 4 Discussion" })
+        XCTAssertEqual(discussionResource.assignmentId, "4100")
+        XCTAssertEqual(discussionResource.submissionStatus, .late)
+        XCTAssertEqual(discussionResource.headlineSubmissionStatus, .late)
+
+        let dashboard = CourseBrainDashboardBuilder().build(
+            courseTwins: [twin],
+            documents: [],
+            noteNodes: [],
+            now: isoDate("2026-03-08T12:00:00Z")
+        )
+        let assignment = try XCTUnwrap(dashboard.assignments.first { $0.mission.assignmentId == "4100" })
+        let detail = try XCTUnwrap(dashboard.detailsByAssignmentID[assignment.id])
+        let quizDetailResource = try XCTUnwrap(detail.relatedResources.first { $0.title == "Problem Set 4 Quiz Mirror" })
+        let discussionDetailResource = try XCTUnwrap(detail.relatedResources.first { $0.title == "Problem Set 4 Discussion" })
+        XCTAssertEqual(quizDetailResource.headlineSubmissionStatus, .late)
+        XCTAssertEqual(discussionDetailResource.headlineSubmissionStatus, .late)
+    }
+
+    func testDirectAssignmentSubmissionStatesRemainBackwardCompatible() throws {
+        func mission(for snapshotObject: [String: CourseBrainJSONValue], id: String) throws -> CourseMission {
+            let row = snapshotRow(id: id, snapshotObject: snapshotObject, envelope: false)
+            return try XCTUnwrap(
+                CourseBrainMissionNormalizer()
+                    .buildCourseTwins(from: [row], manualLinks: [], evidenceLinks: [], missionArtifacts: [], studyPlans: [])
+                    .first?
+                    .missions
+                    .first
+            )
+        }
+
+        let submittedMission = try mission(
+            for: simpleAssignmentSnapshot(
+                courseId: 707,
+                courseName: "Chem 707",
+                assignmentId: "5100",
+                assignmentTitle: "Lab Upload",
+                assignmentURL: "https://example.instructure.com/courses/707/assignments/5100",
+                instructions: "Upload the completed lab report.",
+                moduleId: "17",
+                moduleName: "Week 2",
+                submitted: true,
+                submissionStatus: nil,
+                submissionSummary: [
+                    "workflow_state": .string("submitted"),
+                    "submitted_at": .string("2026-03-08T18:00:00Z"),
+                    "has_submitted_submissions": .bool(true),
+                ]
+            ),
+            id: "00000000-0000-0000-0000-000000000707"
+        )
+        XCTAssertEqual(submittedMission.headlineSubmissionStatus, .submitted)
+        XCTAssertEqual(submittedMission.submitted, true)
+
+        let missingMission = try mission(
+            for: simpleAssignmentSnapshot(
+                courseId: 708,
+                courseName: "Chem 708",
+                assignmentId: "5101",
+                assignmentTitle: "Problem Set Missing",
+                assignmentURL: "https://example.instructure.com/courses/708/assignments/5101",
+                instructions: "Show all work.",
+                moduleId: "18",
+                moduleName: "Week 3",
+                submitted: false,
+                submissionStatus: .missing,
+                submissionSummary: [
+                    "workflowState": .string("unsubmitted"),
+                    "missing": .bool(true),
+                ]
+            ),
+            id: "00000000-0000-0000-0000-000000000708"
+        )
+        XCTAssertEqual(missingMission.headlineSubmissionStatus, .missing)
+
+        let excusedMission = try mission(
+            for: simpleAssignmentSnapshot(
+                courseId: 709,
+                courseName: "Chem 709",
+                assignmentId: "5102",
+                assignmentTitle: "Excused Discussion",
+                assignmentURL: "https://example.instructure.com/courses/709/assignments/5102",
+                instructions: "Participate in the discussion thread.",
+                moduleId: "19",
+                moduleName: "Week 4",
+                submitted: false,
+                submissionStatus: nil,
+                submissionSummary: [
+                    "workflow_state": .string("excused"),
+                    "excused": .bool(true),
+                ]
+            ),
+            id: "00000000-0000-0000-0000-000000000709"
+        )
+        XCTAssertEqual(excusedMission.headlineSubmissionStatus, .excused)
+        XCTAssertNil(excusedMission.submissionStatus)
+
+        let legacyMission = try mission(
+            for: simpleAssignmentSnapshot(
+                courseId: 710,
+                courseName: "Chem 710",
+                assignmentId: "5103",
+                assignmentTitle: "Legacy Assignment",
+                assignmentURL: "https://example.instructure.com/courses/710/assignments/5103",
+                instructions: "This payload has no submission fields.",
+                moduleId: "20",
+                moduleName: "Week 5"
+            ),
+            id: "00000000-0000-0000-0000-000000000710"
+        )
+        XCTAssertNil(legacyMission.submitted)
+        XCTAssertNil(legacyMission.submissionStatus)
+        XCTAssertNil(legacyMission.submissionSummary)
+        XCTAssertNil(legacyMission.headlineSubmissionStatus)
+    }
+
+    func testLegacyFlattenedRowsDecodeSubmissionFieldsAndPropagateToGraph() throws {
+        let row = syncedRow(
+            id: "00000000-0000-0000-0000-000000000711",
+            itemType: "canvascope_assignment_row_v1",
+            itemData: .object([
+                "course_id": .number(711),
+                "course_name": .string("ENG 711"),
+                "type": .string("quiz"),
+                "title": .string("Reading Check"),
+                "assignment_id": .string("8801"),
+                "url": .string("https://example.instructure.com/courses/711/quizzes/8801"),
+                "submitted": .bool(false),
+                "submission_status": .string("Excused"),
+                "submission": .object([
+                    "workflow_state": .string("excused"),
+                    "excused": .bool(true),
+                ]),
+            ])
+        )
+
+        let snapshot = Self.sharedRepository.snapshot(from: [row])
+        let record = try XCTUnwrap(snapshot.sourceRecords.first)
+
+        XCTAssertEqual(snapshot.sourceRecords.count, 1)
+        XCTAssertEqual(record.assignmentId, "8801")
+        XCTAssertEqual(record.headlineSubmissionStatus, .excused)
+
+        let graph = CourseBrainGraphBuilder.shared.build(
+            payload: CourseBrainBuildPayload(
+                records: snapshot.sourceRecords,
+                localNotes: [],
+                syncedNoteNodes: [],
+                manualLinks: [],
+                courseFilter: nil
+            )
+        )
+        let node = graph.allNodes.first { $0.title == "Reading Check" }
+        XCTAssertEqual(node?.metadata.assignmentId, "8801")
+        XCTAssertEqual(node?.metadata.headlineSubmissionStatus, .excused)
+    }
+
+    func testDerivedStatePurgeHelperKeepsSnapshotsAndPDFs() {
+        let rows = [
+            syncedRow(id: "00000000-0000-0000-0000-000000000401", itemType: "course_brain_manual_link", itemData: .object([:])),
+            syncedRow(id: "00000000-0000-0000-0000-000000000402", itemType: "course_brain_evidence_link_v1", itemData: .object([:])),
+            syncedRow(id: "00000000-0000-0000-0000-000000000403", itemType: "canvascope_course_snapshot_v1", itemData: .object([:])),
+            syncedRow(id: "00000000-0000-0000-0000-000000000404", itemType: "pdf_document", itemData: .object([:])),
+            syncedRow(id: "00000000-0000-0000-0000-000000000405", itemType: "canvascope_imported_page_v1", itemData: .object([:])),
+        ]
+
+        let remainingRows = Self.sharedRepository.rowsRemainingAfterPurgingDerivedState(rows)
+        XCTAssertEqual(
+            remainingRows.map(\.itemType).sorted(),
+            ["canvascope_course_snapshot_v1", "canvascope_imported_page_v1", "pdf_document"]
+        )
+        XCTAssertEqual(
+            CourseBrainRepository.derivedItemTypesToPurge,
+            Set([
+                "course_brain_manual_link",
+                "course_brain_concept_cache",
+                "course_brain_timeline_meta",
+                "course_brain_assignment_mission_v1",
+                "course_brain_evidence_link_v1",
+                "course_brain_study_plan_v1",
+            ])
+        )
+    }
+
+    func testDashboardBuilderAppliesStrictWindowAndDueDatePrecedence() {
+        let now = isoDate("2026-03-07T12:00:00Z")
+        let builder = CourseBrainDashboardBuilder()
+        let twin = makeCourseTwin(
+            courseId: 101,
+            courseName: "CS 101",
+            scannedAt: isoDate("2026-03-07T08:00:00Z"),
+            missions: [
+                makeMission(courseId: 101, assignmentId: "in-low-boundary", title: "Past Boundary", dueAt: isoDate("2026-02-28T12:00:00Z")),
+                makeMission(courseId: 101, assignmentId: "in-high-boundary", title: "Future Boundary", dueAt: isoDate("2026-04-06T12:00:00Z")),
+                makeMission(courseId: 101, assignmentId: "before-window", title: "Too Old", dueAt: isoDate("2026-02-28T11:59:59Z")),
+                makeMission(courseId: 101, assignmentId: "after-window", title: "Too Far", dueAt: isoDate("2026-04-06T12:00:01Z")),
+                makeMission(
+                    courseId: 101,
+                    assignmentId: "due-wins",
+                    title: "Due Wins Over Unlock",
+                    dueAt: isoDate("2026-01-10T12:00:00Z"),
+                    unlockAt: isoDate("2026-03-08T12:00:00Z")
+                ),
+                makeMission(courseId: 101, assignmentId: "unlock-fallback", title: "Unlock Fallback", dueAt: nil, unlockAt: isoDate("2026-03-08T12:00:00Z")),
+                makeMission(courseId: 101, assignmentId: "undated", title: "No Dates", dueAt: nil, unlockAt: nil, lockAt: nil),
+            ],
+            resources: []
+        )
+
+        let data = builder.build(courseTwins: [twin], documents: [], noteNodes: [], now: now)
+        let titles = Set(data.assignments.map(\.title))
+
+        XCTAssertTrue(titles.contains("Past Boundary"))
+        XCTAssertTrue(titles.contains("Future Boundary"))
+        XCTAssertTrue(titles.contains("Unlock Fallback"))
+        XCTAssertFalse(titles.contains("Too Old"))
+        XCTAssertFalse(titles.contains("Too Far"))
+        XCTAssertFalse(titles.contains("Due Wins Over Unlock"))
+        XCTAssertFalse(titles.contains("No Dates"))
+    }
+
+    func testDashboardBuilderDropsCoursesWithoutVisibleAssignments() {
+        let now = isoDate("2026-03-07T12:00:00Z")
+        let builder = CourseBrainDashboardBuilder()
+        let visibleTwin = makeCourseTwin(
+            courseId: 101,
+            courseName: "CS 101",
+            scannedAt: now,
+            missions: [
+                makeMission(courseId: 101, assignmentId: "visible", title: "Visible Assignment", dueAt: isoDate("2026-03-12T12:00:00Z")),
+            ],
+            resources: []
+        )
+        let oldTwin = makeCourseTwin(
+            courseId: 202,
+            courseName: "History 202",
+            scannedAt: now,
+            missions: [
+                makeMission(courseId: 202, assignmentId: "old", title: "Old Assignment", dueAt: isoDate("2026-01-01T12:00:00Z")),
+            ],
+            resources: []
+        )
+
+        let data = builder.build(courseTwins: [visibleTwin, oldTwin], documents: [], noteNodes: [], now: now)
+
+        XCTAssertEqual(data.courseFilters.map(\.id), [101])
+        XCTAssertEqual(data.courseFilters.first?.name, "CS 101")
+    }
+
+    func testDashboardBuilderPrioritizesModuleThenAssignmentGroupThenDateForRelatedResources() throws {
+        let now = isoDate("2026-03-07T12:00:00Z")
+        let builder = CourseBrainDashboardBuilder()
+        let mission = makeMission(
+            courseId: 404,
+            assignmentId: "ps1",
+            title: "Problem Set 1",
+            dueAt: isoDate("2026-03-10T12:00:00Z"),
+            moduleId: "module-1",
+            moduleName: "Week 1",
+            assignmentGroupId: "group-a",
+            assignmentGroupName: "Homework"
+        )
+        let twin = makeCourseTwin(
+            courseId: 404,
+            courseName: "BIO 404",
+            scannedAt: now,
+            missions: [mission],
+            resources: [
+                makeResource(
+                    id: "same-module-id",
+                    kind: .page,
+                    courseId: 404,
+                    snapshotFingerprint: mission.snapshotFingerprint,
+                    title: "Module ID Match",
+                    moduleId: "module-1",
+                    moduleName: "Week 9",
+                    assignmentGroupId: nil,
+                    assignmentGroupName: nil,
+                    datedAt: isoDate("2026-04-15T12:00:00Z")
+                ),
+                makeResource(
+                    id: "same-module-name",
+                    kind: .lecture,
+                    courseId: 404,
+                    snapshotFingerprint: mission.snapshotFingerprint,
+                    title: "Module Name Match",
+                    moduleId: "module-9",
+                    moduleName: "Week 1",
+                    assignmentGroupId: nil,
+                    assignmentGroupName: nil,
+                    datedAt: isoDate("2026-03-30T12:00:00Z")
+                ),
+                makeResource(
+                    id: "same-group",
+                    kind: .discussion,
+                    courseId: 404,
+                    snapshotFingerprint: mission.snapshotFingerprint,
+                    title: "Assignment Group Match",
+                    moduleId: "module-8",
+                    moduleName: "Week 8",
+                    assignmentGroupId: "group-a",
+                    assignmentGroupName: "Homework",
+                    datedAt: isoDate("2026-04-01T12:00:00Z")
+                ),
+                makeResource(
+                    id: "closest-date",
+                    kind: .file,
+                    courseId: 404,
+                    snapshotFingerprint: mission.snapshotFingerprint,
+                    title: "Closest Date Only",
+                    moduleId: "module-8",
+                    moduleName: "Week 8",
+                    assignmentGroupId: "group-z",
+                    assignmentGroupName: "Extra Credit",
+                    datedAt: isoDate("2026-03-11T12:00:00Z")
+                ),
+            ]
+        )
+
+        let data = builder.build(courseTwins: [twin], documents: [], noteNodes: [], now: now)
+        let assignmentID = try XCTUnwrap(data.assignments.first?.id)
+        let detail = try XCTUnwrap(data.detailsByAssignmentID[assignmentID])
+
+        XCTAssertEqual(
+            detail.relatedResources.map(\.title).prefix(4),
+            ["Module ID Match", "Module Name Match", "Assignment Group Match", "Closest Date Only"]
+        )
+    }
+
+    func testDashboardBuilderPrioritizesAttentionNeedingAssignmentsWhenDatesMatch() {
+        let now = isoDate("2026-03-07T12:00:00Z")
+        let due = isoDate("2026-03-09T12:00:00Z")
+        let builder = CourseBrainDashboardBuilder()
+        let twin = makeCourseTwin(
+            courseId: 515,
+            courseName: "STAT 515",
+            scannedAt: now,
+            missions: [
+                makeMission(
+                    courseId: 515,
+                    assignmentId: "late-lab",
+                    title: "Late Lab",
+                    dueAt: due,
+                    submitted: true,
+                    submissionStatus: .late,
+                    submissionSummary: CourseBrainSubmissionSummary(
+                        workflowState: "submitted",
+                        submittedAt: isoDate("2026-03-08T12:00:00Z"),
+                        attempt: 1,
+                        late: true,
+                        missing: false,
+                        excused: false,
+                        grade: nil,
+                        score: nil,
+                        submissionType: nil,
+                        hasSubmittedSubmissions: true,
+                        gradeMatchesCurrentSubmission: nil
+                    )
+                ),
+                makeMission(
+                    courseId: 515,
+                    assignmentId: "submitted-lab",
+                    title: "Submitted Lab",
+                    dueAt: due,
+                    submitted: true,
+                    submissionStatus: .submitted,
+                    submissionSummary: CourseBrainSubmissionSummary(
+                        workflowState: "submitted",
+                        submittedAt: isoDate("2026-03-08T11:00:00Z"),
+                        attempt: 1,
+                        late: false,
+                        missing: false,
+                        excused: false,
+                        grade: nil,
+                        score: nil,
+                        submissionType: nil,
+                        hasSubmittedSubmissions: true,
+                        gradeMatchesCurrentSubmission: nil
+                    )
+                ),
+            ],
+            resources: []
+        )
+
+        let data = builder.build(courseTwins: [twin], documents: [], noteNodes: [], now: now)
+        XCTAssertEqual(data.assignments.map(\.title), ["Late Lab", "Submitted Lab"])
+    }
+
+    func testOrbitDueSoonSkipsCompletedCanvasSubmissions() {
+        let now = isoDate("2026-03-07T12:00:00Z")
+
+        func makeNode(
+            id: String,
+            title: String,
+            dueAt: Date,
+            submissionStatus: CourseBrainSubmissionStatus?
+        ) -> CourseBrainNode {
+            CourseBrainNode(
+                id: id,
+                type: .assignment,
+                title: title,
+                courseId: 616,
+                metadata: CourseBrainNodeMetadata(
+                    courseName: "BIO 616",
+                    moduleName: "Week 6",
+                    assignmentId: id,
+                    dueAt: dueAt,
+                    unlockAt: nil,
+                    lockAt: nil,
+                    scannedAt: now,
+                    folderPath: nil,
+                    platform: "canvas",
+                    sourceItemType: "assignment",
+                    sourceSyncedItemId: nil,
+                    sourceURLString: "https://example.instructure.com/courses/616/assignments/\(id)",
+                    submitted: submissionStatus == .submitted,
+                    submissionStatus: submissionStatus,
+                    submissionSummary: nil,
+                    instructions: nil,
+                    description: nil,
+                    body: nil,
+                    content: nil,
+                    text: nil
+                ),
+                resourceURL: URL(string: "https://example.instructure.com/courses/616/assignments/\(id)")
+            )
+        }
+
+        let dueSoon = CourseBrainOrbitView.dueSoonNodes(
+            from: [
+                makeNode(id: "submitted", title: "Submitted Quiz", dueAt: isoDate("2026-03-09T12:00:00Z"), submissionStatus: .submitted),
+                makeNode(id: "excused", title: "Excused Discussion", dueAt: isoDate("2026-03-09T13:00:00Z"), submissionStatus: .excused),
+                makeNode(id: "missing", title: "Missing Homework", dueAt: isoDate("2026-03-09T14:00:00Z"), submissionStatus: .missing),
+                makeNode(id: "open", title: "Open Homework", dueAt: isoDate("2026-03-09T15:00:00Z"), submissionStatus: nil),
+            ],
+            now: now
+        )
+
+        XCTAssertEqual(dueSoon.map(\.title), ["Missing Homework", "Open Homework"])
+    }
 }
 
 private extension CourseBrainMissionControlPhase1Tests {
@@ -407,51 +938,212 @@ private extension CourseBrainMissionControlPhase1Tests {
         assignmentURL: String,
         instructions: String,
         moduleId: String,
-        moduleName: String
+        moduleName: String,
+        submitted: Bool? = nil,
+        submissionStatus: CourseBrainSubmissionStatus? = nil,
+        submissionSummary: [String: CourseBrainJSONValue]? = nil
     ) -> [String: CourseBrainJSONValue] {
-        [
+        var assignmentObject: [String: CourseBrainJSONValue] = [
+            "courseId": .number(Double(courseId)),
+            "courseName": .string(courseName),
+            "type": .string("assignment"),
+            "title": .string(assignmentTitle),
+            "assignmentId": .string(assignmentId),
+            "contentId": .string(assignmentId),
+            "url": .string(assignmentURL),
+            "instructions": .string(instructions),
+            "submissionTypes": .array([.string("online_upload")]),
+            "allowedExtensions": .array([.string("pdf")]),
+            "dueAt": .string("2026-03-20T23:59:00Z"),
+        ]
+
+        if let submitted {
+            assignmentObject["submitted"] = .bool(submitted)
+        }
+
+        if let submissionStatus {
+            assignmentObject["submissionStatus"] = .string(submissionStatus.rawValue)
+        }
+
+        if let submissionSummary {
+            assignmentObject["submission"] = .object(submissionSummary)
+        }
+
+        let moduleItem: [String: CourseBrainJSONValue] = [
+            "id": .number(1501),
+            "contentId": .string(assignmentId),
+            "position": .number(1),
+            "title": .string(assignmentTitle),
+            "type": .string("assignment"),
+            "url": .string(assignmentURL),
+            "published": .bool(true),
+            "contentDetails": .object([
+                "dueAt": .string("2026-03-20T23:59:00Z"),
+            ]),
+        ]
+
+        let moduleObject: [String: CourseBrainJSONValue] = [
+            "id": .string(moduleId),
+            "name": .string(moduleName),
+            "position": .number(1),
+            "items": .array([.object(moduleItem)]),
+        ]
+
+        let courseObject: [String: CourseBrainJSONValue] = [
+            "courseId": .number(Double(courseId)),
+            "courseName": .string(courseName),
+        ]
+
+        return [
             "sourceApp": .string("Canvascope"),
             "platform": .string("canvas"),
             "scannedAt": .string("2026-03-07T17:00:00Z"),
-            "course": .object([
-                "courseId": .number(Double(courseId)),
-                "courseName": .string(courseName),
-            ]),
-            "modules": .array([
-                .object([
-                    "id": .string(moduleId),
-                    "name": .string(moduleName),
-                    "position": .number(1),
-                    "items": .array([
-                        .object([
-                            "id": .number(1501),
-                            "contentId": .string(assignmentId),
-                            "position": .number(1),
-                            "title": .string(assignmentTitle),
-                            "type": .string("assignment"),
-                            "url": .string(assignmentURL),
-                            "published": .bool(true),
-                            "contentDetails": .object([
-                                "dueAt": .string("2026-03-20T23:59:00Z"),
-                            ]),
-                        ]),
-                    ]),
-                ]),
-            ]),
+            "course": .object(courseObject),
+            "modules": .array([.object(moduleObject)]),
             "indexedContent": .array([
-                .object([
-                    "courseId": .number(Double(courseId)),
-                    "courseName": .string(courseName),
-                    "type": .string("assignment"),
-                    "title": .string(assignmentTitle),
-                    "contentId": .string(assignmentId),
-                    "url": .string(assignmentURL),
-                    "instructions": .string(instructions),
-                    "submissionTypes": .array([.string("online_upload")]),
-                    "allowedExtensions": .array([.string("pdf")]),
-                    "dueAt": .string("2026-03-20T23:59:00Z"),
-                ]),
+                .object(assignmentObject),
             ]),
         ]
+    }
+
+    func isoDate(_ raw: String) -> Date {
+        courseBrainParseISODate(raw)!
+    }
+
+    func makeCourseTwin(
+        courseId: Int,
+        courseName: String,
+        scannedAt: Date?,
+        missions: [CourseMission],
+        resources: [MissionResource]
+    ) -> CourseTwin {
+        CourseTwin(
+            courseId: courseId,
+            snapshotFingerprint: "snapshot-\(courseId)",
+            metadata: CourseTwinMetadata(
+                courseName: courseName,
+                courseCode: nil,
+                termName: nil,
+                startAt: nil,
+                endAt: nil,
+                defaultView: nil,
+                workflowState: nil,
+                enrollmentState: nil,
+                imageURL: nil,
+                syllabusText: nil,
+                platform: "canvas",
+                platformDomain: "example.instructure.com",
+                sourceApp: "Canvascope",
+                sourceKind: "snapshot",
+                scannedAt: scannedAt,
+                teacherSummaries: [],
+                scanStats: [:]
+            ),
+            assignmentGroups: [],
+            modules: [],
+            resources: resources,
+            missions: missions,
+            conceptClusters: [],
+            noteEvidence: []
+        )
+    }
+
+    func makeMission(
+        courseId: Int,
+        assignmentId: String,
+        title: String,
+        dueAt: Date?,
+        unlockAt: Date? = nil,
+        lockAt: Date? = nil,
+        moduleId: String? = "module-1",
+        moduleName: String? = "Week 1",
+        assignmentGroupId: String? = nil,
+        assignmentGroupName: String? = nil,
+        submitted: Bool? = nil,
+        submissionStatus: CourseBrainSubmissionStatus? = nil,
+        submissionSummary: CourseBrainSubmissionSummary? = nil
+    ) -> CourseMission {
+        CourseMission(
+            courseId: courseId,
+            assignmentId: assignmentId,
+            snapshotFingerprint: "snapshot-\(courseId)",
+            title: title,
+            resourceId: "resource-\(assignmentId)",
+            moduleId: moduleId,
+            moduleName: moduleName,
+            modulePosition: 1,
+            assignmentGroupId: assignmentGroupId,
+            assignmentGroupName: assignmentGroupName,
+            dueAt: dueAt,
+            unlockAt: unlockAt,
+            lockAt: lockAt,
+            pointsPossible: nil,
+            submissionTypes: [],
+            allowedExtensions: [],
+            submitted: submitted,
+            submissionStatus: submissionStatus,
+            submissionSummary: submissionSummary,
+            instructions: "Instructions for \(title)",
+            url: URL(string: "https://example.instructure.com/courses/\(courseId)/assignments/\(assignmentId)"),
+            linkedConceptIDs: [],
+            linkedEvidenceIDs: [],
+            missionArtifact: nil,
+            studyPlan: nil
+        )
+    }
+
+    func makeResource(
+        id: String,
+        kind: CourseBrainMissionResourceKind,
+        courseId: Int,
+        snapshotFingerprint: String,
+        title: String,
+        moduleId: String?,
+        moduleName: String?,
+        assignmentGroupId: String?,
+        assignmentGroupName: String?,
+        datedAt: Date?
+    ) -> MissionResource {
+        MissionResource(
+            id: id,
+            kind: kind,
+            courseId: courseId,
+            snapshotFingerprint: snapshotFingerprint,
+            assignmentId: nil,
+            title: title,
+            courseName: "Course \(courseId)",
+            moduleId: moduleId,
+            moduleName: moduleName,
+            modulePosition: 1,
+            moduleItemId: nil,
+            moduleItemPosition: 1,
+            assignmentGroupId: assignmentGroupId,
+            assignmentGroupName: assignmentGroupName,
+            folderPath: nil,
+            dueAt: datedAt,
+            unlockAt: nil,
+            lockAt: nil,
+            scannedAt: datedAt,
+            updatedAt: datedAt,
+            published: true,
+            pointsPossible: nil,
+            submissionTypes: [],
+            allowedExtensions: [],
+            submitted: nil,
+            submissionStatus: nil,
+            submissionSummary: nil,
+            platform: "canvas",
+            platformDomain: "example.instructure.com",
+            url: URL(string: "https://example.instructure.com/resources/\(id)"),
+            contentId: nil,
+            contentType: nil,
+            sizeBytes: nil,
+            instructions: nil,
+            description: nil,
+            body: nil,
+            content: nil,
+            text: nil,
+            rawItem: [:]
+        )
     }
 }
