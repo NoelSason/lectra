@@ -26,9 +26,9 @@ struct LibraryGridMetrics {
     static func root(cardWidth: CGFloat) -> LibraryGridMetrics {
         LibraryGridMetrics(
             cardWidth: cardWidth,
-            pdfPreviewHeight: 88,
+            pdfPreviewHeight: 120,
             pdfFooterHeight: 52,
-            pdfTotalHeight: 148,
+            pdfTotalHeight: 180,
             folderArtworkHeight: 128,
             folderFooterHeight: 44,
             folderTotalHeight: 180,
@@ -44,9 +44,9 @@ struct LibraryGridMetrics {
     static func nested(cardWidth: CGFloat) -> LibraryGridMetrics {
         LibraryGridMetrics(
             cardWidth: cardWidth,
-            pdfPreviewHeight: 84,
+            pdfPreviewHeight: 120,
             pdfFooterHeight: 52,
-            pdfTotalHeight: 144,
+            pdfTotalHeight: 180,
             folderArtworkHeight: 128,
             folderFooterHeight: 44,
             folderTotalHeight: 180,
