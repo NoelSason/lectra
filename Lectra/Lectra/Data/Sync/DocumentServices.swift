@@ -611,9 +611,15 @@ final class DocumentSyncCoordinator {
     private var isProcessing = false
     private var needsProcessingPass = false
     private var pendingJobs: [UUID: PendingSyncJob] = [:]
+    private var scheduledRetryTask: Task<Void, Never>?
+
+    deinit {
+        scheduledRetryTask?.cancel()
+    }
 
     init() {
         pendingJobs = Dictionary(uniqueKeysWithValues: repository.loadPendingSyncJobs().map { ($0.documentId, $0) })
+        scheduleRetryIfNeeded()
     }
 
     func applyPersistedMetadata(to document: LocalDocument) {
@@ -675,11 +681,17 @@ final class DocumentSyncCoordinator {
         job.lastErrorMessage = nil
         pendingJobs[documentId] = job
         repository.savePendingSyncJobs(Array(pendingJobs.values))
+        var metadata = repository.loadLocalMetadata(documentId: documentId)
+        metadata.syncState = .queuedUpload
+        metadata.syncErrorMessage = nil
+        repository.saveLocalMetadata(metadata, documentId: documentId)
+        publish(documentId: documentId, metadata: metadata)
         scheduleProcessing()
     }
 
     func resumePendingJobs() async {
         pendingJobs = Dictionary(uniqueKeysWithValues: repository.loadPendingSyncJobs().map { ($0.documentId, $0) })
+        scheduleRetryIfNeeded()
         await processPendingJobs()
     }
 
@@ -707,6 +719,8 @@ final class DocumentSyncCoordinator {
                 await process(job: job)
             }
         } while needsProcessingPass
+
+        scheduleRetryIfNeeded()
     }
 
     private func scheduleProcessing() {
@@ -762,10 +776,29 @@ final class DocumentSyncCoordinator {
             pendingJobs[job.documentId] = failedJob
             repository.savePendingSyncJobs(Array(pendingJobs.values))
 
-            metadata.syncState = .failed
-            metadata.syncErrorMessage = "Saved locally. We'll retry upload automatically."
+            metadata.syncState = .queuedUpload
+            metadata.syncErrorMessage = "Saved locally. Upload retry scheduled."
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
             publish(documentId: job.documentId, metadata: metadata)
+        }
+    }
+
+    private func scheduleRetryIfNeeded() {
+        scheduledRetryTask?.cancel()
+
+        guard let nextRetryAt = pendingJobs.values.compactMap(\.nextRetryAt).min() else {
+            scheduledRetryTask = nil
+            return
+        }
+
+        let delay = max(nextRetryAt.timeIntervalSinceNow, 0)
+        scheduledRetryTask = Task { @MainActor in
+            if delay > 0 {
+                let duration = UInt64(delay * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: duration)
+            }
+            guard !Task.isCancelled else { return }
+            await processPendingJobs()
         }
     }
 

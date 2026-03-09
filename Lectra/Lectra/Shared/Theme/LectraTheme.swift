@@ -84,16 +84,7 @@ enum LectraGradient {
 // MARK: - Glass & Elevation
 
 enum LectraGlass {
-    static let sidebarTint = LinearGradient(
-        colors: [
-            Color.white.opacity(0.08),
-            LectraColor.accentCool.opacity(0.14),
-            LectraColor.accent.opacity(0.08),
-            Color.clear
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    static let sidebarTint = Color.black
 
     static let floatingToolbarTint = LinearGradient(
         colors: [

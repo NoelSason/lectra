@@ -176,6 +176,13 @@ struct DocumentBrowserView: View {
     @State private var searchRefreshTask: Task<Void, Never>? = nil
     @State private var activeFolderOptionsID: UUID?
 
+    @State private var showNewNotebookModal = false
+    @State private var notebookName = ""
+    @State private var notebookLanguage = "Auto Detect"
+    @State private var notebookHasCover = true
+    @State private var notebookSize = "Standard, Portrait"
+    @State private var notebookPaperOptions = PaperTemplateOptions()
+
     @State private var selectedDocumentForOptions: LocalDocument?
     @State private var moveDocumentId: UUID?
     @State private var editorRoute: EditorRoute?
@@ -634,6 +641,21 @@ struct DocumentBrowserView: View {
                 )
                 .environmentObject(gradescopeManager)
                 .id(accountSettingsInitialTab)
+            }
+            .sheet(isPresented: $showNewNotebookModal) {
+                NewNotebookModalView(
+                    documentName: $notebookName,
+                    selectedLanguage: $notebookLanguage,
+                    isCoverEnabled: $notebookHasCover,
+                    selectedSize: $notebookSize,
+                    paperOptions: $notebookPaperOptions,
+                    onCreate: {
+                        createNotebookDocument(
+                            title: notebookName.isEmpty ? "Untitled Notebook" : notebookName,
+                            paperOptions: notebookPaperOptions
+                        )
+                    }
+                )
             }
             .sheet(isPresented: $showFilePicker) {
                 DocumentPickerView(contentTypes: filePickerContentTypes) { url in
@@ -1557,7 +1579,9 @@ struct DocumentBrowserView: View {
             CreateMenuPopoverView(
                 onNotebook: {
                     showCreateMenu = false
-                    createBlankLocalDocument(title: "Notebook")
+                    notebookName = ""
+                    notebookPaperOptions = PaperTemplateOptions()
+                    showNewNotebookModal = true
                 },
                 onTextDoc: {
                     showCreateMenu = false
@@ -2609,14 +2633,15 @@ struct DocumentBrowserView: View {
     }
 
     private func existingPreferredBackupURL(for document: LocalDocument) -> URL? {
-        let annotatedURL = repository.localAnnotatedPDFURL(for: document.id)
-        if FileManager.default.fileExists(atPath: annotatedURL.path) {
-            return annotatedURL
-        }
-
         if let localURL = document.localPDFURL,
            FileManager.default.fileExists(atPath: localURL.path) {
             return localURL
+        }
+        
+        // Fallback backward compatibility for documents that only have annotated.pdf
+        let annotatedURL = repository.localAnnotatedPDFURL(for: document.id)
+        if FileManager.default.fileExists(atPath: annotatedURL.path) {
+            return annotatedURL
         }
 
         return nil
@@ -3438,6 +3463,137 @@ struct DocumentBrowserView: View {
                 context.beginPage()
                 UIColor.white.setFill()
                 context.cgContext.fill(CGRect(x: 0, y: 0, width: 612, height: 792))
+            }
+            try data.write(to: destination)
+
+            doc.localPDFURL = destination
+            documents = [doc] + documents
+            refreshLibraryDerivatives()
+
+            let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
+            storeLocalDocumentMetadata(
+                docId: doc.id,
+                title: title,
+                relativePath: relativePath,
+                folderId: currentFolderId,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt
+            )
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                openEditor(documentId: doc.id)
+            }
+        } catch {
+            featureNotice = "Could not create a new file: \(error.localizedDescription)"
+        }
+    }
+
+    private func createNotebookDocument(title: String, paperOptions: PaperTemplateOptions) {
+        guard canModifyContents(of: currentFolderId) else { return }
+        let doc = LocalDocument(title: title, localURL: URL(fileURLWithPath: "/tmp/placeholder.pdf"))
+        let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pdfs", isDirectory: true)
+            .appendingPathComponent(doc.id.uuidString, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: localFolder, withIntermediateDirectories: true)
+
+            let destination = localFolder.appendingPathComponent("original.pdf")
+            let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+            let data = renderer.pdfData { context in
+                
+                let width: CGFloat = 612
+                let height: CGFloat = 792
+                
+                // Page 1: Cover Page
+                if self.notebookHasCover {
+                    context.beginPage()
+                    
+                    // Background
+                    UIColor.black.setFill()
+                    context.cgContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                    
+                    // White Mocked Box for Logo
+                    let boxWidth: CGFloat = 340
+                    let boxHeight: CGFloat = 160
+                    let boxRect = CGRect(x: (width - boxWidth) / 2, y: (height - boxHeight) / 2 - 100, width: boxWidth, height: boxHeight)
+                    
+                    let bgPath = UIBezierPath(roundedRect: boxRect, cornerRadius: 16)
+                    UIColor.white.setFill()
+                    bgPath.fill()
+                    
+                    // Placeholder logo (simulated Lectra symbol or text)
+                    if let lectraImage = UIImage(named: "LectraLogo") {
+                        let imgSize: CGFloat = 80
+                        let imgRect = CGRect(x: (width - imgSize) / 2, y: boxRect.midY - imgSize / 2, width: imgSize, height: imgSize)
+                        lectraImage.draw(in: imgRect)
+                    } else if let genericImage = UIImage(systemName: "book.closed.fill") {
+                        let imgSize: CGFloat = 60
+                        let imgRect = CGRect(x: (width - imgSize) / 2, y: boxRect.midY - imgSize / 2, width: imgSize, height: imgSize)
+                        genericImage.withTintColor(.black).draw(in: imgRect)
+                    }
+                }
+                
+                // Page 2 (or 1 if no cover): Paper Area
+                context.beginPage()
+                // Fill background
+                let bgColor = UIColor(paperOptions.background)
+                bgColor.setFill()
+                context.cgContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                
+                // Draw pattern
+                var w: CGFloat = 0
+                bgColor.getWhite(&w, alpha: nil)
+                let strokeColor = w < 0.5 ? UIColor.white.withAlphaComponent(0.1) : UIColor.black.withAlphaComponent(0.1)
+                
+                let path = UIBezierPath()
+                
+                switch paperOptions.pattern {
+                case .blank:
+                    break
+                case .dotted:
+                    let step: CGFloat = 20
+                    for x in stride(from: step, to: width, by: step) {
+                        for y in stride(from: step, to: height, by: step) {
+                            path.move(to: CGPoint(x: x, y: y))
+                            path.addArc(withCenter: CGPoint(x: x, y: y), radius: 1, startAngle: 0, endAngle: 2 * .pi, clockwise: true)
+                        }
+                    }
+                    strokeColor.setFill()
+                    path.fill()
+                case .squared:
+                    let step: CGFloat = 24
+                    for x in stride(from: step, to: width, by: step) {
+                        path.move(to: CGPoint(x: x, y: 0))
+                        path.addLine(to: CGPoint(x: x, y: height))
+                    }
+                    for y in stride(from: step, to: height, by: step) {
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: width, y: y))
+                    }
+                    strokeColor.setStroke()
+                    path.lineWidth = 1
+                    path.stroke()
+                case .ruledNarrow:
+                    let step: CGFloat = 24
+                    for y in stride(from: step*2, to: height, by: step) {
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: width, y: y))
+                    }
+                    strokeColor.setStroke()
+                    path.lineWidth = 1
+                    path.stroke()
+                case .ruledWide:
+                    let step: CGFloat = 36
+                    for y in stride(from: step*2, to: height, by: step) {
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: width, y: y))
+                    }
+                    strokeColor.setStroke()
+                    path.lineWidth = 1
+                    path.stroke()
+                }
             }
             try data.write(to: destination)
 
@@ -4296,8 +4452,6 @@ private struct CreateMenuPopoverView: View {
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "Notebook", icon: "book.closed", action: onNotebook)
-                PopoverActionRow(title: "Text Doc", icon: "doc.text", action: onTextDoc)
-                PopoverActionRow(title: "Whiteboard", icon: "square.grid.3x3", action: onWhiteboard)
                 PopoverActionRow(title: "Folder", icon: "folder", showDivider: false, action: onFolder)
             }
             .background(Color.white.opacity(0.07))
@@ -4309,22 +4463,7 @@ private struct CreateMenuPopoverView: View {
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "Import PDF", icon: "square.and.arrow.down", action: onImport)
-                PopoverActionRow(title: "Import Gradescope Template", icon: "graduationcap", action: onImportGradescopeTemplate)
-                PopoverActionRow(title: "Scan Documents", icon: "doc.viewfinder", action: onScanDocuments)
-                PopoverActionRow(title: "Image", icon: "photo", action: onImage)
-                PopoverActionRow(title: "Take Photo", icon: "camera", showDivider: false, action: onTakePhoto)
-            }
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            Text("Quick Actions")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.58))
-
-            VStack(spacing: 0) {
-                PopoverActionRow(title: "QuickNote", icon: "square.and.pencil", action: onQuickNote)
-                PopoverActionRow(title: "Quick Record", icon: "mic.badge.plus", action: onQuickRecord)
-                PopoverActionRow(title: "Study Set", icon: "rectangle.stack.badge.play", showDivider: false, action: onStudySet)
+                PopoverActionRow(title: "Import Gradescope Template", icon: "graduationcap", showDivider: false, action: onImportGradescopeTemplate)
             }
             .background(Color.white.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

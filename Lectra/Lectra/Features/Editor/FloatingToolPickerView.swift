@@ -14,7 +14,7 @@ struct FloatingToolPickerView: View {
     @Binding var selectedEraserMode: EraserMode
     var isVertical: Bool = false
 
-    private let colors: [AnnotationInkColor] = [.black, .white, .accent, .blue, .green]
+    @State private var recentColors: [AnnotationInkColor] = [.black, .white, .accent, .blue, .green]
 
     @State private var penStrokeWidths: [CGFloat] = [0.5, 1.0, 2.0]
     @State private var highlighterStrokeWidths: [CGFloat] = [2.0, 4.0, 7.0]
@@ -231,27 +231,45 @@ struct FloatingToolPickerView: View {
 
     private var colorButtons: some View {
         Group {
-            ForEach(colors, id: \.self) { color in
-                Button {
-                    withAnimation(LectraMotion.quick) {
-                        selectedColor = color
-                        if selectedTool == .eraser || selectedTool == .lasso {
-                            selectedTool = .pen
+            ForEach(Array(recentColors.enumerated()), id: \.offset) { index, color in
+                ZStack {
+                    Button {
+                        withAnimation(LectraMotion.quick) {
+                            selectedColor = color
+                            if selectedTool == .eraser || selectedTool == .lasso {
+                                selectedTool = .pen
+                            }
                         }
+                    } label: {
+                        Circle()
+                            .fill(color.swatchColor)
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: selectedColor == color ? 2 : 0)
+                            )
+                            .shadow(color: .black.opacity(0.28), radius: 3, x: 0, y: 1)
+                            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Circle()
-                        .fill(color.swatchColor)
-                        .frame(width: 24, height: 24)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white, lineWidth: selectedColor == color ? 2 : 0)
-                        )
-                        .shadow(color: .black.opacity(0.28), radius: 3, x: 0, y: 1)
-                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                        .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .allowsHitTesting(selectedColor != color)
+                    
+                    if selectedColor == color {
+                        ColorPicker("", selection: Binding<Color>(
+                            get: { recentColors[index].swatchColor },
+                            set: { newColor in
+                                let hexString = UIColor(newColor).toHexString()
+                                let customColor = AnnotationInkColor(rawValue: hexString)
+                                recentColors[index] = customColor
+                                selectedColor = customColor
+                            }
+                        ))
+                        .labelsHidden()
+                        .scaleEffect(1.2)
+                        .blendMode(.destinationOver) // Render behind custom Button UI
+                    }
                 }
-                .buttonStyle(.plain)
                 .accessibilityLabel(color.accessibilityLabel)
                 .accessibilityHint("Select ink color")
             }
@@ -372,17 +390,19 @@ struct FloatingToolPickerView: View {
 
 private extension AnnotationInkColor {
     var accessibilityLabel: String {
-        switch self {
-        case .black:
+        switch rawValue {
+        case "black":
             return "Black"
-        case .white:
+        case "white":
             return "White"
-        case .accent:
+        case "accent":
             return "Red"
-        case .blue:
+        case "blue":
             return "Blue"
-        case .green:
+        case "green":
             return "Green"
+        default:
+            return "Custom Color"
         }
     }
 }

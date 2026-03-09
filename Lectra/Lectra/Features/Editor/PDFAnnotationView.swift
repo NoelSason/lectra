@@ -347,48 +347,9 @@ struct PDFAnnotationView: View {
     }
 
     // MARK: - Top Nav Bar
-
     private var topBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                Task { @MainActor in await saveAndSync() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Vault")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 13)
-                .frame(height: LectraSizing.minHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-            }
-            .disabled(isSaving)
-
-            Button {
-                editorBridge.undo()
-            } label: {
-                toolbarIconButton(symbol: "arrow.uturn.backward")
-            }
-            .buttonStyle(.plain)
-            .disabled(!editorBridge.canUndo)
-            .keyboardShortcut("z", modifiers: [.command])
-
-            Button {
-                editorBridge.redo()
-            } label: {
-                toolbarIconButton(symbol: "arrow.uturn.forward")
-            }
-            .buttonStyle(.plain)
-            .disabled(!editorBridge.canRedo)
-            .keyboardShortcut("Z", modifiers: [.command, .shift])
-
-            Spacer(minLength: 4)
-
+        ZStack {
+            // Center Layout
             Group {
                 if isRenamingTitle {
                     TextField("Document title", text: $titleDraft)
@@ -429,95 +390,22 @@ struct PDFAnnotationView: View {
             }
             .frame(maxWidth: .infinity)
 
-            Spacer(minLength: 4)
+            HStack {
+                Spacer(minLength: 0)
 
-            syncStatusAccessory
-
-            Menu {
-                Button("Search This PDF", systemImage: "magnifyingglass") {
-                    showDocumentSearchSheet = true
+                Button {
+                    shareDocument()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.white.opacity(0.12))
+                        )
                 }
-
-                if !outlineItems.isEmpty {
-                    Button("Document Outline", systemImage: "list.bullet.indent") {
-                        showOutlineSheet = true
-                    }
-                }
-
-                Divider()
-
-                Menu("Handedness") {
-                    ForEach(EditorHandedness.allCases, id: \.self) { handedness in
-                        Button(handedness == .left ? "Left-Handed" : "Right-Handed") {
-                            editorPreferences.handedness = handedness
-                            persistEditorPreferences()
-                            toolbarDockEdge = handedness == .left ? .right : .left
-                        }
-                    }
-                }
-
-                Menu("Pencil Squeeze") {
-                    ForEach(PencilSqueezeAction.allCases, id: \.self) { action in
-                        Button(label(for: action)) {
-                            editorPreferences.squeezeAction = action
-                            persistEditorPreferences()
-                        }
-                    }
-                }
-            } label: {
-                toolbarIconButton(symbol: "slider.horizontal.3")
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                Task { @MainActor in await exportToCanvascope() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.up.forward.app")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("Canvascope")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .frame(height: LectraSizing.minHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-            }
-            .disabled(isSaving || isExportingToCanvascope)
-
-            Button {
-                showGradescopeSubmitSheet = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "graduationcap")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("Gradescope")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .frame(height: LectraSizing.minHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-            }
-            .disabled(isSaving || isExportingToCanvascope)
-
-            Button {
-                shareDocument()
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
-                    )
+                .buttonStyle(.plain)
             }
             .disabled(isSaving || isExportingToCanvascope)
         }
@@ -2278,8 +2166,12 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     @discardableResult
     private func appendBlankPage() -> Int {
         let newIndex = pageViews.count
+        
+        // Inherit the exact bounds and PDF template background from the preceding page
         let bounds = pageDescriptors.last?.pageBounds ?? fallbackPageBounds()
-        let descriptor = PageDescriptor(kind: .blank, pageBounds: bounds)
+        let templateKind = pageDescriptors.last?.kind ?? .blank
+        
+        let descriptor = PageDescriptor(kind: templateKind, pageBounds: bounds)
         let canvasSize = displayedCanvasSize(for: bounds)
         let drawing = initialDrawingForPage(index: newIndex, canvasSize: canvasSize)
         let appendedIndex = appendPage(descriptor: descriptor, drawing: drawing)

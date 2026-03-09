@@ -184,6 +184,11 @@ final class GradescopeHTMLParser {
 
             guard let url = normalizedURL(from: hrefRaw, relativeTo: pageURL) else { continue }
 
+            // Un-extensioned template URL path fallback
+            if hrefLower.hasSuffix("/template") || hrefLower.contains("/template?") {
+                return url
+            }
+
             let isPDF = hrefLower.contains(".pdf") || label.contains("pdf")
             guard isPDF else { continue }
 
@@ -196,7 +201,54 @@ final class GradescopeHTMLParser {
             }
         }
 
-        return fallbackPDF
+        if let found = fallbackPDF {
+            return found
+        }
+        
+        // --- React Fallbacks ---
+        let normalized = html
+            .replacingOccurrences(of: "\\\\/", with: "/")
+            .replacingOccurrences(of: "\\/", with: "/")
+            .replacingOccurrences(of: "\\\"", with: "\"")
+
+        // 1. Look for explicit /template paths in JSON strings
+        if let templateMatch = firstCapture(
+            in: normalized,
+            pattern: "[\"'](/courses/[0-9]+/assignments/[0-9]+/template(?:\\?[^\"']*)?)[\"']"
+        ) {
+            if let url = normalizedURL(from: templateMatch, relativeTo: pageURL) {
+                return url
+            }
+        }
+
+        // 2. Look for any PDF or template URL in common JSON keys
+        let jsonURLs = captures(
+            in: normalized,
+            pattern: "[\"'](?:url|template_url|pdf_url|href|file_url)[\"']\\s*:\\s*[\"']([^\"']+)[\"']"
+        )
+        for match in jsonURLs {
+            guard match.count >= 2 else { continue }
+            let urlRaw = match[1]
+            if urlRaw.lowercased().contains(".pdf") || urlRaw.lowercased().contains("template") {
+                if let url = normalizedURL(from: urlRaw, relativeTo: pageURL) {
+                    return url
+                }
+            }
+        }
+
+        // 3. Bruteforce search for any string combining http or / with .pdf
+        let bruteForceMatches = captures(
+            in: normalized,
+            pattern: "[\"']((?:https?://|/)[^\"']+\\.pdf(?:\\?[^\"']*)?)[\"']"
+        )
+        for match in bruteForceMatches {
+            guard match.count >= 2 else { continue }
+            if let url = normalizedURL(from: match[1], relativeTo: pageURL) {
+                return url
+            }
+        }
+
+        return nil
     }
 
     func parseSubmissionFormSpec(from html: String, pageURL: URL) -> SubmissionFormSpec? {
