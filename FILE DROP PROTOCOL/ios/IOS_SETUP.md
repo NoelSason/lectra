@@ -7,6 +7,7 @@ This package assumes you already have an iPad app and an existing extension.
 Use your iOS app as the uploader client while your extension acts as receiver.
 
 For zero-setup mode, prefer account-linked v2 endpoints so users only need to sign into both apps with the same Google account.
+If the same iPad should receive Canvascope -> Lectra wake hints, register it as `clientKind = lectra_ipad`.
 
 ## Inputs your iOS app needs
 
@@ -47,6 +48,18 @@ let receipt = try await client.uploadFile(fileURL: localFileURL)
    - `apikey: <publishable-or-anon-key>`
    - `Authorization: Bearer <user access token>`
 4. Handle `404` as "no active receiver found" (prompt user to open extension).
+
+### Lectra wake-hint registration
+
+1. Persist a stable `deviceId` UUID for the iPad app.
+2. Call `POST /functions/v1/register-device-v2` with:
+   - `deviceId`
+   - `deviceName`
+   - `clientKind = lectra_ipad`
+   - optional `pushToken`
+   - optional `pushEnvironment` (`sandbox` or `production`)
+3. Subscribe to the private Realtime topic `dropbridge:user:<user_id>:device:<device_id>` while the app is active.
+4. Treat Realtime/APNs wakeups as hints only; the canonical Canvascope -> Lectra document state still lives in `synced_items` and `lectra_documents`.
 
 ## ATS / network notes
 

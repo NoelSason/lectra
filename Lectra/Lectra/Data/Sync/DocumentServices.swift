@@ -66,6 +66,16 @@ final class ICloudSyncStatusPayload {
     }
 }
 
+final class RemoteDocumentsChangePayload {
+    let documentIds: [UUID]
+    let reason: String
+
+    init(documentIds: [UUID], reason: String) {
+        self.documentIds = documentIds
+        self.reason = reason
+    }
+}
+
 struct DocumentSearchResult: Identifiable, Hashable {
     enum Kind: String, Hashable {
         case metadata
@@ -128,6 +138,7 @@ extension Notification.Name {
     static let lectraDocumentSyncStateDidChange = Notification.Name("lectraDocumentSyncStateDidChange")
     static let lectraEditorPreferencesDidChange = Notification.Name("lectraEditorPreferencesDidChange")
     static let lectraICloudSyncDidChange = Notification.Name("lectraICloudSyncDidChange")
+    static let lectraRemoteDocumentsDidChange = Notification.Name("lectraRemoteDocumentsDidChange")
 }
 
 enum ICloudDocumentStoreError: LocalizedError {

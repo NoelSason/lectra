@@ -30,6 +30,30 @@ When both Lectra and the extension use the same Supabase-authenticated Google ac
    - `queued` on transient failure
 5. Refresh presence by calling `register-device-v2` on startup and periodically.
 
+## Canvascope -> Lectra wake hint
+
+For the current Canvascope -> Lectra flow, keep the existing storage + `synced_items` write path as the canonical delivery model.
+
+After the extension successfully:
+
+1. uploads the PDF into `lectra_documents`, and
+2. inserts or updates the `synced_items` row,
+
+call `wake-lectra-v2` with the same authenticated user JWT:
+
+```json
+{
+  "syncedItemId": "<synced_items.id>",
+  "reason": "synced_item_inserted"
+}
+```
+
+Behavior notes:
+
+1. Treat `wake-lectra-v2` as best effort.
+2. Do not fail the user-visible send flow if the wake hint fails after the canonical write succeeded.
+3. Preserve any existing fast Canvascope -> Lectra behavior; this call is an acceleration hook, not a new source of truth.
+
 ## Device bootstrap
 
 1. Generate `deviceId` (UUID).

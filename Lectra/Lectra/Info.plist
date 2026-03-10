@@ -18,5 +18,9 @@
 		<string>canvas-student</string>
 		<string>canvas-courses</string>
 	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

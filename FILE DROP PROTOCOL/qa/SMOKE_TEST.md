@@ -5,6 +5,7 @@
 1. Functions deployed and reachable.
 2. iOS app paired with valid `device` and `token`.
 3. Extension registered and polling.
+4. If testing wake hints, Lectra is registered via `register-device-v2(clientKind=lectra_ipad)`.
 
 ## Test A: Happy path
 
@@ -49,3 +50,18 @@
 1. Insert or wait for expired queued row (`expires_at < now()`).
 2. Invoke `cleanup-expired-uploads` with service role.
 3. Verify row is marked `canceled` and object removed from storage.
+
+## Test G: Canvascope -> Lectra wake path
+
+1. Sign into Lectra and keep the app active.
+2. From Canvascope, upload the PDF to `lectra_documents` and write the `synced_items` row.
+3. Call `wake-lectra-v2` with that row ID.
+4. Verify Lectra receives a private Realtime wake and refreshes its document list.
+5. Verify the newest uncached `pending_annotation` PDFs are prefetched locally.
+
+## Test H: Silent push wake path
+
+1. Put Lectra in the background on a physical iPad.
+2. From Canvascope, complete the canonical send path and call `wake-lectra-v2`.
+3. Verify the function reports a best-effort APNs attempt.
+4. Re-open Lectra and verify the document appears without needing a manual full refresh.

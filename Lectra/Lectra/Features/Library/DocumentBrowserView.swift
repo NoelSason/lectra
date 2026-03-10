@@ -466,10 +466,12 @@ struct DocumentBrowserView: View {
     var body: some View {
         let syncPublisher = NotificationCenter.default.publisher(for: .lectraDocumentSyncStateDidChange)
         let iCloudPublisher = NotificationCenter.default.publisher(for: .lectraICloudSyncDidChange)
+        let remoteDocumentsPublisher = NotificationCenter.default.publisher(for: .lectraRemoteDocumentsDidChange)
 
         return presentedContent
             .onReceive(syncPublisher, perform: handleDocumentSyncNotification)
             .onReceive(iCloudPublisher, perform: handleICloudSyncNotification)
+            .onReceive(remoteDocumentsPublisher, perform: handleRemoteDocumentsNotification)
             .onChange(of: editorRoute) { _, newValue in
                 handleEditorRouteChange(newValue)
             }
@@ -520,6 +522,12 @@ struct DocumentBrowserView: View {
 
         lastCloudSyncDate = payload.syncedAt
         UserDefaults.standard.set(payload.syncedAt, forKey: lastCloudSyncDefaultsKey)
+    }
+
+    private func handleRemoteDocumentsNotification(_ notification: Notification) {
+        Task {
+            await refreshRemoteDocuments()
+        }
     }
 
     private func handleEditorRouteChange(_ newValue: EditorRoute?) {

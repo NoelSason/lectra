@@ -13,7 +13,9 @@
 - Execute `supabase/schema/install.sql`.
 - Execute `supabase/schema/dropbridge_v2_account_link.sql`.
 - Execute `supabase/migrations/20260302005800_dropbridge_v2_client_kind_lectra_ipad.sql`.
+- Execute `supabase/migrations/20260310113000_dropbridge_v2_lectra_wake_hints.sql`.
 - Deploy all functions in `supabase/functions/`.
+- Enable private-only Realtime channels in Supabase before shipping wake subscriptions.
 - Confirm v1 and v2 functions keep `verify_jwt = false` (JWT validated in function code), and only `cleanup-expired-uploads` uses `verify_jwt = true`.
 
 2. iOS integration
@@ -35,6 +37,7 @@
   - `list-pending-v2`
   - `update-upload-status-v2`
   - `get-upload-status-v2`
+- For the current Canvascope -> Lectra sync path, keep `lectra_documents` + `synced_items` canonical and call `wake-lectra-v2` after the row write succeeds.
 
 4. Acceptance checks
 - Run `qa/SMOKE_TEST.md` end-to-end.
@@ -47,6 +50,7 @@
 1. Never expose service-role key in iOS app or extension.
 2. Keep bucket private.
 3. Only retry transient failures; cancellations are terminal.
+4. Realtime and APNs are hints only, not delivery truth.
 
 ## Deliverables
 
@@ -56,3 +60,4 @@
 - pair flow UX entrypoint
 - where extension handles canceled status
 - cron invocation for `cleanup-expired-uploads`
+- optional APNs env vars: `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_PRIVATE_KEY_P8`

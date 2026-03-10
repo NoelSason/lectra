@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: DropBridge Edge Functions API
-  version: 1.2.0
+  version: 1.3.0
   description: >-
-    Contract for v1 pairing flows and v2 account-linked queueing for Lectra <-> Canvascope delivery.
+    Contract for v1 pairing flows, v2 account-linked queueing, and Lectra wake hints for Canvascope delivery.
 servers:
   - url: https://{projectRef}.supabase.co
     variables:
@@ -19,6 +19,12 @@ components:
       type: http
       scheme: bearer
   schemas:
+    DropBridgeClientKind:
+      type: string
+      enum: [canvascope_extension, lectra_ipad]
+    DropBridgePushEnvironment:
+      type: string
+      enum: [sandbox, production]
     RegisterDeviceRequest:
       type: object
       required: [deviceId, deviceToken]
@@ -123,6 +129,15 @@ components:
         deviceName:
           type: string
           maxLength: 64
+        clientKind:
+          $ref: '#/components/schemas/DropBridgeClientKind'
+        pushToken:
+          type: string
+          nullable: true
+        pushEnvironment:
+          anyOf:
+            - $ref: '#/components/schemas/DropBridgePushEnvironment'
+            - type: 'null'
     RegisterDeviceV2Response:
       type: object
       properties:
@@ -139,6 +154,14 @@ components:
         lastSeenAt:
           type: string
           format: date-time
+        pushTokenUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pushEnvironment:
+          anyOf:
+            - $ref: '#/components/schemas/DropBridgePushEnvironment'
+            - type: 'null'
     UploadV2Response:
       type: object
       properties:
@@ -217,6 +240,34 @@ components:
         status:
           type: string
           enum: [queued, downloaded, canceled]
+        clientKind:
+          $ref: '#/components/schemas/DropBridgeClientKind'
+
+    WakeLectraV2Request:
+      type: object
+      required: [syncedItemId]
+      properties:
+        syncedItemId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+    WakeLectraV2Response:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        deviceId:
+          type: string
+          format: uuid
+          nullable: true
+        realtimeBroadcasted:
+          type: boolean
+        apnsAttempted:
+          type: boolean
+        apnsReason:
+          type: string
+          nullable: true
 
     GenericError:
       type: object
@@ -331,7 +382,7 @@ paths:
 
   /functions/v1/register-device-v2:
     post:
-      summary: Register extension receiver for authenticated account (v2)
+      summary: Register an account-linked receiver device for Canvascope or Lectra (v2)
       requestBody:
         required: true
         content:
@@ -436,6 +487,35 @@ paths:
                     enum: [queued, downloaded, canceled]
         '404':
           description: Upload not found for device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+
+  /functions/v1/wake-lectra-v2:
+    post:
+      summary: Send a best-effort Realtime/APNs wake hint to Lectra after canonical sync writes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WakeLectraV2Request'
+      responses:
+        '200':
+          description: Wake hint result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WakeLectraV2Response'
+        '401':
+          description: Missing or invalid user session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericError'
+        '404':
+          description: Synced item not found
           content:
             application/json:
               schema:

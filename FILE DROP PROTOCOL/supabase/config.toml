@@ -28,5 +28,8 @@ verify_jwt = false
 [functions.get-upload-status-v2]
 verify_jwt = false
 
+[functions.wake-lectra-v2]
+verify_jwt = false
+
 [functions.cleanup-expired-uploads]
 verify_jwt = true

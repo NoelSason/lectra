@@ -1,7 +1,7 @@
 {
   "package_name": "file-drop-installer",
-  "package_version": "1.2.0",
-  "created_at": "2026-02-25",
+  "package_version": "1.3.0",
+  "created_at": "2026-03-10",
   "purpose": "Install DropBridge backend and integrate native iOS uploader with existing Chrome extension receiver.",
   "components": {
     "supabase": {
@@ -18,6 +18,7 @@
         "list-pending-v2",
         "update-upload-status-v2",
         "get-upload-status-v2",
+        "wake-lectra-v2",
         "cleanup-expired-uploads"
       ],
       "function_source_root": "supabase/functions"
@@ -36,13 +37,18 @@
     "SUPABASE_PROJECT_REF",
     "SUPABASE_URL",
     "SUPABASE_PUBLISHABLE_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY"
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "APNS_KEY_ID",
+    "APNS_TEAM_ID",
+    "APNS_TOPIC",
+    "APNS_PRIVATE_KEY_P8"
   ],
   "security_assumptions": [
     "Client apps only use publishable/anon key",
     "Edge Functions enforce device authentication",
     "Storage bucket is private",
-    "RLS is enabled on public tables with deny-by-default"
+    "RLS is enabled on public tables with deny-by-default",
+    "Realtime/APNs wake paths are hints only; canonical state lives in tables and storage"
   ],
   "entrypoints": {
     "human_readme": "README.md",
