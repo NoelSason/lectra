@@ -46,6 +46,13 @@ struct GradescopeSubmitSheet: View {
         return document.localPDFURL
     }
 
+    private var diagnosticsPresentation: TechnicalDetailsPresentation? {
+        TechnicalDetailsPresentation.make(
+            summary: "Technical details are available for the current Gradescope submission attempt.",
+            details: gradescopeManager.latestDiagnosticsReport()
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -72,8 +79,11 @@ struct GradescopeSubmitSheet: View {
                             .foregroundColor(Color(hex: 0xE84D4D))
                     }
 
-                    if let diagnostics = gradescopeManager.latestDiagnosticsReport() {
-                        diagnosticsCard(diagnostics)
+                    if let diagnosticsPresentation {
+                        TechnicalDetailsDisclosure(
+                            presentation: diagnosticsPresentation,
+                            accessibilityID: "gradescope.submit.technicalDetails"
+                        )
                     }
                 }
                 .padding(16)
@@ -117,6 +127,22 @@ struct GradescopeSubmitSheet: View {
         }
         .onAppear {
             hydrateLinkedAssignment()
+        }
+        .onChange(of: localError) { _, newValue in
+            guard let newValue else { return }
+            postAccessibilityAnnouncement(newValue)
+        }
+        .onChange(of: gradescopeManager.errorMessage) { _, newValue in
+            guard let newValue else { return }
+            postAccessibilityAnnouncement(newValue)
+        }
+        .onChange(of: submitReceipt?.submittedAt) { _, newValue in
+            guard newValue != nil, let receipt = submitReceipt else { return }
+            postAccessibilityAnnouncement(
+                receipt.isDryRun
+                    ? "Gradescope dry run completed."
+                    : "Gradescope submission recorded."
+            )
         }
     }
 
@@ -179,7 +205,7 @@ struct GradescopeSubmitSheet: View {
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 40)
+                .frame(minHeight: LectraSizing.minHitTarget)
                 .background(Color(hex: 0x4A222A))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -249,7 +275,7 @@ struct GradescopeSubmitSheet: View {
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 38)
+                .frame(minHeight: LectraSizing.minHitTarget)
                 .background(Color.white.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -323,7 +349,7 @@ struct GradescopeSubmitSheet: View {
                     }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 40)
+                    .frame(minHeight: LectraSizing.minHitTarget)
                     .background(Color(hex: 0x4A222A))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
@@ -342,7 +368,7 @@ struct GradescopeSubmitSheet: View {
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 40)
+                .frame(minHeight: LectraSizing.minHitTarget)
                 .background(Color.white.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -399,31 +425,6 @@ struct GradescopeSubmitSheet: View {
                     .foregroundColor(Color(hex: 0x35B77A))
             }
         }
-    }
-
-    @ViewBuilder
-    private func diagnosticsCard(_ diagnostics: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Diagnostics")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer(minLength: 0)
-                Button("Copy") {
-                    UIPasteboard.general.string = diagnostics
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color(hex: 0xE84D4D))
-            }
-
-            Text(diagnostics)
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundColor(.white.opacity(0.72))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
     }
 
     private var canFinalize: Bool {

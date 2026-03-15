@@ -13,6 +13,13 @@ struct GradescopeWebLoginSheet: View {
 
     let onSessionCaptured: ([HTTPCookie], String?) async -> (errorMessage: String?, debugReport: String?)
 
+    private var technicalDetailsPresentation: TechnicalDetailsPresentation? {
+        TechnicalDetailsPresentation.make(
+            summary: "Technical details are available for the latest Gradescope web sign-in import attempt.",
+            details: debugReport
+        )
+    }
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
@@ -85,37 +92,16 @@ struct GradescopeWebLoginSheet: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 40)
+                    .frame(minHeight: LectraSizing.minHitTarget)
                     .background(Color.white.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
 
-                if let debugReport {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Import Debug Report")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.9))
-                            Spacer(minLength: 0)
-                            Button("Copy") {
-                                UIPasteboard.general.string = debugReport
-                            }
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                        }
-
-                        ScrollView {
-                            Text(debugReport)
-                                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.75))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                        .frame(minHeight: 110, maxHeight: 190)
-                        .padding(8)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
+                if let technicalDetailsPresentation {
+                    TechnicalDetailsDisclosure(
+                        presentation: technicalDetailsPresentation,
+                        accessibilityID: "gradescope.webLogin.technicalDetails"
+                    )
                 }
             }
             .padding(16)
@@ -128,6 +114,10 @@ struct GradescopeWebLoginSheet: View {
                     .foregroundColor(Color(hex: 0xE84D4D))
                 }
             }
+        }
+        .onChange(of: statusMessage) { _, newValue in
+            guard isImporting || newValue.localizedCaseInsensitiveContains("failed") else { return }
+            postAccessibilityAnnouncement(newValue)
         }
     }
 }

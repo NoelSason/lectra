@@ -14,6 +14,13 @@ import AuthenticationServices
 
 @MainActor
 final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
+    struct MockState {
+        var isAuthenticated: Bool
+        var userId: UUID?
+        var userEmail: String?
+        var userName: String?
+        var avatarURL: String?
+    }
 
     // MARK: - Published State
     @Published var isAuthenticated = false
@@ -26,17 +33,30 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     // MARK: - Private
     private let client: SupabaseClient
+    private var mockState: MockState?
 
     // MARK: - Init
-    override init() {
+    init(mockState: MockState? = nil) {
         self.client = SupabaseManager.shared.client
+        self.mockState = mockState
         super.init()
+
+        if let mockState {
+            apply(mockState: mockState)
+            return
+        }
+
         bootstrapFromCurrentSession()
         Task { await checkExistingSession(showLoadingState: false) }
     }
 
     // MARK: - Session Check
     func checkExistingSession(showLoadingState: Bool = true) async {
+        if let mockState {
+            apply(mockState: mockState)
+            return
+        }
+
         if showLoadingState {
             isLoading = true
         }
@@ -53,6 +73,16 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     // MARK: - Google Sign In (OAuth)
     func signInWithGoogle() async {
+        if var mockState {
+            mockState.isAuthenticated = true
+            mockState.userId = mockState.userId ?? UUID(uuidString: "00000000-0000-0000-0000-000000000001")
+            mockState.userEmail = mockState.userEmail ?? "ui-tests@canvascope.com"
+            mockState.userName = mockState.userName ?? "UI Test Student"
+            self.mockState = mockState
+            apply(mockState: mockState)
+            return
+        }
+
         errorMessage = nil
         isLoading = true
         do {
@@ -107,6 +137,16 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         isLoading = false
     }
 
+    private func apply(mockState: MockState) {
+        isAuthenticated = mockState.isAuthenticated
+        userId = mockState.isAuthenticated ? mockState.userId : nil
+        userEmail = mockState.isAuthenticated ? mockState.userEmail : nil
+        userName = mockState.isAuthenticated ? mockState.userName : nil
+        avatarURL = mockState.isAuthenticated ? mockState.avatarURL : nil
+        errorMessage = nil
+        isLoading = false
+    }
+
     private func bootstrapFromCurrentSession() {
         if let session = client.auth.currentSession {
             applySession(session)
@@ -126,6 +166,13 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     // MARK: - Sign Out
     func signOut() async {
+        if var mockState {
+            mockState.isAuthenticated = false
+            self.mockState = mockState
+            apply(mockState: mockState)
+            return
+        }
+
         do {
             try await client.auth.signOut()
         } catch {

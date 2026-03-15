@@ -3,6 +3,18 @@ import Combine
 
 @MainActor
 final class GradescopeManager: ObservableObject {
+    struct MockState {
+        var isAuthenticated: Bool
+        var isBusy: Bool = false
+        var courses: [GSCourse] = []
+        var assignmentsByCourse: [String: [GSAssignment]] = [:]
+        var assignmentDebugByCourse: [String: String] = [:]
+        var webSessionDebugReport: String?
+        var diagnosticsReport: String?
+        var errorMessage: String?
+        var sessionExpirationDate: Date?
+    }
+
     @Published private(set) var isAuthenticated = false
     @Published private(set) var isBusy = false
     @Published private(set) var courses: [GSCourse] = []
@@ -13,7 +25,7 @@ final class GradescopeManager: ObservableObject {
     @Published var errorMessage: String?
 
     var sessionExpirationDate: Date? {
-        authService.sessionExpirationDate
+        mockState?.sessionExpirationDate ?? authService.sessionExpirationDate
     }
 
     private let authService: GradescopeAuthService
@@ -22,8 +34,9 @@ final class GradescopeManager: ObservableObject {
     private let submissionService: GradescopeSubmissionService
     private let webScrapeService: GradescopeWebScrapeService
     private let linkStore: GradescopeLinkStore
+    private var mockState: MockState?
 
-    init() {
+    init(mockState: MockState? = nil) {
         let parser = GradescopeHTMLParser()
         let httpClient = GradescopeHTTPClient()
         let keychainStore = GradescopeKeychainStore()
@@ -56,13 +69,23 @@ final class GradescopeManager: ObservableObject {
         self.webScrapeService = GradescopeWebScrapeService(parser: parser)
 
         self.linkStore = linkStore
+        self.mockState = mockState
 
-        Task {
-            await restoreSession()
+        if let mockState {
+            apply(mockState)
+        } else {
+            Task {
+                await restoreSession()
+            }
         }
     }
 
     func restoreSession() async {
+        if let mockState {
+            apply(mockState)
+            return
+        }
+
         isBusy = true
         defer { isBusy = false }
 
@@ -79,6 +102,14 @@ final class GradescopeManager: ObservableObject {
     }
 
     func login(email: String, password: String) async {
+        if var mockState {
+            mockState.isAuthenticated = true
+            mockState.errorMessage = nil
+            self.mockState = mockState
+            apply(mockState)
+            return
+        }
+
         isBusy = true
         errorMessage = nil
         webSessionDebugReport = nil
@@ -97,6 +128,14 @@ final class GradescopeManager: ObservableObject {
     }
 
     func loginWithWebSession(cookies: [HTTPCookie], accountPageHTML: String?) async {
+        if var mockState {
+            mockState.isAuthenticated = true
+            mockState.errorMessage = nil
+            self.mockState = mockState
+            apply(mockState)
+            return
+        }
+
         isBusy = true
         errorMessage = nil
         webSessionDebugReport = nil
@@ -125,6 +164,19 @@ final class GradescopeManager: ObservableObject {
     }
 
     func logout() {
+        if var mockState {
+            mockState.isAuthenticated = false
+            mockState.courses = []
+            mockState.assignmentsByCourse = [:]
+            mockState.assignmentDebugByCourse = [:]
+            mockState.webSessionDebugReport = nil
+            mockState.diagnosticsReport = nil
+            mockState.errorMessage = nil
+            self.mockState = mockState
+            apply(mockState)
+            return
+        }
+
         authService.logout()
         isAuthenticated = false
         courses = []
@@ -136,6 +188,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func refreshCourses() async {
+        if let mockState {
+            apply(mockState)
+            return
+        }
+
         guard isAuthenticated else { return }
 
         isBusy = true
@@ -157,6 +214,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func refreshAssignments(for courseId: String) async {
+        if let mockState {
+            apply(mockState)
+            return
+        }
+
         guard isAuthenticated, !courseId.isEmpty else { return }
 
         isBusy = true
@@ -218,6 +280,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func prepareTemplateImport(for assignment: GSAssignment) async throws -> (fileURL: URL, suggestedFileName: String) {
+        if let mockState {
+            apply(mockState)
+            throw GSError.noTemplateAvailable
+        }
+
         do {
             let templateResult = try await templateService.fetchTemplateWithDebug(for: assignment)
             diagnosticsReport = templateResult.debugLines.joined(separator: "\n")
@@ -239,6 +306,17 @@ final class GradescopeManager: ObservableObject {
     }
 
     func preflight(documentId: UUID?, fileURL: URL, courseId: String, assignmentId: String) async throws -> GSPreflightResult {
+        if let mockState {
+            apply(mockState)
+            return GSPreflightResult(
+                isReady: true,
+                issues: [],
+                warnings: [],
+                fileSHA256: nil,
+                fileSizeBytes: nil
+            )
+        }
+
         let draft = GSSubmissionDraft(
             documentId: documentId,
             courseId: courseId,
@@ -258,6 +336,16 @@ final class GradescopeManager: ObservableObject {
     }
 
     func submit(documentId: UUID?, fileURL: URL, courseId: String, assignmentId: String, confirmed: Bool) async throws -> GSSubmissionReceipt {
+        if let mockState {
+            apply(mockState)
+            return GSSubmissionReceipt(
+                assignmentId: assignmentId,
+                submittedAt: Date(),
+                submissionURL: nil,
+                isDryRun: false
+            )
+        }
+
         let draft = GSSubmissionDraft(
             documentId: documentId,
             courseId: courseId,
@@ -277,6 +365,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func prepareSubmissionWorkflow(documentId: UUID?, fileURL: URL, courseId: String, assignmentId: String) async throws -> GSSubmissionWorkflow {
+        if let mockState {
+            apply(mockState)
+            throw GSError.workflowNotFound
+        }
+
         let draft = GSSubmissionDraft(
             documentId: documentId,
             courseId: courseId,
@@ -296,6 +389,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func uploadPDF(workflowId: String, confirmed: Bool) async throws -> GSUploadResult {
+        if let mockState {
+            apply(mockState)
+            throw GSError.workflowNotFound
+        }
+
         do {
             let result = try await submissionService.uploadPDF(workflowId: workflowId, confirmed: confirmed)
             diagnosticsReport = submissionService.lastDebugLines.joined(separator: "\n")
@@ -309,6 +407,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func updateGroupMembers(workflowId: String, members: [GSGroupMemberDraft]) async throws -> GSGroupUpdateResult {
+        if let mockState {
+            apply(mockState)
+            return GSGroupUpdateResult(workflowId: workflowId, members: members, warnings: [])
+        }
+
         do {
             let result = try await submissionService.updateGroupMembers(workflowId: workflowId, members: members)
             diagnosticsReport = submissionService.lastDebugLines.joined(separator: "\n")
@@ -322,6 +425,11 @@ final class GradescopeManager: ObservableObject {
     }
 
     func updatePageAssignments(workflowId: String, assignments: [GSPageAssignmentDraft]) async throws -> GSPageAssignmentResult {
+        if let mockState {
+            apply(mockState)
+            return GSPageAssignmentResult(workflowId: workflowId, assignments: assignments, warnings: [])
+        }
+
         do {
             let result = try await submissionService.updatePageAssignments(workflowId: workflowId, assignments: assignments)
             diagnosticsReport = submissionService.lastDebugLines.joined(separator: "\n")
@@ -335,6 +443,16 @@ final class GradescopeManager: ObservableObject {
     }
 
     func finalizeSubmission(workflowId: String) async throws -> GSSubmissionReceipt {
+        if let mockState {
+            apply(mockState)
+            return GSSubmissionReceipt(
+                assignmentId: workflowId,
+                submittedAt: Date(),
+                submissionURL: nil,
+                isDryRun: false
+            )
+        }
+
         do {
             let receipt = try await submissionService.finalizeSubmission(workflowId: workflowId)
             diagnosticsReport = submissionService.lastDebugLines.joined(separator: "\n")
@@ -357,5 +475,16 @@ final class GradescopeManager: ObservableObject {
 
     private func localizedDescription(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    private func apply(_ mockState: MockState) {
+        isAuthenticated = mockState.isAuthenticated
+        isBusy = mockState.isBusy
+        courses = mockState.courses
+        assignmentsByCourse = mockState.assignmentsByCourse
+        assignmentDebugByCourse = mockState.assignmentDebugByCourse
+        webSessionDebugReport = mockState.webSessionDebugReport
+        diagnosticsReport = mockState.diagnosticsReport
+        errorMessage = mockState.errorMessage
     }
 }

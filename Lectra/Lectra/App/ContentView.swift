@@ -15,8 +15,9 @@ struct ContentView: View {
     }
 
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject private var gradescopeManager: GradescopeManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var startupCoordinator = StartupCoordinator()
-    @StateObject private var gradescopeManager = GradescopeManager()
 
     private var rootScreen: RootScreen {
         authManager.isAuthenticated ? .library : .auth
@@ -30,7 +31,7 @@ struct ContentView: View {
                     .transition(.opacity)
             case .auth:
                 AuthView()
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
 
             if !startupCoordinator.isCompleted {
@@ -44,8 +45,8 @@ struct ContentView: View {
         }
         .environmentObject(gradescopeManager)
         .preferredColorScheme(.dark)
-        .animation(LectraMotion.screenSwap, value: rootScreen)
-        .animation(LectraMotion.startupExit, value: startupCoordinator.isCompleted)
+        .animation(reduceMotion ? nil : LectraMotion.screenSwap, value: rootScreen)
+        .animation(reduceMotion ? nil : LectraMotion.startupExit, value: startupCoordinator.isCompleted)
         .onAppear {
             startupCoordinator.start(dataReady: !authManager.isLoading)
         }

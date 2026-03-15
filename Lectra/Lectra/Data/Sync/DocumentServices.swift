@@ -304,22 +304,56 @@ struct EditorPreferences: Codable, Equatable {
     var selectedColor: AnnotationInkColor = .accent
     var selectedStrokeWidth: CGFloat = 2.0
     var selectedEraserMode: EraserMode = .stroke
+    var lastAnnotationTool: AnnotationTool = .pen
+    var highlighterOpacity: CGFloat = 0.35
     var toolbarDockEdge: String = "bottom"
+    var dockEdgesByProfile: [String: String] = [:]
     var handedness: EditorHandedness = .right
     var squeezeAction: PencilSqueezeAction = .togglePenEraser
     var hasSeenLassoHint = false
     var hasSeenSqueezeHint = false
     var hasSeenDoubleTapHint = false
+
+    func dockEdge(for profile: EditorDockProfile) -> EditorToolbarDockEdge {
+        if let rawValue = dockEdgesByProfile[profile.rawValue],
+           let edge = EditorToolbarDockEdge(rawValue: rawValue) {
+            return edge
+        }
+
+        if let legacyEdge = EditorToolbarDockEdge(rawValue: toolbarDockEdge) {
+            return legacyEdge
+        }
+
+        return EditorToolbarDockEdge.defaultEdge(for: handedness)
+    }
+
+    mutating func setDockEdge(_ edge: EditorToolbarDockEdge, for profile: EditorDockProfile) {
+        dockEdgesByProfile[profile.rawValue] = edge.rawValue
+        toolbarDockEdge = edge.rawValue
+    }
+
+    mutating func noteSelectedTool(_ tool: AnnotationTool) {
+        selectedTool = tool
+        if tool.isAnnotationTool, tool != .hand {
+            lastAnnotationTool = tool
+        }
+    }
 }
 
 final class EditorPreferencesStore {
     static let shared = EditorPreferencesStore()
 
-    private let defaults = UserDefaults.standard
-    private let ubiquitousStore = NSUbiquitousKeyValueStore.default
+    private let defaults: UserDefaults
+    private let ubiquitousStore: NSUbiquitousKeyValueStore?
     private let key = "lectra_editor_preferences"
 
-    private init() {}
+    init(
+        defaults: UserDefaults = .standard,
+        ubiquitousStore: NSUbiquitousKeyValueStore? = .default
+    ) {
+        self.defaults = defaults
+        self.ubiquitousStore = ubiquitousStore
+    }
 
     func load() -> EditorPreferences {
         if let data = defaults.data(forKey: key),
@@ -327,7 +361,7 @@ final class EditorPreferencesStore {
             return decoded
         }
 
-        if let data = ubiquitousStore.data(forKey: key),
+        if let data = ubiquitousStore?.data(forKey: key),
            let decoded = try? JSONDecoder().decode(EditorPreferences.self, from: data) {
             defaults.set(data, forKey: key)
             return decoded
@@ -339,8 +373,8 @@ final class EditorPreferencesStore {
     func save(_ preferences: EditorPreferences) {
         guard let encoded = try? JSONEncoder().encode(preferences) else { return }
         defaults.set(encoded, forKey: key)
-        ubiquitousStore.set(encoded, forKey: key)
-        ubiquitousStore.synchronize()
+        ubiquitousStore?.set(encoded, forKey: key)
+        ubiquitousStore?.synchronize()
         NotificationCenter.default.post(name: .lectraEditorPreferencesDidChange, object: preferences)
     }
 }

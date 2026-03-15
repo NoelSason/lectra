@@ -12,6 +12,7 @@ enum AnnotationInkColor: String, CaseIterable, Hashable, Codable {
     case black
     case white
     case accent
+    case yellow
     case blue
     case green
 
@@ -26,7 +27,9 @@ enum AnnotationInkColor: String, CaseIterable, Hashable, Codable {
         case .white:
             return UIColor(white: 1.0, alpha: 1.0)
         case .accent:
-            return UIColor(red: 224.0 / 255.0, green: 37.0 / 255.0, blue: 32.0 / 255.0, alpha: 1.0)
+            return LectraColor.accentUIColor
+        case .yellow:
+            return UIColor(red: 255.0 / 255.0, green: 214.0 / 255.0, blue: 64.0 / 255.0, alpha: 1.0)
         case .blue:
             return UIColor(red: 0.0 / 255.0, green: 122.0 / 255.0, blue: 255.0 / 255.0, alpha: 1.0)
         case .green:
@@ -36,20 +39,40 @@ enum AnnotationInkColor: String, CaseIterable, Hashable, Codable {
 }
 
 enum AnnotationTool: String, Equatable, Codable {
+    case hand
     case pen
     case highlighter
     case eraser
     case lasso
-    
-    func pkTool(color: AnnotationInkColor, width: CGFloat) -> PKTool {
+
+    var isAnnotationTool: Bool {
         switch self {
+        case .hand:
+            return false
+        case .pen, .highlighter, .eraser, .lasso:
+            return true
+        }
+    }
+
+    func pkTool(
+        color: AnnotationInkColor,
+        width: CGFloat,
+        highlighterOpacity: CGFloat = 0.35
+    ) -> PKTool {
+        switch self {
+        case .hand:
+            return PKInkingTool(.monoline, color: UIColor.clear, width: 0.1)
         case .pen:
             // Use a pressure-independent ink model for crisp, predictable annotation strokes.
             let clampedWidth = min(max(width, 0.5), 2.0)
             return PKInkingTool(.monoline, color: color.inkUIColor, width: clampedWidth)
         case .highlighter:
             // Keep highlight behavior visually distinct without marker feathering/pressure variation.
-            return PKInkingTool(.monoline, color: color.inkUIColor.withAlphaComponent(0.35), width: width * 1.8)
+            return PKInkingTool(
+                .monoline,
+                color: color.inkUIColor.withAlphaComponent(min(max(highlighterOpacity, 0.1), 0.85)),
+                width: width * 1.8
+            )
         case .eraser:
             return PKEraserTool(.vector)
         case .lasso:

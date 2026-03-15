@@ -9,6 +9,7 @@ import SwiftUI
 
 struct AuthView: View {
     @EnvironmentObject var authManager: AuthManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -26,8 +27,8 @@ struct AuthView: View {
                 Spacer(minLength: 22)
             }
         }
-        .animation(LectraMotion.quick, value: authManager.isLoading)
-        .animation(LectraMotion.quick, value: authManager.errorMessage)
+        .animation(reduceMotion ? nil : LectraMotion.quick, value: authManager.isLoading)
+        .animation(reduceMotion ? nil : LectraMotion.quick, value: authManager.errorMessage)
     }
 
     private var ambientBlobs: some View {
@@ -82,10 +83,18 @@ struct AuthView: View {
                     .lineSpacing(4)
             }
 
-            HStack(spacing: LectraSpacing.sm) {
-                AuthFeatureChip(title: "Pencil-first")
-                AuthFeatureChip(title: "Fast Sync")
-                AuthFeatureChip(title: "Offline Ready")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: LectraSpacing.sm) {
+                    AuthFeatureChip(title: "Pencil-first")
+                    AuthFeatureChip(title: "Fast Sync")
+                    AuthFeatureChip(title: "Offline Ready")
+                }
+
+                VStack(spacing: LectraSpacing.sm) {
+                    AuthFeatureChip(title: "Pencil-first")
+                    AuthFeatureChip(title: "Fast Sync")
+                    AuthFeatureChip(title: "Offline Ready")
+                }
             }
 
             if let error = authManager.errorMessage {
@@ -94,7 +103,8 @@ struct AuthView: View {
                     .foregroundColor(LectraColor.accent)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, LectraSpacing.md)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                    .accessibilityLabel("Sign-in error. \(error)")
             }
 
             Button {
@@ -131,6 +141,8 @@ struct AuthView: View {
                 .shadow(color: LectraColor.accent.opacity(0.35), radius: 14, x: 0, y: 8)
             }
             .disabled(authManager.isLoading)
+            .accessibilityHint("Starts Google sign-in for your Canvascope account.")
+            .accessibilityIdentifier("auth.signIn")
 
             Text("Sign in with your Canvascope account")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -153,6 +165,7 @@ struct AuthView: View {
         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .shadow(color: .black.opacity(0.35), radius: 22, x: 0, y: 16)
         .frame(maxWidth: 620)
+        .accessibilityElement(children: .contain)
     }
 }
 

@@ -27,6 +27,13 @@
 			remoteGlobalIDString = 81CD73C22F4C40AF00E2C2A1;
 			remoteInfo = Lectra;
 		};
+		C10000000000000000000007 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 81CD73BB2F4C40AF00E2C2A1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 81CD73C22F4C40AF00E2C2A1;
+			remoteInfo = Lectra;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -47,6 +54,7 @@
 		81CD73C32F4C40AF00E2C2A1 /* Lectra.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lectra.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000001 /* LectraShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LectraShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10000000000000000000001 /* LectraTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LectraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C10000000000000000000001 /* LectraUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LectraUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -88,6 +96,11 @@
 			path = LectraTests;
 			sourceTree = "<group>";
 		};
+		C10000000000000000000002 /* LectraUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = LectraUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +127,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -122,6 +142,7 @@
 			children = (
 				81CD73C52F4C40AF00E2C2A1 /* Lectra */,
 				B10000000000000000000002 /* LectraTests */,
+				C10000000000000000000002 /* LectraUITests */,
 				A10000000000000000000002 /* LectraShareExtension */,
 				81CD73F42F4C44A000E2C2A1 /* Frameworks */,
 				81CD73C42F4C40AF00E2C2A1 /* Products */,
@@ -133,6 +154,7 @@
 			children = (
 				81CD73C32F4C40AF00E2C2A1 /* Lectra.app */,
 				B10000000000000000000001 /* LectraTests.xctest */,
+				C10000000000000000000001 /* LectraUITests.xctest */,
 				A10000000000000000000001 /* LectraShareExtension.appex */,
 			);
 			name = Products;
@@ -219,6 +241,29 @@
 			productReference = B10000000000000000000001 /* LectraTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		C10000000000000000000004 /* LectraUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1000000000000000000000B /* Build configuration list for PBXNativeTarget "LectraUITests" */;
+			buildPhases = (
+				C10000000000000000000006 /* Sources */,
+				C10000000000000000000003 /* Frameworks */,
+				C10000000000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C10000000000000000000008 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C10000000000000000000002 /* LectraUITests */,
+			);
+			name = LectraUITests;
+			packageProductDependencies = (
+			);
+			productName = LectraUITests;
+			productReference = C10000000000000000000001 /* LectraUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -236,6 +281,10 @@
 						CreatedOnToolsVersion = 26.2;
 					};
 					B10000000000000000000004 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 81CD73C22F4C40AF00E2C2A1;
+					};
+					C10000000000000000000004 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = 81CD73C22F4C40AF00E2C2A1;
 					};
@@ -260,6 +309,7 @@
 			targets = (
 				81CD73C22F4C40AF00E2C2A1 /* Lectra */,
 				B10000000000000000000004 /* LectraTests */,
+				C10000000000000000000004 /* LectraUITests */,
 				A10000000000000000000004 /* LectraShareExtension */,
 			);
 		};
@@ -281,6 +331,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B10000000000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000005 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -311,6 +368,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000000000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -323,6 +387,11 @@
 			isa = PBXTargetDependency;
 			target = 81CD73C22F4C40AF00E2C2A1 /* Lectra */;
 			targetProxy = B10000000000000000000007 /* PBXContainerItemProxy */;
+		};
+		C10000000000000000000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 81CD73C22F4C40AF00E2C2A1 /* Lectra */;
+			targetProxy = C10000000000000000000007 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -626,6 +695,54 @@
 			};
 			name = Release;
 		};
+		C10000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 3D8X943476;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.canvascope.LectraUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Lectra;
+			};
+			name = Debug;
+		};
+		C1000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 3D8X943476;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.canvascope.LectraUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Lectra;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -661,6 +778,15 @@
 			buildConfigurations = (
 				B10000000000000000000009 /* Debug */,
 				B1000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C1000000000000000000000B /* Build configuration list for PBXNativeTarget "LectraUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C10000000000000000000009 /* Debug */,
+				C1000000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

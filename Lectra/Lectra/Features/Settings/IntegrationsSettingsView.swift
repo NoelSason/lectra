@@ -85,12 +85,13 @@ struct IntegrationsSettingsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 14)
-                .frame(height: 42)
+                .frame(minHeight: LectraSizing.minHitTarget)
                 .background(Color.white.opacity(0.08))
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(isRefreshing)
+        .accessibilityIdentifier("settings.integrations.refresh")
     }
 
     @MainActor
@@ -300,6 +301,8 @@ private struct IntegrationStatusCard: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(integration.title). \(displayedState.statusLabel). \(integration.note)")
     }
 }
 

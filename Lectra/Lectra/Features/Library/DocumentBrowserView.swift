@@ -205,6 +205,7 @@ struct DocumentBrowserView: View {
     @State private var lastBackupDate = Date().addingTimeInterval(-20 * 60)
     @State private var recoverySnapshots: [RecoverySnapshot] = []
 
+    private let launchConfiguration: LectraLibraryLaunchConfiguration?
     private let repository = DocumentRepository()
 
     private let localPDFsDefaultsKey = "lectra_local_pdfs"
@@ -218,6 +219,10 @@ struct DocumentBrowserView: View {
     private let lastBackupDefaultsKey = "lectra_last_backup"
     private let importedFolderName = "Imported"
     private let importedRootSystemTag = "imported_root"
+
+    init(launchConfiguration: LectraLibraryLaunchConfiguration? = nil) {
+        self.launchConfiguration = launchConfiguration
+    }
     private let importedCanvascopeFolderName = "Imported From Canvascope"
     private let importedCanvascopeSystemTag = "imported_canvascope"
     private let importedGradescopeFolderName = "Imported From Gradescope"
@@ -472,6 +477,14 @@ struct DocumentBrowserView: View {
             .onReceive(syncPublisher, perform: handleDocumentSyncNotification)
             .onReceive(iCloudPublisher, perform: handleICloudSyncNotification)
             .onReceive(remoteDocumentsPublisher, perform: handleRemoteDocumentsNotification)
+            .onChange(of: backgroundSyncToast) { _, newValue in
+                guard let newValue else { return }
+                postAccessibilityAnnouncement(newValue)
+            }
+            .onChange(of: featureNotice) { _, newValue in
+                guard let newValue else { return }
+                postAccessibilityAnnouncement(newValue)
+            }
             .onChange(of: editorRoute) { _, newValue in
                 handleEditorRouteChange(newValue)
             }
@@ -515,6 +528,7 @@ struct DocumentBrowserView: View {
     }
 
     private func handleICloudSyncNotification(_ notification: Notification) {
+        guard launchConfiguration == nil else { return }
         guard let payload = notification.object as? ICloudSyncStatusPayload,
               payload.errorMessage == nil else {
             return
@@ -525,6 +539,7 @@ struct DocumentBrowserView: View {
     }
 
     private func handleRemoteDocumentsNotification(_ notification: Notification) {
+        guard launchConfiguration == nil else { return }
         Task {
             await refreshRemoteDocuments()
         }
@@ -551,6 +566,7 @@ struct DocumentBrowserView: View {
     }
 
     private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        guard launchConfiguration == nil else { return }
         updateImportedFolderPolling()
         guard newPhase == .active else { return }
 
@@ -564,6 +580,12 @@ struct DocumentBrowserView: View {
     private func performInitialLoadIfNeeded() async {
         guard !hasLoaded else { return }
         hasLoaded = true
+
+        if let launchConfiguration {
+            applyLaunchConfiguration(launchConfiguration)
+            return
+        }
+
         loadRecentDocuments()
         loadCloudPreferences()
         await loadDocuments()
@@ -577,6 +599,23 @@ struct DocumentBrowserView: View {
         backgroundSyncToastTask?.cancel()
         searchRefreshTask?.cancel()
         stopImportedFolderPolling()
+    }
+
+    private func applyLaunchConfiguration(_ launchConfiguration: LectraLibraryLaunchConfiguration) {
+        documents = launchConfiguration.documents
+        folders = launchConfiguration.folders
+        documentFolderMap = launchConfiguration.documentFolderMap
+        recentlyOpenedDocumentIds = launchConfiguration.recentDocumentIDs
+        currentFolderId = launchConfiguration.currentFolderID
+        isCloudSyncEnabled = launchConfiguration.isCloudSyncEnabled
+        isAutoBackupEnabled = launchConfiguration.isAutoBackupEnabled
+        lastCloudSyncDate = launchConfiguration.lastCloudSyncDate
+        lastBackupDate = launchConfiguration.lastBackupDate
+        isICloudAvailable = false
+        isLoading = false
+        errorMessage = nil
+        refreshLibraryDerivatives(reloadRecoverySnapshots: false)
+        pruneFolderMappingForCurrentData()
     }
 
     private var presentedContent: some View {
@@ -832,6 +871,8 @@ struct DocumentBrowserView: View {
             .padding(.top, 8)
             .contentShape(Circle())
             .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
+            .accessibilityLabel(isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+            .accessibilityIdentifier("library.sidebarToggle")
 
             if !isSidebarCollapsed {
                 Text("Lectra")
@@ -912,6 +953,11 @@ struct DocumentBrowserView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(section.title)
+        .accessibilityHint("Shows the \(section.title.lowercased()) workspace.")
+        .accessibilityAddTraits(activeSection == section ? .isSelected : [])
+        .accessibilityIdentifier("library.section.\(section.rawValue)")
     }
 
     private var mainPane: AnyView {
@@ -1456,17 +1502,10 @@ struct DocumentBrowserView: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Search library")
+                .accessibilityHint("Searches documents and notes.")
+                .accessibilityIdentifier("library.search")
             }
-
-            Button {
-                featureNotice = "Notifications panel is coming soon."
-            } label: {
-                Image(systemName: "bell")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Color(hex: 0xE84D4D))
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
 
             Button {
                 openAccountSettings()
@@ -1478,6 +1517,9 @@ struct DocumentBrowserView: View {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Open account settings")
+            .accessibilityHint("Shows account, integration, and backup settings.")
+            .accessibilityIdentifier("library.account")
         }
     }
 
@@ -2429,6 +2471,8 @@ struct DocumentBrowserView: View {
     }
 
     private func runCloudSync(triggeredByUser: Bool) async {
+        guard launchConfiguration == nil else { return }
+
         await MainActor.run {
             isICloudAvailable = ICloudDocumentStore.shared.isAvailable()
         }
@@ -2960,6 +3004,8 @@ struct DocumentBrowserView: View {
     }
 
     private func refreshRemoteDocuments() async {
+        guard launchConfiguration == nil else { return }
+
         let shouldRefresh = await MainActor.run { () -> Bool in
             if isRefreshingRemoteDocuments {
                 return false

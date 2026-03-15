@@ -7,12 +7,21 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Colors
 
 enum LectraColor {
+    static let accentHex: UInt = 0xE02520
+
     /// Primary brand signal used for active tools and critical actions.
-    static let accent       = Color(hex: 0xFF5A2A)
+    static let accent       = Color(hex: accentHex)
+    static let accentUIColor = UIColor(
+        red: 224.0 / 255.0,
+        green: 37.0 / 255.0,
+        blue: 32.0 / 255.0,
+        alpha: 1.0
+    )
 
     /// Secondary accent used for highlights and supporting emphasis.
     static let accentCool   = Color(hex: 0x60D4FF)

@@ -31,6 +31,21 @@ struct GradescopeHubView: View {
         gradescopeManager.latestDiagnosticsReport()
     }
 
+    private var assignmentTechnicalDetails: TechnicalDetailsPresentation? {
+        TechnicalDetailsPresentation.make(
+            summary: "Technical details are available for the selected course refresh.",
+            details: assignmentDebugMessage
+        )
+    }
+
+    private var diagnosticsTechnicalDetails: TechnicalDetailsPresentation? {
+        TechnicalDetailsPresentation.make(
+            summary: "Technical details are available for the latest Gradescope sync.",
+            details: diagnosticsMessage,
+            excluding: assignmentDebugMessage
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             topBar
@@ -42,6 +57,14 @@ struct GradescopeHubView: View {
             } else {
                 authBody
             }
+        }
+        .onChange(of: localMessage) { _, newValue in
+            guard let newValue else { return }
+            postAccessibilityAnnouncement(newValue)
+        }
+        .onChange(of: gradescopeManager.errorMessage) { _, newValue in
+            guard let newValue else { return }
+            postAccessibilityAnnouncement(newValue)
         }
         .onAppear {
             if gradescopeManager.isAuthenticated {
@@ -88,6 +111,7 @@ struct GradescopeHubView: View {
                         .background(Color(hex: 0xE84D4D).opacity(0.12))
                         .clipShape(Capsule())
                 }
+                .accessibilityIdentifier("gradescope.refresh")
 
                 Button {
                     gradescopeManager.logout()
@@ -102,6 +126,7 @@ struct GradescopeHubView: View {
                         .background(Color(hex: 0xE84D4D).opacity(0.12))
                         .clipShape(Capsule())
                 }
+                .accessibilityIdentifier("gradescope.signOut")
             }
         }
     }
@@ -228,38 +253,18 @@ struct GradescopeHubView: View {
                     .foregroundColor(Color(hex: 0xE84D4D))
             }
 
-            if let assignmentDebugMessage {
-                Text(assignmentDebugMessage)
-                    .font(.system(.footnote, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.62))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+            if let assignmentTechnicalDetails {
+                TechnicalDetailsDisclosure(
+                    presentation: assignmentTechnicalDetails,
+                    accessibilityID: "gradescope.assignmentDetails"
+                )
             }
 
-            if let diagnosticsMessage, diagnosticsMessage != assignmentDebugMessage {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Diagnostics")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundColor(.white.opacity(0.9))
-                        Spacer(minLength: 0)
-                        Button("Copy") {
-                            UIPasteboard.general.string = diagnosticsMessage
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: LectraSizing.minHitTarget)
-                        .background(Color(hex: 0xE84D4D).opacity(0.12))
-                        .clipShape(Capsule())
-                    }
-
-                    Text(diagnosticsMessage)
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.62))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
+            if let diagnosticsTechnicalDetails {
+                TechnicalDetailsDisclosure(
+                    presentation: diagnosticsTechnicalDetails,
+                    accessibilityID: "gradescope.diagnostics"
+                )
             }
         }
         .padding(18)

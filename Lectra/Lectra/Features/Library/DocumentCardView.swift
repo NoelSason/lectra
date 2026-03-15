@@ -88,10 +88,12 @@ struct DocumentCardView: View {
                                 .symbolRenderingMode(.hierarchical)
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(Color.white.opacity(0.8))
-                                .frame(width: 22, height: 22)
+                                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("More options for \(displayTitle)")
+                        .accessibilityIdentifier("library.document.options.\(document.id.uuidString)")
                     }
                 }
 
@@ -120,6 +122,8 @@ struct DocumentCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: metrics.pdfTotalHeight, alignment: .topLeading)
         .clipped()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(displayTitle). Last modified \(subtitle).")
     }
 
     private var previewCard: some View {
@@ -176,6 +180,9 @@ struct DocumentCardView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(document.isFavorite ? "Remove favorite" : "Mark favorite")
+            .accessibilityValue(document.isFavorite ? "Favorite" : "Not favorite")
+            .accessibilityIdentifier("library.document.favorite.\(document.id.uuidString)")
         }
         .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
     }
@@ -230,10 +237,14 @@ struct DocumentSyncBadgeView: View {
                     badge(title: "Retry", color: LectraColor.accent)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Retry sync")
+                .accessibilityValue("Sync failed")
             } else {
                 badge(title: title, color: color)
             }
         }
+        .accessibilityLabel("Sync status")
+        .accessibilityValue(title)
     }
 
     private var title: String {

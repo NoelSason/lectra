@@ -86,18 +86,38 @@ struct AccountSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            HStack(spacing: 0) {
-                sidebar
-                    .frame(width: 284)
-                    .background(Color(hex: 0x15181E))
+            GeometryReader { proxy in
+                let isCompactLayout = proxy.size.width < 860
 
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(width: 1)
+                Group {
+                    if isCompactLayout {
+                        VStack(spacing: 0) {
+                            compactHeader
 
-                detailPane
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(Color(hex: 0x0F1115))
+                            Rectangle()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(height: 1)
+
+                            detailPane
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .background(Color(hex: 0x0F1115))
+                        }
+                    } else {
+                        HStack(spacing: 0) {
+                            sidebar
+                                .frame(width: 284)
+                                .background(Color(hex: 0x15181E))
+
+                            Rectangle()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(width: 1)
+
+                            detailPane
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .background(Color(hex: 0x0F1115))
+                        }
+                    }
+                }
             }
             .frame(idealWidth: 980, maxWidth: 1020, minHeight: 700, idealHeight: 748, maxHeight: 780)
             .background(Color.black.ignoresSafeArea())
@@ -146,26 +166,7 @@ struct AccountSettingsView: View {
 
             VStack(spacing: 8) {
                 ForEach(SettingsTab.allCases) { tab in
-                    Button {
-                        selectedTab = tab
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: tab.systemImage)
-                                .font(.system(size: 15, weight: .semibold))
-                                .frame(width: 20)
-
-                            Text(tab.rawValue)
-                                .font(.system(size: 15, weight: .semibold))
-
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundColor(selectedTab == tab ? .white : Color.white.opacity(0.66))
-                        .padding(.horizontal, 14)
-                        .frame(height: 44)
-                        .background(selectedTab == tab ? Color(hex: 0x4A222A) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
+                    settingsTabButton(tab, compact: false)
                 }
             }
             .padding(.horizontal, 14)
@@ -179,6 +180,75 @@ struct AccountSettingsView: View {
                 .padding(.horizontal, 22)
                 .padding(.bottom, 22)
         }
+    }
+
+    private var compactHeader: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                ProfileAvatarView(
+                    avatarURL: avatarURL,
+                    fallbackName: userName.isEmpty ? userEmail : userName,
+                    size: 48
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(userName)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+
+                    if let userEmail, !userEmail.isEmpty {
+                        Text(userEmail)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.58))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        settingsTabButton(tab, compact: true)
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 18)
+        .background(Color(hex: 0x15181E))
+    }
+
+    private func settingsTabButton(_ tab: SettingsTab, compact: Bool) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: tab.systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 20)
+
+                Text(tab.rawValue)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+
+                if !compact {
+                    Spacer(minLength: 0)
+                }
+            }
+            .foregroundColor(selectedTab == tab ? .white : Color.white.opacity(0.66))
+            .padding(.horizontal, 14)
+            .frame(minHeight: LectraSizing.minHitTarget)
+            .background(selectedTab == tab ? Color(hex: 0x4A222A) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+        .accessibilityIdentifier("settings.tab.\(tab.rawValue.replacingOccurrences(of: " ", with: "").lowercased())")
     }
 
     @ViewBuilder

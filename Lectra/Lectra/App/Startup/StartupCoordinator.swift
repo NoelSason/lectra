@@ -50,6 +50,14 @@ final class StartupCoordinator: ObservableObject {
         evaluateCompletion()
     }
 
+    func completeImmediately() {
+        timelineTask?.cancel()
+        hasStarted = true
+        minimumDurationElapsed = true
+        dataReady = true
+        isCompleted = true
+    }
+
     private func runTimeline() async {
         stage = .intro
 

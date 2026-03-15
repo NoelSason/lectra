@@ -7,6 +7,11 @@ import Combine
 // MARK: - SwiftUI Wrapper
 
 struct PDFAnnotationView: View {
+    private struct ToastAction {
+        let title: String
+        let handler: () -> Void
+    }
+
     private enum ToastStyle {
         case success
         case info
@@ -21,17 +26,6 @@ struct PDFAnnotationView: View {
             case .error:
                 return LectraColor.accent.opacity(0.95)
             }
-        }
-    }
-
-    private enum ToolbarDockEdge: String, CaseIterable {
-        case left
-        case right
-        case top
-        case bottom
-
-        var isVertical: Bool {
-            self == .left || self == .right
         }
     }
 
@@ -80,8 +74,10 @@ struct PDFAnnotationView: View {
     @State private var selectedTool: AnnotationTool = EditorPreferencesStore.shared.load().selectedTool
     @State private var selectedColor: AnnotationInkColor = EditorPreferencesStore.shared.load().selectedColor
     @State private var selectedStrokeWidth: CGFloat = EditorPreferencesStore.shared.load().selectedStrokeWidth
+    @State private var highlighterOpacity: CGFloat = EditorPreferencesStore.shared.load().highlighterOpacity
     @State private var selectedEraserMode: EraserMode = EditorPreferencesStore.shared.load().selectedEraserMode
-    @State private var toolbarDockEdge: ToolbarDockEdge = ToolbarDockEdge(rawValue: EditorPreferencesStore.shared.load().toolbarDockEdge) ?? .bottom
+    @State private var toolbarDockEdge: EditorToolbarDockEdge = EditorPreferencesStore.shared.load().dockEdge(for: .landscapeRegular)
+    @State private var currentDockProfile: EditorDockProfile = .landscapeRegular
     @State private var editorPreferences = EditorPreferencesStore.shared.load()
     @State private var toolbarSize: CGSize = .zero
     @State private var isToolbarDragging = false
@@ -93,110 +89,114 @@ struct PDFAnnotationView: View {
     @State private var isSearchingDocument = false
     @State private var showOutlineSheet = false
     @State private var outlineItems: [DocumentOutlineDestination] = []
-    @State private var featureCoachMessage: String?
+    @State private var toastAction: ToastAction?
     private let canvascopeExportService = CanvascopeExportService()
 
     var body: some View {
-        ZStack {
-            LectraGradient.appBackdrop.ignoresSafeArea()
+        GeometryReader { rootProxy in
+            ZStack {
+                LectraGradient.appBackdrop.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                // MARK: - Top Nav Bar
-                topBar
+                VStack(spacing: 0) {
+                    topBar
 
-                // MARK: - Editor Canvas & Floating Pill
-                if let url = document.localPDFURL {
-                    ZStack {
-                        PDFEditorRepresentable(
-                            pdfURL: url,
-                            documentId: document.id,
-                            repository: repository,
-                            bridge: editorBridge,
-                            currentPage: $currentPage,
-                            totalPages: $totalPages,
-                            selectedTool: $selectedTool,
-                            selectedColor: $selectedColor,
-                            selectedStrokeWidth: $selectedStrokeWidth,
-                            selectedEraserMode: $selectedEraserMode,
-                            initialPage: initialPage ?? max(document.lastOpenedPage, 0),
-                            onScroll: { triggerPageIndicator() },
-                            onPencilSqueeze: { performPencilSqueezeAction() }
-                        )
-                        .ignoresSafeArea(.keyboard)
+                    if let url = document.localPDFURL {
+                        ZStack {
+                            PDFEditorRepresentable(
+                                pdfURL: url,
+                                documentId: document.id,
+                                repository: repository,
+                                bridge: editorBridge,
+                                currentPage: $currentPage,
+                                totalPages: $totalPages,
+                                selectedTool: $selectedTool,
+                                selectedColor: $selectedColor,
+                                selectedStrokeWidth: $selectedStrokeWidth,
+                                highlighterOpacity: $highlighterOpacity,
+                                selectedEraserMode: $selectedEraserMode,
+                                initialPage: initialPage ?? max(document.lastOpenedPage, 0),
+                                onScroll: { triggerPageIndicator() },
+                                onPencilSqueeze: { performPencilSqueezeAction() },
+                                onAutoAppendedBlankPage: { handleAutoAppendedBlankPage() }
+                            )
+                            .ignoresSafeArea(.keyboard)
 
-                        GeometryReader { proxy in
-                            floatingToolbar(in: proxy)
-                        }
-                        
-                        // Page Indicator Bubble
-                        if showPageIndicator {
-                            VStack {
-                                Spacer()
-                                HStack {
-                                    Text("Page \(currentPage + 1) / \(max(totalPages, 1))")
-                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 9)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color(hex: 0x0E1628, opacity: 0.9))
-                                        )
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                                        )
-                                        .padding(.leading, LectraSpacing.lg)
-                                        .padding(.bottom, LectraSpacing.lg)
-                                    Spacer()
-                                }
+                            GeometryReader { proxy in
+                                floatingToolbar(in: proxy)
                             }
-                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                            .allowsHitTesting(false)
+
+                            if showPageIndicator {
+                                VStack {
+                                    Spacer()
+                                    HStack {
+                                        Text("Page \(currentPage + 1) / \(max(totalPages, 1))")
+                                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 9)
+                                            .background(
+                                                Capsule()
+                                                    .fill(Color(hex: 0x0E1628, opacity: 0.9))
+                                            )
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                            )
+                                            .padding(.leading, LectraSpacing.lg)
+                                            .padding(.bottom, LectraSpacing.lg)
+                                        Spacer()
+                                    }
+                                }
+                                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                                .allowsHitTesting(false)
+                            }
+
+                            if let msg = saveMessage {
+                                VStack {
+                                    Spacer()
+                                    HStack(spacing: 12) {
+                                        Text(msg)
+                                            .font(.subheadline.bold())
+                                            .foregroundColor(.white)
+
+                                        if let toastAction {
+                                            Button(toastAction.title, action: toastAction.handler)
+                                                .font(.subheadline.bold())
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 8)
+                                                .background(Color.white.opacity(0.18))
+                                                .clipShape(Capsule())
+                                        }
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                    .background(saveMessageStyle.backgroundColor)
+                                    .clipShape(RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous))
+                                    .padding(.bottom, 100)
+                                }
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
                         }
-                    }
-                    .coordinateSpace(name: "ToolbarDragZone")
-                } else {
-                    Spacer()
-                    Text("PDF not available")
-                        .foregroundColor(LectraColor.textSecondary)
-                    Spacer()
-                }
-            }
-
-            // MARK: - Save Overlay
-            if isSaving {
-                ZStack {
-                    Color.black.opacity(0.62).ignoresSafeArea()
-                    VStack(spacing: LectraSpacing.md) {
-                        ProgressView()
-                            .tint(.white)
-                            .scaleEffect(1.5)
-                        Text("Saving & Syncing…")
-                            .font(.headline)
-                            .foregroundColor(.white)
+                        .coordinateSpace(name: "ToolbarDragZone")
+                    } else {
+                        Spacer()
+                        Text("PDF not available")
+                            .foregroundColor(LectraColor.textSecondary)
+                        Spacer()
                     }
                 }
-                .transition(.opacity)
             }
-
-            // MARK: - Save Feedback Toast
-            if let msg = saveMessage {
-                VStack {
-                    Spacer()
-                    Text(msg)
-                        .font(.subheadline.bold())
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(saveMessageStyle.backgroundColor)
-                        .cornerRadius(LectraRadius.button)
-                        .padding(.bottom, 100)
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            .onAppear {
+                currentPage = initialPage ?? max(document.lastOpenedPage, 0)
+                outlineItems = loadOutlineItems()
+                updateDockState(for: rootProxy.size)
+            }
+            .onChange(of: rootProxy.size) { _, newSize in
+                updateDockState(for: newSize)
             }
         }
         .preferredColorScheme(.dark)
-        .animation(LectraMotion.quick, value: isSaving)
         .animation(LectraMotion.indicatorFade, value: showPageIndicator)
         .animation(LectraMotion.toast, value: saveMessage)
         .animation(LectraMotion.quick, value: isRenamingTitle)
@@ -210,13 +210,12 @@ struct PDFAnnotationView: View {
         .sheet(isPresented: $showOutlineSheet) {
             outlineSheet
         }
-        .onAppear {
-            currentPage = initialPage ?? max(document.lastOpenedPage, 0)
-            outlineItems = loadOutlineItems()
-        }
-        .onChange(of: selectedTool) { _, _ in
+        .onChange(of: selectedTool) { oldValue, newValue in
+            if oldValue == .hand, newValue.isAnnotationTool {
+                postAccessibilityAnnouncement("\(newValue.rawValue.capitalized) selected")
+            }
             persistEditorPreferences()
-            if selectedTool == .lasso && !editorPreferences.hasSeenLassoHint {
+            if newValue == .lasso && !editorPreferences.hasSeenLassoHint {
                 editorPreferences.hasSeenLassoHint = true
                 persistEditorPreferences()
                 setToast("Lasso is ready. Circle strokes to select them.", style: .info, autoHideAfter: 2.8)
@@ -224,6 +223,7 @@ struct PDFAnnotationView: View {
         }
         .onChange(of: selectedColor) { _, _ in persistEditorPreferences() }
         .onChange(of: selectedStrokeWidth) { _, _ in persistEditorPreferences() }
+        .onChange(of: highlighterOpacity) { _, _ in persistEditorPreferences() }
         .onChange(of: selectedEraserMode) { _, _ in persistEditorPreferences() }
         .onChange(of: toolbarDockEdge) { _, _ in persistEditorPreferences() }
         .onDisappear {
@@ -240,6 +240,7 @@ struct PDFAnnotationView: View {
             selectedTool: $selectedTool,
             selectedColor: $selectedColor,
             selectedStrokeWidth: $selectedStrokeWidth,
+            highlighterOpacity: $highlighterOpacity,
             selectedEraserMode: $selectedEraserMode,
             isVertical: toolbarDockEdge.isVertical
         )
@@ -255,19 +256,19 @@ struct PDFAnnotationView: View {
             }
         )
         .position(toolbarPosition(in: proxy))
-        .simultaneousGesture(toolbarDragGesture(in: proxy.size))
+        .simultaneousGesture(toolbarDragGesture(in: proxy.size, safeAreaInsets: proxy.safeAreaInsets))
     }
 
     private func toolbarPosition(in proxy: GeometryProxy) -> CGPoint {
         let safe = proxy.safeAreaInsets
-        let margin: CGFloat = LectraSpacing.md
+        let edgeMargin: CGFloat = toolbarDockEdge == .bottom ? (safe.bottom + 28) : LectraSpacing.lg
         let halfWidth = toolbarSize.width * 0.5
         let halfHeight = toolbarSize.height * 0.5
 
-        let minX = safe.leading + margin + halfWidth
-        let maxX = proxy.size.width - safe.trailing - margin - halfWidth
-        let minY = safe.top + margin + halfHeight
-        let maxY = proxy.size.height - safe.bottom - margin - halfHeight
+        let minX = safe.leading + LectraSpacing.lg + halfWidth
+        let maxX = proxy.size.width - safe.trailing - LectraSpacing.lg - halfWidth
+        let minY = safe.top + LectraSpacing.lg + halfHeight
+        let maxY = proxy.size.height - edgeMargin - halfHeight
 
         let midSafeX = safe.leading + ((proxy.size.width - safe.leading - safe.trailing) * 0.5)
         let midSafeY = safe.top + ((proxy.size.height - safe.top - safe.bottom) * 0.5)
@@ -296,13 +297,13 @@ struct PDFAnnotationView: View {
         }
     }
 
-    private func toolbarDragGesture(in size: CGSize) -> some Gesture {
+    private func toolbarDragGesture(in size: CGSize, safeAreaInsets: EdgeInsets) -> some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .named("ToolbarDragZone"))
             .onChanged { value in
                 if !isToolbarDragging {
                     isToolbarDragging = true
                 }
-                let newEdge = toolbarDockEdge(for: value.location, in: size)
+                let newEdge = toolbarDockEdge(for: value.location, in: size, safeAreaInsets: safeAreaInsets)
                 if newEdge != toolbarDockEdge {
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
@@ -313,20 +314,29 @@ struct PDFAnnotationView: View {
             }
             .onEnded { value in
                 isToolbarDragging = false
-                let newEdge = toolbarDockEdge(for: value.location, in: size)
+                let newEdge = toolbarDockEdge(for: value.location, in: size, safeAreaInsets: safeAreaInsets)
                 withAnimation(LectraMotion.toolbarDock) {
                     toolbarDockEdge = newEdge
                 }
             }
     }
 
-    private func toolbarDockEdge(for location: CGPoint, in size: CGSize) -> ToolbarDockEdge {
-        let leftZone = size.width * 0.33
-        let rightZone = size.width * 0.67
-        let topZone = size.height * 0.28
+    private func toolbarDockEdge(
+        for location: CGPoint,
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> EditorToolbarDockEdge {
+        let leftZone = safeAreaInsets.leading + (size.width - safeAreaInsets.leading - safeAreaInsets.trailing) * 0.25
+        let rightZone = safeAreaInsets.leading + (size.width - safeAreaInsets.leading - safeAreaInsets.trailing) * 0.75
+        let topZone = safeAreaInsets.top + (size.height - safeAreaInsets.top - safeAreaInsets.bottom) * 0.24
+        let bottomZone = size.height - safeAreaInsets.bottom - (size.height * 0.18)
 
         if location.y <= topZone {
             return .top
+        }
+
+        if location.y >= bottomZone {
+            return .bottom
         }
 
         if location.x <= leftZone {
@@ -346,258 +356,79 @@ struct PDFAnnotationView: View {
         return Swift.min(Swift.max(value, lower), upper)
     }
 
+    private func updateDockState(for size: CGSize) {
+        let resolvedProfile = EditorDockProfile.resolve(for: size)
+        guard resolvedProfile != currentDockProfile else { return }
+        currentDockProfile = resolvedProfile
+        toolbarDockEdge = editorPreferences.dockEdge(for: resolvedProfile)
+    }
+
     // MARK: - Top Nav Bar
 
     private var topBar: some View {
-        HStack(spacing: 12) {
-            Button {
+        EditorTopBar(
+            documentTitle: document.title,
+            titleDraft: $titleDraft,
+            isRenamingTitle: isRenamingTitle,
+            isReadMode: selectedTool == .hand,
+            isSaving: isSaving,
+            isExportingToCanvascope: isExportingToCanvascope,
+            canUndo: editorBridge.canUndo,
+            canRedo: editorBridge.canRedo,
+            syncStatus: syncStatusDescriptor,
+            hasOutline: !outlineItems.isEmpty,
+            handedness: editorPreferences.handedness,
+            squeezeAction: editorPreferences.squeezeAction,
+            onBack: {
                 Task { @MainActor in await saveAndSync() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Vault")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 13)
-                .frame(height: LectraSizing.minHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-            }
-            .disabled(isSaving)
-
-            Button {
-                editorBridge.undo()
-            } label: {
-                toolbarIconButton(symbol: "arrow.uturn.backward")
-            }
-            .buttonStyle(.plain)
-            .disabled(!editorBridge.canUndo)
-            .keyboardShortcut("z", modifiers: [.command])
-
-            Button {
-                editorBridge.redo()
-            } label: {
-                toolbarIconButton(symbol: "arrow.uturn.forward")
-            }
-            .buttonStyle(.plain)
-            .disabled(!editorBridge.canRedo)
-            .keyboardShortcut("Z", modifiers: [.command, .shift])
-
-            Spacer(minLength: 4)
-
-            Group {
-                if isRenamingTitle {
-                    TextField("Document title", text: $titleDraft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white.opacity(0.13))
-                        )
-                        .frame(maxWidth: 380, minHeight: LectraSizing.minHitTarget)
-                        .focused($isTitleFieldFocused)
-                        .submitLabel(.done)
-                        .onSubmit { commitTitleRename() }
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                } else {
-                    Button {
-                        beginTitleRename()
-                    } label: {
-                        VStack(spacing: 2) {
-                            Text(document.title)
-                                .font(.system(size: 16, weight: .bold, design: .rounded))
-                                .lineLimit(1)
-                                .foregroundColor(.white)
-                            Text("Tap title to rename")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.74))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: LectraSizing.minHitTarget)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                }
-            }
-            .frame(maxWidth: .infinity)
-
-            Spacer(minLength: 4)
-
-            syncStatusAccessory
-
-            Menu {
-                Button("Search This PDF", systemImage: "magnifyingglass") {
-                    showDocumentSearchSheet = true
-                }
-
-                if !outlineItems.isEmpty {
-                    Button("Document Outline", systemImage: "list.bullet.indent") {
-                        showOutlineSheet = true
-                    }
-                }
-
-                Divider()
-
-                Menu("Handedness") {
-                    ForEach(EditorHandedness.allCases, id: \.self) { handedness in
-                        Button(handedness == .left ? "Left-Handed" : "Right-Handed") {
-                            editorPreferences.handedness = handedness
-                            persistEditorPreferences()
-                            toolbarDockEdge = handedness == .left ? .right : .left
-                        }
-                    }
-                }
-
-                Menu("Pencil Squeeze") {
-                    ForEach(PencilSqueezeAction.allCases, id: \.self) { action in
-                        Button(label(for: action)) {
-                            editorPreferences.squeezeAction = action
-                            persistEditorPreferences()
-                        }
-                    }
-                }
-            } label: {
-                toolbarIconButton(symbol: "slider.horizontal.3")
-            }
-            .buttonStyle(.plain)
-
-            Button {
+            },
+            onUndo: { editorBridge.undo() },
+            onRedo: { editorBridge.redo() },
+            onBeginRename: beginTitleRename,
+            onCommitRename: commitTitleRename,
+            onShowSearch: { showDocumentSearchSheet = true },
+            onShowOutline: { showOutlineSheet = true },
+            onSetHandedness: { handedness in
+                editorPreferences.handedness = handedness
+                toolbarDockEdge = EditorToolbarDockEdge.defaultEdge(for: handedness)
+                persistEditorPreferences()
+            },
+            onSetSqueezeAction: { action in
+                editorPreferences.squeezeAction = action
+                persistEditorPreferences()
+            },
+            onExportCanvascope: {
                 Task { @MainActor in await exportToCanvascope() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.up.forward.app")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("Canvascope")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .frame(height: LectraSizing.minHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-            }
-            .disabled(isSaving || isExportingToCanvascope)
-
-            Button {
-                showGradescopeSubmitSheet = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "graduationcap")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("Gradescope")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .frame(height: LectraSizing.minHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                )
-            }
-            .disabled(isSaving || isExportingToCanvascope)
-
-            Button {
-                shareDocument()
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.12))
-                    )
-            }
-            .disabled(isSaving || isExportingToCanvascope)
-        }
-        .padding(.horizontal, LectraSpacing.lg)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background {
-            ZStack(alignment: .bottom) {
-                LinearGradient(
-                    colors: [
-                        Color(hex: 0x1B2A48),
-                        Color(hex: 0x101A2D)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                LectraGradient.spotlight.opacity(0.28)
-                Rectangle()
-                    .fill(Color.white.opacity(0.14))
-                    .frame(height: 1)
-            }
-            .ignoresSafeArea(edges: .top)
-        }
+            },
+            onShowGradescope: { showGradescopeSubmitSheet = true },
+            onShare: shareDocument,
+            isTitleFocused: $isTitleFieldFocused
+        )
     }
 
     // MARK: - Save & Sync
 
-    private func toolbarIconButton(symbol: String) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundColor(.white)
-            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.12))
-            )
-    }
-
-    private func label(for action: PencilSqueezeAction) -> String {
-        switch action {
-        case .togglePenEraser:
-            return "Toggle Pen and Eraser"
-        case .undo:
-            return "Undo"
-        case .redo:
-            return "Redo"
-        }
-    }
-
-    @ViewBuilder
-    private var syncStatusAccessory: some View {
+    private var syncStatusDescriptor: EditorSyncStatusDescriptor? {
         switch document.syncState {
         case .idle:
-            EmptyView()
+            return nil
         case .savingLocal, .flattening:
-            syncBadge("Saving", color: Color(hex: 0x2E8DFF))
+            return EditorSyncStatusDescriptor(title: "Saving", color: Color(hex: 0x2E8DFF))
         case .queuedUpload:
-            syncBadge("Queued", color: Color(hex: 0xD0A13A))
+            return EditorSyncStatusDescriptor(title: "Queued", color: Color(hex: 0xD0A13A))
         case .uploading:
-            syncBadge("Uploading", color: Color(hex: 0x2E8DFF))
+            return EditorSyncStatusDescriptor(title: "Uploading", color: Color(hex: 0x2E8DFF))
         case .synced:
-            syncBadge("Synced", color: LectraColor.success)
+            return EditorSyncStatusDescriptor(title: "Synced", color: LectraColor.success)
         case .failed:
-            Button {
-                Task { await DocumentSyncCoordinator.shared.retry(documentId: document.id) }
-            } label: {
-                syncBadge("Retry", color: LectraColor.accent)
-            }
-            .buttonStyle(.plain)
+            return EditorSyncStatusDescriptor(
+                title: "Retry",
+                color: LectraColor.accent,
+                action: {
+                    Task { await DocumentSyncCoordinator.shared.retry(documentId: document.id) }
+                }
+            )
         }
-    }
-
-    private func syncBadge(_ title: String, color: Color) -> some View {
-        Text(title)
-            .font(.system(size: 12, weight: .bold, design: .rounded))
-            .foregroundColor(color)
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-            .background(color.opacity(0.13))
-            .clipShape(Capsule())
     }
 
     private func beginTitleRename() {
@@ -807,11 +638,18 @@ struct PDFAnnotationView: View {
     }
 
     @MainActor
-    private func setToast(_ message: String, style: ToastStyle, autoHideAfter: TimeInterval?) {
+    private func setToast(
+        _ message: String,
+        style: ToastStyle,
+        autoHideAfter: TimeInterval?,
+        action: ToastAction? = nil
+    ) {
         withAnimation(LectraMotion.toast) {
             saveMessageStyle = style
             saveMessage = message
+            toastAction = action
         }
+        postAccessibilityAnnouncement(message)
 
         guard let autoHideAfter else { return }
 
@@ -819,17 +657,42 @@ struct PDFAnnotationView: View {
             guard saveMessage == message else { return }
             withAnimation(LectraMotion.toast) {
                 saveMessage = nil
+                toastAction = nil
             }
         }
     }
 
     private func persistEditorPreferences() {
-        editorPreferences.selectedTool = selectedTool
+        editorPreferences.noteSelectedTool(selectedTool)
         editorPreferences.selectedColor = selectedColor
         editorPreferences.selectedStrokeWidth = selectedStrokeWidth
+        editorPreferences.highlighterOpacity = highlighterOpacity
         editorPreferences.selectedEraserMode = selectedEraserMode
-        editorPreferences.toolbarDockEdge = toolbarDockEdge.rawValue
+        editorPreferences.setDockEdge(toolbarDockEdge, for: currentDockProfile)
         EditorPreferencesStore.shared.save(editorPreferences)
+    }
+
+    private func preferredReturnAnnotationTool() -> AnnotationTool {
+        switch editorPreferences.lastAnnotationTool {
+        case .eraser, .hand:
+            return .pen
+        case .pen, .highlighter, .lasso:
+            return editorPreferences.lastAnnotationTool
+        }
+    }
+
+    @MainActor
+    private func handleAutoAppendedBlankPage() {
+        setToast(
+            "New page added",
+            style: .info,
+            autoHideAfter: 4.5,
+            action: ToastAction(title: "Undo") {
+                if editorBridge.undoLastAutoAppendedBlankPage() {
+                    setToast("Removed blank page", style: .info, autoHideAfter: 2.4)
+                }
+            }
+        )
     }
 
     private func loadOutlineItems() -> [DocumentOutlineDestination] {
@@ -868,7 +731,8 @@ struct PDFAnnotationView: View {
         switch editorPreferences.squeezeAction {
         case .togglePenEraser:
             withAnimation(LectraMotion.quick) {
-                selectedTool = selectedTool == .eraser ? .pen : .eraser
+                let activeTool = selectedTool == .hand ? preferredReturnAnnotationTool() : selectedTool
+                selectedTool = activeTool == .eraser ? preferredReturnAnnotationTool() : .eraser
             }
             if !editorPreferences.hasSeenSqueezeHint {
                 editorPreferences.hasSeenSqueezeHint = true
@@ -986,7 +850,7 @@ struct PDFAnnotationView: View {
                     Button("Done") {
                         showDocumentSearchSheet = false
                     }
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .foregroundColor(LectraColor.accent)
                 }
             }
         }
@@ -1021,7 +885,7 @@ struct PDFAnnotationView: View {
                     Button("Done") {
                         showOutlineSheet = false
                     }
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .foregroundColor(LectraColor.accent)
                 }
             }
         }
@@ -1081,6 +945,11 @@ final class PDFEditorBridge: ObservableObject {
     func redo() {
         controller?.redoLastAction()
     }
+
+    @discardableResult
+    func undoLastAutoAppendedBlankPage() -> Bool {
+        controller?.undoLastAutoAppendedBlankPage() ?? false
+    }
 }
 
 private struct PDFEditorSearchBar: View {
@@ -1125,11 +994,13 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
     @Binding var selectedTool: AnnotationTool
     @Binding var selectedColor: AnnotationInkColor
     @Binding var selectedStrokeWidth: CGFloat
+    @Binding var highlighterOpacity: CGFloat
     @Binding var selectedEraserMode: EraserMode
     let initialPage: Int
     var onScroll: (() -> Void)? = nil
     var onTypewriterAutoAdvance: ((Int, CGPoint) -> Void)? = nil
     var onPencilSqueeze: (() -> Void)? = nil
+    var onAutoAppendedBlankPage: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -1148,6 +1019,7 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
         vc.onTypewriterAutoAdvance = { [weak coordinator = context.coordinator] pageIndex, offset in
             coordinator?.typewriterAutoAdvanceDidTrigger(pageIndex: pageIndex, offset: offset)
         }
+        vc.onAutoAppendedBlankPage = onAutoAppendedBlankPage
         bridge.attach(controller: vc)
         return vc
     }
@@ -1161,6 +1033,7 @@ struct PDFEditorRepresentable: UIViewControllerRepresentable {
             selectedTool,
             color: selectedColor,
             width: selectedStrokeWidth,
+            highlighterOpacity: highlighterOpacity,
             eraserMode: selectedEraserMode
         )
     }
@@ -1347,6 +1220,7 @@ private struct InkDrawingStore: Codable {
 
 private struct InkToolDescriptor {
     enum Mode {
+        case hand
         case pen
         case highlighter
         case eraser
@@ -1362,8 +1236,21 @@ private struct InkToolDescriptor {
 
     static let `default` = InkToolDescriptor(annotationTool: .pen, inkColor: .black, width: 2.0)
 
-    init(annotationTool: AnnotationTool, inkColor: AnnotationInkColor, width: CGFloat, eraserMode: EraserMode = .stroke) {
+    init(
+        annotationTool: AnnotationTool,
+        inkColor: AnnotationInkColor,
+        width: CGFloat,
+        highlighterOpacity: CGFloat = 0.35,
+        eraserMode: EraserMode = .stroke
+    ) {
         switch annotationTool {
+        case .hand:
+            mode = .hand
+            color = .clear
+            self.width = 0
+            blendMode = .normal
+            eraserRadius = 0
+            self.eraserMode = .stroke
         case .pen:
             mode = .pen
             color = inkColor.inkUIColor.withAlphaComponent(1.0)
@@ -1373,7 +1260,7 @@ private struct InkToolDescriptor {
             self.eraserMode = .stroke
         case .highlighter:
             mode = .highlighter
-            color = inkColor.inkUIColor.withAlphaComponent(0.35)
+            color = inkColor.inkUIColor.withAlphaComponent(min(max(highlighterOpacity, 0.1), 0.85))
             self.width = min(max(width * 1.8, 1.5), 20.0)
             blendMode = .multiply
             eraserRadius = 0
@@ -1443,6 +1330,18 @@ private final class PencilStrokeGestureRecognizer: UIGestureRecognizer {
 }
 
 private final class VectorInkCanvasView: UIView {
+    private struct LassoSelection {
+        let strokeIndexes: [Int]
+        let sourceStrokes: [InkStroke]
+        let bounds: CGRect
+    }
+
+    private enum LassoInteraction {
+        case drawingPath
+        case moving(startPoint: CGPoint, selection: LassoSelection)
+        case resizing(handle: LassoSelectionHandle, selection: LassoSelection)
+    }
+
     var onDrawingChanged: ((InkPageDrawing) -> Void)?
     var tool: InkToolDescriptor = .default {
         didSet {
@@ -1452,6 +1351,9 @@ private final class VectorInkCanvasView: UIView {
                 } else {
                     configureEraserPreviewAppearance()
                 }
+            } else if tool.mode != .lasso {
+                hideEraserPreview()
+                cancelLassoInteraction(keepSelection: false)
             } else {
                 hideEraserPreview()
             }
@@ -1468,6 +1370,17 @@ private final class VectorInkCanvasView: UIView {
     private var activeStrokeLayer: CAShapeLayer?
     private let eraserPreviewLayer = CAShapeLayer()
     private var eraserPreviewCenter: CGPoint?
+    private let lassoPreviewLayer = CAShapeLayer()
+    private let selectionOutlineLayer = CAShapeLayer()
+    private var selectionHandleLayers: [LassoSelectionHandle: CAShapeLayer] = [:]
+    private var previewStrokeLayers: [CAShapeLayer] = []
+    private let selectionActionsView = UIStackView()
+    private let duplicateSelectionButton = UIButton(type: .system)
+    private let deleteSelectionButton = UIButton(type: .system)
+    private var activeLassoPoints: [CGPoint] = []
+    private var activeSelection: LassoSelection?
+    private var lassoInteraction: LassoInteraction?
+    private var previewSelectionPoints: [Int: [CGPoint]] = [:]
 
     private lazy var pencilGesture: PencilStrokeGestureRecognizer = {
         let gesture = PencilStrokeGestureRecognizer(target: self, action: #selector(handlePencilGesture(_:)))
@@ -1493,6 +1406,8 @@ private final class VectorInkCanvasView: UIView {
         layer.shouldRasterize = false
         layer.drawsAsynchronously = false
         configureEraserPreviewLayer()
+        configureLassoLayers()
+        configureSelectionActionsView()
         addGestureRecognizer(pencilGesture)
         addGestureRecognizer(pencilHoverGesture)
     }
@@ -1505,10 +1420,12 @@ private final class VectorInkCanvasView: UIView {
         if tool.mode == .eraser, let center = eraserPreviewCenter {
             updateEraserPreview(at: center)
         }
+        updateSelectionOverlay()
     }
 
     func setDrawing(_ drawing: InkPageDrawing) {
         self.drawing = drawing
+        cancelLassoInteraction(keepSelection: false)
         rebuildStrokeLayers()
     }
 
@@ -1525,6 +1442,16 @@ private final class VectorInkCanvasView: UIView {
                 strokeLayer.shouldRasterize = false
             }
             activeStrokeLayer?.contentsScale = targetScale
+            lassoPreviewLayer.contentsScale = targetScale
+            selectionOutlineLayer.contentsScale = targetScale
+            previewStrokeLayers.forEach {
+                $0.contentsScale = targetScale
+                $0.shouldRasterize = false
+            }
+            for handleLayer in selectionHandleLayers.values {
+                handleLayer.contentsScale = targetScale
+                handleLayer.shouldRasterize = false
+            }
             if forceRedraw {
                 rebuildStrokePaths()
             }
@@ -1537,35 +1464,51 @@ private final class VectorInkCanvasView: UIView {
         switch gesture.state {
         case .began:
             guard let first = samples.first else { return }
-            if tool.mode == .eraser {
+            if tool.mode == .hand {
+                cancelLassoInteraction(keepSelection: false)
+            } else if tool.mode == .eraser {
                 updateEraserPreview(at: first.point)
                 erase(at: first.point)
-            } else if tool.mode != .lasso {
+            } else if tool.mode == .lasso {
+                hideEraserPreview()
+                beginLassoInteraction(at: first.point)
+                for sample in samples.dropFirst() {
+                    updateLassoInteraction(to: sample.point)
+                }
+            } else {
                 hideEraserPreview()
                 beginStroke(at: first.point, force: first.force)
                 for sample in samples.dropFirst() {
                     appendStroke(at: sample.point, force: sample.force)
                 }
-            } else {
-                hideEraserPreview()
             }
         case .changed:
-            if tool.mode == .eraser {
+            if tool.mode == .hand {
+                return
+            } else if tool.mode == .eraser {
                 for sample in samples {
                     updateEraserPreview(at: sample.point)
                     erase(at: sample.point)
                 }
-            } else if tool.mode != .lasso {
+            } else if tool.mode == .lasso {
+                hideEraserPreview()
+                for sample in samples {
+                    updateLassoInteraction(to: sample.point)
+                }
+            } else {
                 hideEraserPreview()
                 for sample in samples {
                     appendStroke(at: sample.point, force: sample.force)
                 }
-            } else {
-                hideEraserPreview()
             }
         case .ended:
             hideEraserPreview()
-            if tool.mode != .eraser && tool.mode != .lasso {
+            if tool.mode == .lasso {
+                if let lastPoint = samples.last?.point {
+                    updateLassoInteraction(to: lastPoint)
+                }
+                finishLassoInteraction()
+            } else if tool.mode != .eraser && tool.mode != .hand {
                 for sample in samples {
                     appendStroke(at: sample.point, force: sample.force)
                 }
@@ -1573,7 +1516,11 @@ private final class VectorInkCanvasView: UIView {
             }
         case .cancelled, .failed:
             hideEraserPreview()
-            discardActiveStroke()
+            if tool.mode == .lasso {
+                cancelLassoInteraction(keepSelection: true)
+            } else {
+                discardActiveStroke()
+            }
         default:
             break
         }
@@ -1608,6 +1555,80 @@ private final class VectorInkCanvasView: UIView {
         eraserPreviewLayer.zPosition = 10_000
         eraserPreviewLayer.contentsScale = UIScreen.main.scale
         layer.addSublayer(eraserPreviewLayer)
+    }
+
+    private func configureLassoLayers() {
+        lassoPreviewLayer.fillColor = UIColor.clear.cgColor
+        lassoPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.94).cgColor
+        lassoPreviewLayer.lineWidth = 2
+        lassoPreviewLayer.lineDashPattern = [8, 6]
+        lassoPreviewLayer.isHidden = true
+        lassoPreviewLayer.zPosition = 9_000
+        lassoPreviewLayer.contentsScale = UIScreen.main.scale
+        layer.addSublayer(lassoPreviewLayer)
+
+        selectionOutlineLayer.fillColor = UIColor.clear.cgColor
+        selectionOutlineLayer.strokeColor = LectraColor.accentUIColor.cgColor
+        selectionOutlineLayer.lineWidth = 2
+        selectionOutlineLayer.lineDashPattern = [10, 6]
+        selectionOutlineLayer.isHidden = true
+        selectionOutlineLayer.zPosition = 9_200
+        selectionOutlineLayer.contentsScale = UIScreen.main.scale
+        layer.addSublayer(selectionOutlineLayer)
+
+        for handle in LassoSelectionHandle.allCases {
+            let handleLayer = CAShapeLayer()
+            handleLayer.fillColor = UIColor.white.cgColor
+            handleLayer.strokeColor = LectraColor.accentUIColor.cgColor
+            handleLayer.lineWidth = 2
+            handleLayer.isHidden = true
+            handleLayer.zPosition = 9_250
+            handleLayer.contentsScale = UIScreen.main.scale
+            layer.addSublayer(handleLayer)
+            selectionHandleLayers[handle] = handleLayer
+        }
+    }
+
+    private func configureSelectionActionsView() {
+        selectionActionsView.axis = .horizontal
+        selectionActionsView.alignment = .fill
+        selectionActionsView.distribution = .fillEqually
+        selectionActionsView.spacing = 8
+        selectionActionsView.backgroundColor = UIColor(white: 0.08, alpha: 0.92)
+        selectionActionsView.layer.cornerRadius = 18
+        selectionActionsView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
+        selectionActionsView.layer.borderWidth = 1
+        selectionActionsView.isHidden = true
+
+        configureSelectionActionButton(
+            duplicateSelectionButton,
+            title: "Duplicate",
+            symbolName: "plus.square.on.square"
+        )
+        duplicateSelectionButton.addTarget(self, action: #selector(handleDuplicateSelection), for: .touchUpInside)
+
+        configureSelectionActionButton(
+            deleteSelectionButton,
+            title: "Delete",
+            symbolName: "trash"
+        )
+        deleteSelectionButton.addTarget(self, action: #selector(handleDeleteSelection), for: .touchUpInside)
+
+        selectionActionsView.addArrangedSubview(duplicateSelectionButton)
+        selectionActionsView.addArrangedSubview(deleteSelectionButton)
+        addSubview(selectionActionsView)
+    }
+
+    private func configureSelectionActionButton(_ button: UIButton, title: String, symbolName: String) {
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title
+        configuration.image = UIImage(systemName: symbolName)
+        configuration.imagePadding = 6
+        configuration.baseForegroundColor = .white
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+        button.configuration = configuration
+        button.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        button.accessibilityLabel = title
     }
 
     private func configureEraserPreviewAppearance() {
@@ -1652,6 +1673,314 @@ private final class VectorInkCanvasView: UIView {
     private func eraserPreviewStrokeWidth(for radius: CGFloat) -> CGFloat {
         // Keep small eraser rings visually light while preserving visibility for larger sizes.
         min(max(radius * 0.16, 0.9), 2.0)
+    }
+
+    private func beginLassoInteraction(at point: CGPoint) {
+        if let selection = activeSelection,
+           let handle = selectionHandle(at: point, within: selection.bounds) {
+            prepareSelectionPreview(for: selection)
+            lassoInteraction = .resizing(handle: handle, selection: selection)
+            return
+        }
+
+        if let selection = activeSelection,
+           selection.bounds.insetBy(dx: -20, dy: -20).contains(point) {
+            prepareSelectionPreview(for: selection)
+            lassoInteraction = .moving(startPoint: point, selection: selection)
+            return
+        }
+
+        cancelLassoInteraction(keepSelection: false)
+        activeLassoPoints = [point]
+        lassoInteraction = .drawingPath
+        lassoPreviewLayer.isHidden = false
+        updateLassoPreviewPath()
+    }
+
+    private func updateLassoInteraction(to point: CGPoint) {
+        switch lassoInteraction {
+        case .drawingPath:
+            guard let last = activeLassoPoints.last else {
+                activeLassoPoints = [point]
+                updateLassoPreviewPath()
+                return
+            }
+            guard hypot(last.x - point.x, last.y - point.y) > 3 else { return }
+            activeLassoPoints.append(point)
+            updateLassoPreviewPath()
+        case let .moving(startPoint, selection):
+            let translation = CGSize(width: point.x - startPoint.x, height: point.y - startPoint.y)
+            previewSelection(
+                selection,
+                transformedBounds: selection.bounds.offsetBy(dx: translation.width, dy: translation.height)
+            )
+        case let .resizing(handle, selection):
+            previewSelection(
+                selection,
+                transformedBounds: LassoGeometry.proportionalResizeRect(
+                    from: selection.bounds,
+                    handle: handle,
+                    location: point
+                )
+            )
+        case .none:
+            break
+        }
+    }
+
+    private func finishLassoInteraction() {
+        defer { lassoInteraction = nil }
+
+        switch lassoInteraction {
+        case .drawingPath:
+            let selectedIndexes = drawing.strokes.enumerated().compactMap { index, stroke -> Int? in
+                let points = denormalizedPoints(for: stroke)
+                return LassoGeometry.strokeIntersectsPolygon(stroke: points, polygon: activeLassoPoints) ? index : nil
+            }
+
+            activeLassoPoints.removeAll(keepingCapacity: true)
+            lassoPreviewLayer.path = nil
+            lassoPreviewLayer.isHidden = true
+
+            guard let selection = buildSelection(from: selectedIndexes) else {
+                cancelLassoInteraction(keepSelection: false)
+                return
+            }
+            activeSelection = selection
+            updateSelectionOverlay()
+        case let .moving(_, selection), let .resizing(_, selection):
+            commitPreviewSelection(for: selection)
+        case .none:
+            break
+        }
+    }
+
+    private func cancelLassoInteraction(keepSelection: Bool) {
+        activeLassoPoints.removeAll(keepingCapacity: true)
+        lassoPreviewLayer.path = nil
+        lassoPreviewLayer.isHidden = true
+        lassoInteraction = nil
+        clearSelectionPreview()
+
+        if !keepSelection {
+            activeSelection = nil
+            selectionOutlineLayer.path = nil
+            selectionOutlineLayer.isHidden = true
+            selectionHandleLayers.values.forEach {
+                $0.path = nil
+                $0.isHidden = true
+            }
+            selectionActionsView.isHidden = true
+        }
+    }
+
+    private func updateLassoPreviewPath() {
+        guard activeLassoPoints.count >= 2 else { return }
+        let path = UIBezierPath()
+        path.move(to: activeLassoPoints[0])
+        for point in activeLassoPoints.dropFirst() {
+            path.addLine(to: point)
+        }
+        lassoPreviewLayer.path = path.cgPath
+    }
+
+    private func buildSelection(from indexes: [Int]) -> LassoSelection? {
+        let uniqueIndexes = Array(Set(indexes)).sorted()
+        guard !uniqueIndexes.isEmpty else { return nil }
+
+        let strokes = uniqueIndexes.compactMap { index -> InkStroke? in
+            drawing.strokes.indices.contains(index) ? drawing.strokes[index] : nil
+        }
+        let pointGroups = strokes.map { denormalizedPoints(for: $0) }
+
+        guard strokes.count == uniqueIndexes.count,
+              let bounds = LassoGeometry.boundingRect(for: pointGroups) else {
+            return nil
+        }
+
+        return LassoSelection(strokeIndexes: uniqueIndexes, sourceStrokes: strokes, bounds: bounds.insetBy(dx: -8, dy: -8))
+    }
+
+    private func updateSelectionOverlay() {
+        guard let selection = activeSelection else {
+            selectionOutlineLayer.path = nil
+            selectionOutlineLayer.isHidden = true
+            selectionHandleLayers.values.forEach {
+                $0.path = nil
+                $0.isHidden = true
+            }
+            selectionActionsView.isHidden = true
+            return
+        }
+
+        let displayBounds = currentSelectionBounds(defaultingTo: selection.bounds)
+        selectionOutlineLayer.path = UIBezierPath(rect: displayBounds).cgPath
+        selectionOutlineLayer.isHidden = false
+
+        for handle in LassoSelectionHandle.allCases {
+            guard let handleLayer = selectionHandleLayers[handle] else { continue }
+            let center = handle.point(in: displayBounds)
+            let handleRect = CGRect(x: center.x - 11, y: center.y - 11, width: 22, height: 22)
+            handleLayer.path = UIBezierPath(ovalIn: handleRect).cgPath
+            handleLayer.isHidden = false
+        }
+
+        let actionsWidth: CGFloat = 240
+        let actionsHeight: CGFloat = 46
+        let clampedX = min(max(displayBounds.midX - (actionsWidth * 0.5), 12), max(bounds.width - actionsWidth - 12, 12))
+        let preferredY = displayBounds.minY - actionsHeight - 12
+        let fallbackY = displayBounds.maxY + 12
+        let originY = preferredY > 8 ? preferredY : min(fallbackY, bounds.height - actionsHeight - 12)
+        selectionActionsView.frame = CGRect(x: clampedX, y: originY, width: actionsWidth, height: actionsHeight)
+        selectionActionsView.isHidden = false
+    }
+
+    private func selectionHandle(at point: CGPoint, within rect: CGRect) -> LassoSelectionHandle? {
+        LassoSelectionHandle.allCases.first { handle in
+            let center = handle.point(in: rect)
+            return hypot(center.x - point.x, center.y - point.y) <= 24
+        }
+    }
+
+    private func prepareSelectionPreview(for selection: LassoSelection) {
+        clearSelectionPreview()
+        previewSelectionPoints.removeAll(keepingCapacity: true)
+
+        for index in selection.strokeIndexes {
+            guard strokeLayers.indices.contains(index) else { continue }
+            strokeLayers[index].opacity = 0.18
+        }
+
+        for stroke in selection.sourceStrokes {
+            let previewLayer = makeStrokeLayer(color: stroke.color.uiColor, lineWidth: stroke.width)
+            previewLayer.zPosition = 9_100
+            previewStrokeLayers.append(previewLayer)
+            layer.addSublayer(previewLayer)
+        }
+    }
+
+    private func clearSelectionPreview() {
+        previewSelectionPoints.removeAll(keepingCapacity: true)
+        previewStrokeLayers.forEach { $0.removeFromSuperlayer() }
+        previewStrokeLayers.removeAll(keepingCapacity: true)
+
+        for index in activeSelection?.strokeIndexes ?? [] {
+            guard strokeLayers.indices.contains(index) else { continue }
+            strokeLayers[index].opacity = 1.0
+        }
+    }
+
+    private func previewSelection(_ selection: LassoSelection, transformedBounds: CGRect) {
+        for (offset, stroke) in selection.sourceStrokes.enumerated() {
+            guard previewStrokeLayers.indices.contains(offset) else { continue }
+            let sourcePoints = denormalizedPoints(for: stroke)
+            let transformedPoints = LassoGeometry.scaled(
+                points: sourcePoints,
+                from: selection.bounds,
+                to: transformedBounds
+            )
+            previewSelectionPoints[selection.strokeIndexes[offset]] = transformedPoints
+            previewStrokeLayers[offset].path = previewPath(for: transformedPoints).cgPath
+            previewStrokeLayers[offset].lineWidth = stroke.width
+        }
+
+        activeSelection = LassoSelection(
+            strokeIndexes: selection.strokeIndexes,
+            sourceStrokes: selection.sourceStrokes,
+            bounds: transformedBounds
+        )
+        updateSelectionOverlay()
+    }
+
+    private func currentSelectionBounds(defaultingTo selectionBounds: CGRect) -> CGRect {
+        if let previewBounds = LassoGeometry.boundingRect(for: Array(previewSelectionPoints.values)) {
+            return previewBounds.insetBy(dx: -8, dy: -8)
+        }
+        return selectionBounds
+    }
+
+    private func commitPreviewSelection(for selection: LassoSelection) {
+        guard !previewSelectionPoints.isEmpty else {
+            clearSelectionPreview()
+            updateSelectionOverlay()
+            return
+        }
+
+        var updatedDrawing = drawing
+        for (offset, index) in selection.strokeIndexes.enumerated() {
+            guard updatedDrawing.strokes.indices.contains(index),
+                  let transformedPoints = previewSelectionPoints[index] else { continue }
+            let originalStroke = selection.sourceStrokes[offset]
+            let transformedInkPoints = zip(originalStroke.points, transformedPoints).map { originalPoint, transformedPoint in
+                InkPoint(
+                    x: min(max(transformedPoint.x / max(bounds.width, 1), 0), 1),
+                    y: min(max(transformedPoint.y / max(bounds.height, 1), 0), 1),
+                    force: originalPoint.force
+                )
+            }
+            updatedDrawing.strokes[index] = InkStroke(
+                points: transformedInkPoints,
+                width: originalStroke.width,
+                color: originalStroke.color,
+                blendMode: originalStroke.blendMode
+            )
+        }
+
+        clearSelectionPreview()
+        drawing = updatedDrawing
+        rebuildStrokeLayers()
+        if let refreshedSelection = buildSelection(from: selection.strokeIndexes) {
+            activeSelection = refreshedSelection
+            updateSelectionOverlay()
+        } else {
+            cancelLassoInteraction(keepSelection: false)
+        }
+        onDrawingChanged?(drawing)
+    }
+
+    @objc
+    private func handleDuplicateSelection() {
+        guard let selection = activeSelection else { return }
+        let pointGroups = selection.sourceStrokes.map { denormalizedPoints(for: $0) }
+        let translatedGroups = LassoGeometry.duplicated(pointGroups: pointGroups)
+
+        var duplicatedStrokes: [InkStroke] = []
+        duplicatedStrokes.reserveCapacity(selection.sourceStrokes.count)
+
+        for (offset, originalStroke) in selection.sourceStrokes.enumerated() {
+            let translatedPoints = translatedGroups[offset]
+            let transformedInkPoints = zip(originalStroke.points, translatedPoints).map { originalPoint, transformedPoint in
+                InkPoint(
+                    x: min(max(transformedPoint.x / max(bounds.width, 1), 0), 1),
+                    y: min(max(transformedPoint.y / max(bounds.height, 1), 0), 1),
+                    force: originalPoint.force
+                )
+            }
+            duplicatedStrokes.append(
+                InkStroke(
+                    points: transformedInkPoints,
+                    width: originalStroke.width,
+                    color: originalStroke.color,
+                    blendMode: originalStroke.blendMode
+                )
+            )
+        }
+
+        let newIndexes = Array(drawing.strokes.count..<(drawing.strokes.count + duplicatedStrokes.count))
+        drawing.strokes.append(contentsOf: duplicatedStrokes)
+        rebuildStrokeLayers()
+        activeSelection = buildSelection(from: newIndexes)
+        updateSelectionOverlay()
+        onDrawingChanged?(drawing)
+    }
+
+    @objc
+    private func handleDeleteSelection() {
+        guard let selection = activeSelection else { return }
+        drawing.strokes = LassoGeometry.removing(items: drawing.strokes, at: selection.strokeIndexes)
+        cancelLassoInteraction(keepSelection: false)
+        rebuildStrokeLayers()
+        onDrawingChanged?(drawing)
     }
 
     private func pencilSamples(from gesture: PencilStrokeGestureRecognizer) -> [(point: CGPoint, force: CGFloat)] {
@@ -1871,6 +2200,7 @@ private final class VectorInkCanvasView: UIView {
             self.layer.addSublayer(layer)
             strokeLayers.append(layer)
         }
+        updateSelectionOverlay()
     }
 
     private func rebuildStrokePaths() {
@@ -1887,6 +2217,7 @@ private final class VectorInkCanvasView: UIView {
         if activeStrokeLayer != nil {
             updateActiveStrokePath()
         }
+        updateSelectionOverlay()
     }
 
     private func updateActiveStrokePath() {
@@ -1913,8 +2244,15 @@ private final class VectorInkCanvasView: UIView {
         return strokeLayer
     }
 
+    private func denormalizedPoints(for stroke: InkStroke) -> [CGPoint] {
+        stroke.points.map { denormalizedPoint(for: $0) }
+    }
+
     private func strokePath(for stroke: InkStroke) -> UIBezierPath {
-        let points = stroke.points.map { denormalizedPoint(for: $0) }
+        previewPath(for: denormalizedPoints(for: stroke))
+    }
+
+    private func previewPath(for points: [CGPoint]) -> UIBezierPath {
         if points.count <= 1 {
             let path = UIBezierPath()
             let center = points.first ?? .zero
@@ -2065,6 +2403,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     weak var coordinator: PDFEditorRepresentable.Coordinator?
     var onTypewriterAutoAdvance: ((Int, CGPoint) -> Void)?
     var undoRedoDidChange: ((Bool, Bool) -> Void)?
+    var onAutoAppendedBlankPage: (() -> Void)?
 
     private let scrollView = UIScrollView()
     private let containerView = UIView()
@@ -2086,6 +2425,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private var undoStack: [DrawingHistoryStep] = []
     private var redoStack: [DrawingHistoryStep] = []
     private var isApplyingHistoryChange = false
+    private var lastAutoAppendedBlankPageIndex: Int?
 
     private var currentTool: InkToolDescriptor = .default
     private let pagePadding: CGFloat = 20.0
@@ -2395,8 +2735,20 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         updateVisiblePages()
     }
 
-    func setTool(_ tool: AnnotationTool, color: AnnotationInkColor, width: CGFloat, eraserMode: EraserMode) {
-        currentTool = InkToolDescriptor(annotationTool: tool, inkColor: color, width: width, eraserMode: eraserMode)
+    func setTool(
+        _ tool: AnnotationTool,
+        color: AnnotationInkColor,
+        width: CGFloat,
+        highlighterOpacity: CGFloat,
+        eraserMode: EraserMode
+    ) {
+        currentTool = InkToolDescriptor(
+            annotationTool: tool,
+            inkColor: color,
+            width: width,
+            highlighterOpacity: highlighterOpacity,
+            eraserMode: eraserMode
+        )
         pageViews.forEach { $0.canvasView.tool = currentTool }
     }
 
@@ -2771,8 +3123,10 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
             if axisVelocity > 0.35 && currentPage == pageViews.count - 1 && targetPage == pageViews.count - 1 {
                 let newPageIndex = appendBlankPage()
+                lastAutoAppendedBlankPageIndex = newPageIndex
                 targetPage = newPageIndex
                 coordinator?.pageDidChange(to: newPageIndex, total: pageViews.count)
+                onAutoAppendedBlankPage?()
             }
 
             targetContentOffset.pointee = targetContentOffsetForPage(
@@ -2941,6 +3295,9 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private func handleDrawingChanged(at index: Int, updatedDrawing: InkPageDrawing) {
         let previous = pageDrawings[index] ?? InkPageDrawing()
         pageDrawings[index] = updatedDrawing
+        if index == lastAutoAppendedBlankPageIndex, !updatedDrawing.isEmpty {
+            lastAutoAppendedBlankPageIndex = nil
+        }
 
         guard !isApplyingHistoryChange, previous != updatedDrawing else { return }
         undoStack.append(
@@ -2966,6 +3323,48 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         applyHistory(step.updated, to: step.pageIndex)
         undoStack.append(step)
         reportUndoRedoState()
+    }
+
+    @discardableResult
+    func undoLastAutoAppendedBlankPage() -> Bool {
+        guard let removedIndex = lastAutoAppendedBlankPageIndex,
+              pageDescriptors.indices.contains(removedIndex),
+              pageViews.indices.contains(removedIndex) else {
+            return false
+        }
+
+        let hasHistory = undoStack.contains { $0.pageIndex == removedIndex }
+            || redoStack.contains { $0.pageIndex == removedIndex }
+        let isTerminalBlankPage: Bool
+        if case .blank = pageDescriptors[removedIndex].kind {
+            isTerminalBlankPage = true
+        } else {
+            isTerminalBlankPage = false
+        }
+        let isPageEmpty = pageDrawings[removedIndex]?.isEmpty ?? true
+        guard AutoAppendedBlankPageUndoGuard.canUndo(
+            candidateIndex: removedIndex,
+            totalPageCount: pageViews.count,
+            isTerminalBlankPage: isTerminalBlankPage,
+            isPageEmpty: isPageEmpty,
+            hasHistory: hasHistory
+        ) else {
+            return false
+        }
+
+        pageViews[removedIndex].removeFromSuperview()
+        pageViews.remove(at: removedIndex)
+        pageDescriptors.remove(at: removedIndex)
+        displayScales.remove(at: removedIndex)
+        pageFrames.remove(at: removedIndex)
+        pageDrawings.removeValue(forKey: removedIndex)
+        lastAutoAppendedBlankPageIndex = nil
+
+        currentPageIndex = max(removedIndex - 1, 0)
+        relayoutPages(preservingPageIndex: currentPageIndex)
+        coordinator?.pageDidChange(to: currentPageIndex, total: pageViews.count)
+        reportUndoRedoState()
+        return true
     }
 
     private func applyHistory(_ drawing: InkPageDrawing, to pageIndex: Int) {

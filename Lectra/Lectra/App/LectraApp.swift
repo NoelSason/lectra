@@ -13,6 +13,8 @@ final class LectraAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !LectraLaunchConfiguration.current.isUITesting else { return true }
+
         application.registerForRemoteNotifications()
         Task {
             await LectraWakeService.shared.applicationDidLaunch()
@@ -24,6 +26,8 @@ final class LectraAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
+        guard !LectraLaunchConfiguration.current.isUITesting else { return }
+
         Task {
             await LectraWakeService.shared.updatePushToken(deviceToken)
         }
@@ -34,6 +38,11 @@ final class LectraAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        guard !LectraLaunchConfiguration.current.isUITesting else {
+            completionHandler(.noData)
+            return
+        }
+
         Task {
             let result = await LectraWakeService.shared.handleRemoteNotification(userInfo: userInfo)
             completionHandler(result)
@@ -45,32 +54,59 @@ final class LectraAppDelegate: NSObject, UIApplicationDelegate {
 @MainActor
 struct LectraApp: App {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var authManager = AuthManager()
+    @StateObject private var authManager: AuthManager
+    @StateObject private var gradescopeManager: GradescopeManager
     @UIApplicationDelegateAdaptor(LectraAppDelegate.self) private var appDelegate
+    private let launchConfiguration: LectraLaunchConfiguration
+
+    init() {
+        let launchConfiguration = LectraLaunchConfiguration.current
+        self.launchConfiguration = launchConfiguration
+        _authManager = StateObject(
+            wrappedValue: AuthManager(mockState: launchConfiguration.authMockState)
+        )
+        _gradescopeManager = StateObject(
+            wrappedValue: GradescopeManager(mockState: launchConfiguration.gradescopeMockState)
+        )
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            rootView
                 .environmentObject(authManager)
+                .environmentObject(gradescopeManager)
                 .task {
+                    guard !launchConfiguration.isUITesting else { return }
                     await LectraWakeService.shared.scenePhaseDidChange(scenePhase)
                     await LectraWakeService.shared.authStateDidChange()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
+                    guard !launchConfiguration.isUITesting else { return }
                     Task {
                         await LectraWakeService.shared.scenePhaseDidChange(newPhase)
                     }
                 }
                 .onChange(of: authManager.isAuthenticated) { _, _ in
+                    guard !launchConfiguration.isUITesting else { return }
                     Task {
                         await LectraWakeService.shared.authStateDidChange()
                     }
                 }
                 .onChange(of: authManager.userId) { _, _ in
+                    guard !launchConfiguration.isUITesting else { return }
                     Task {
                         await LectraWakeService.shared.authStateDidChange()
                     }
                 }
+        }
+    }
+
+    @ViewBuilder
+    private var rootView: some View {
+        if let scenario = launchConfiguration.uiTestScenario {
+            LectraUITestRootView(scenario: scenario)
+        } else {
+            ContentView()
         }
     }
 }

@@ -137,6 +137,8 @@ struct CloudBackupSettingsTabView: View {
                 }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(Color(hex: 0xE84D4D))
+                .frame(minHeight: LectraSizing.minHitTarget)
+                .accessibilityIdentifier("settings.cloud.reloadSnapshots")
             }
 
             if recoverySnapshots.isEmpty {
@@ -277,7 +279,7 @@ struct CloudBackupSettingsTabView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 38)
+                .frame(minHeight: LectraSizing.minHitTarget)
                 .background(Color.white.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
@@ -308,8 +310,11 @@ struct CloudBackupSettingsTabView: View {
             Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
                 .labelsHidden()
                 .tint(Color(hex: 0x4A222A))
+                .accessibilityLabel(title)
+                .accessibilityValue(isOn ? "On" : "Off")
         }
         .padding(.vertical, 20)
+        .accessibilityElement(children: .combine)
     }
 
     private var divider: some View {

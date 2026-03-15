@@ -221,7 +221,7 @@ struct CourseBrainPane: View {
                     Image(systemName: "arrow.up.right.square")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.white.opacity(0.9))
-                        .frame(width: 34, height: 34)
+                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                         .background(Color.white.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
@@ -239,6 +239,17 @@ struct CourseBrainPane: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            viewModel.selectAssignment(assignment.id)
+            if isCompact {
+                showsCompactDetail = true
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(assignment.title). \(assignment.courseName). \(relativeDateLabel(for: assignment.anchorDate)).")
+        .accessibilityHint(isCompact ? "Opens assignment details in a sheet." : "Opens assignment details.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAction {
             viewModel.selectAssignment(assignment.id)
             if isCompact {
                 showsCompactDetail = true
@@ -358,6 +369,7 @@ struct CourseBrainPane: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(isCanvasURL(url) ? "Open in Canvas app" : "Open assignment")
 
                     Button {
                         openResourceURL(url, preferCanvasApp: false)
@@ -371,6 +383,7 @@ struct CourseBrainPane: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Open assignment web link")
                 }
             } else {
                 Text("No direct assignment URL is available in the current snapshot.")
@@ -486,6 +499,7 @@ struct CourseBrainPane: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Open \(resource.title)")
                             }
                         }
 
@@ -501,6 +515,7 @@ struct CourseBrainPane: View {
                                         .foregroundColor(LectraColor.success)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("View \(resource.title) in Lectra")
                             } else if let onImportPDF {
                                 Button {
                                     onImportPDF(url, resource.title)
@@ -510,6 +525,7 @@ struct CourseBrainPane: View {
                                         .foregroundColor(Color(hex: 0xFFCA8A))
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Import \(resource.title) into Lectra")
                             }
                         }
                     }
@@ -559,6 +575,7 @@ struct CourseBrainPane: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(onOpenDocument == nil)
+                        .accessibilityLabel("Open \(document.title)")
                     }
                     .padding(12)
                     .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.04)))
@@ -605,6 +622,7 @@ struct CourseBrainPane: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(onOpenDocument == nil)
+                        .accessibilityLabel("Open \(evidence.title)")
                     }
                 }
                 .padding(12)
@@ -709,6 +727,8 @@ struct CourseBrainPane: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint("Filters the assignment list.")
     }
 
     private func relativeDateLabel(for date: Date) -> String {
