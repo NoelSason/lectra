@@ -1,9 +1,14 @@
 import SwiftUI
+import UIKit
 
-struct EditorSyncStatusDescriptor {
+struct EditorSyncStatusDescriptor: Equatable {
     let title: String
     let color: Color
     var action: (() -> Void)? = nil
+
+    static func == (lhs: EditorSyncStatusDescriptor, rhs: EditorSyncStatusDescriptor) -> Bool {
+        lhs.title == rhs.title
+    }
 }
 
 struct EditorTopBar: View {
@@ -39,13 +44,18 @@ struct EditorTopBar: View {
             compactLayout
         }
         .padding(.horizontal, LectraSpacing.lg)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
+        .padding(.top, LectraSpacing.sm)
+        .padding(.bottom, LectraSpacing.sm)
         .background(backgroundView)
+        .onChange(of: syncStatus?.title) { _, newTitle in
+            if let newTitle {
+                postAccessibilityAnnouncement(newTitle)
+            }
+        }
     }
 
     private var expandedLayout: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             backButton
             undoButton
             redoButton
@@ -60,7 +70,7 @@ struct EditorTopBar: View {
     }
 
     private var compactLayout: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             backButton
             undoButton
             redoButton
@@ -72,12 +82,15 @@ struct EditorTopBar: View {
     }
 
     private var backButton: some View {
-        Button(action: onBack) {
+        Button {
+            LectraHaptics.selection()
+            onBack()
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .bold))
-                Text("Vault")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(LectraTypography.headline)
+                Text("Library")
+                    .font(LectraTypography.bodyEmphasis)
             }
             .foregroundColor(.white)
             .padding(.horizontal, 13)
@@ -108,13 +121,17 @@ struct EditorTopBar: View {
             if isRenamingTitle {
                 TextField("Document title", text: $titleDraft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(LectraTypography.headline)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, LectraSpacing.md)
                     .padding(.vertical, 7)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.13))
+                        RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                            .fill(Color.white.opacity(LectraOpacity.subtle))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                                    .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+                            )
                     )
                     .frame(maxWidth: 380, minHeight: LectraSizing.minHitTarget)
                     .focused(isTitleFocused)
@@ -123,14 +140,17 @@ struct EditorTopBar: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .accessibilityIdentifier("editor.titleField")
             } else {
-                Button(action: onBeginRename) {
-                    VStack(spacing: 2) {
+                Button {
+                    LectraHaptics.tap()
+                    onBeginRename()
+                } label: {
+                    VStack(spacing: 3) {
                         Text(documentTitle)
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .font(LectraTypography.headline)
                             .lineLimit(1)
                             .foregroundColor(.white)
-                        Text("Tap title to rename")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                        Text(isReadMode ? "Read mode ready for navigation" : "Annotate with Apple Pencil")
+                            .font(LectraTypography.footnote)
                             .foregroundColor(.white.opacity(0.74))
                             .lineLimit(1)
                     }
@@ -173,6 +193,7 @@ struct EditorTopBar: View {
             iconButtonLabel(symbol: "slider.horizontal.3")
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
         .accessibilityIdentifier("editor.settings")
     }
 
@@ -185,21 +206,25 @@ struct EditorTopBar: View {
             iconButtonLabel(symbol: "ellipsis.circle")
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("More actions")
         .accessibilityIdentifier("editor.more")
     }
 
     private var canvascopeButton: some View {
-        Button(action: onExportCanvascope) {
+        Button {
+            LectraHaptics.tap()
+            onExportCanvascope()
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(LectraTypography.bodyEmphasis)
                 Text("Canvascope")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(LectraTypography.caption)
             }
             .foregroundColor(.white)
             .padding(.horizontal, 10)
             .frame(height: LectraSizing.minHitTarget)
-            .background(buttonBackground)
+            .background(integrationBackground(tint: LectraColor.canvasTint))
         }
         .buttonStyle(.plain)
         .disabled(isSaving || isExportingToCanvascope)
@@ -207,17 +232,20 @@ struct EditorTopBar: View {
     }
 
     private var gradescopeButton: some View {
-        Button(action: onShowGradescope) {
+        Button {
+            LectraHaptics.tap()
+            onShowGradescope()
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "graduationcap")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(LectraTypography.bodyEmphasis)
                 Text("Gradescope")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(LectraTypography.caption)
             }
             .foregroundColor(.white)
             .padding(.horizontal, 10)
             .frame(height: LectraSizing.minHitTarget)
-            .background(buttonBackground)
+            .background(integrationBackground(tint: LectraColor.gradescopeTint))
         }
         .buttonStyle(.plain)
         .disabled(isSaving || isExportingToCanvascope)
@@ -232,10 +260,16 @@ struct EditorTopBar: View {
 
     @ViewBuilder
     private var utilityActions: some View {
-        Button("Search This PDF", systemImage: "magnifyingglass", action: onShowSearch)
+        Button("Search This PDF", systemImage: "magnifyingglass") {
+            LectraHaptics.selection()
+            onShowSearch()
+        }
 
         if hasOutline {
-            Button("Document Outline", systemImage: "list.bullet.indent", action: onShowOutline)
+            Button("Document Outline", systemImage: "list.bullet.indent") {
+                LectraHaptics.selection()
+                onShowOutline()
+            }
         }
 
         Divider()
@@ -243,6 +277,7 @@ struct EditorTopBar: View {
         Menu("Handedness") {
             ForEach(EditorHandedness.allCases, id: \.self) { value in
                 Button(value == .left ? "Left-Handed" : "Right-Handed") {
+                    LectraHaptics.selection()
                     onSetHandedness(value)
                 }
             }
@@ -251,6 +286,7 @@ struct EditorTopBar: View {
         Menu("Pencil Squeeze") {
             ForEach(PencilSqueezeAction.allCases, id: \.self) { action in
                 Button(label(for: action)) {
+                    LectraHaptics.selection()
                     onSetSqueezeAction(action)
                 }
             }
@@ -268,7 +304,10 @@ struct EditorTopBar: View {
     }
 
     private func iconButton(symbol: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            LectraHaptics.tap()
+            action()
+        } label: {
             iconButtonLabel(symbol: symbol)
         }
         .buttonStyle(.plain)
@@ -277,16 +316,20 @@ struct EditorTopBar: View {
 
     private func iconButtonLabel(symbol: String) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 16, weight: .semibold))
+            .font(LectraTypography.headline)
             .foregroundColor(.white)
             .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
             .background(buttonBackground)
+            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
     }
 
     private func statusChip(title: String, color: Color, action: (() -> Void)?) -> some View {
         Group {
             if let action {
-                Button(action: action) {
+                Button {
+                    LectraHaptics.selection()
+                    action()
+                } label: {
                     statusChipLabel(title: title, color: color)
                 }
                 .buttonStyle(.plain)
@@ -297,13 +340,7 @@ struct EditorTopBar: View {
     }
 
     private func statusChipLabel(title: String, color: Color) -> some View {
-        Text(title)
-            .font(.system(size: 12, weight: .bold, design: .rounded))
-            .foregroundColor(color)
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-            .background(color.opacity(0.13))
-            .clipShape(Capsule())
+        LectraStatusBadge(title: title, color: color, size: .large)
     }
 
     private func label(for action: PencilSqueezeAction) -> String {
@@ -318,24 +355,32 @@ struct EditorTopBar: View {
     }
 
     private var buttonBackground: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.white.opacity(0.12))
+        RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+            .fill(Color.white.opacity(LectraOpacity.subtle))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                    .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+            )
+    }
+
+    private func integrationBackground(tint: Color) -> some View {
+        RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+            .fill(tint.opacity(0.18))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                    .stroke(tint.opacity(0.35), lineWidth: 1)
+            )
     }
 
     private var backgroundView: some View {
-        ZStack(alignment: .bottom) {
-            LinearGradient(
-                colors: [
-                    Color(hex: 0x1B2A48),
-                    Color(hex: 0x101A2D)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            LectraGradient.spotlight.opacity(0.28)
+        ZStack {
             Rectangle()
-                .fill(Color.white.opacity(0.14))
+                .fill(LectraColor.surfaceElevated.opacity(0.96))
+            LectraGradient.spotlight.opacity(0.18)
+            Rectangle()
+                .fill(Color.white.opacity(LectraOpacity.medium))
                 .frame(height: 1)
+                .frame(maxHeight: .infinity, alignment: .bottom)
         }
         .ignoresSafeArea(edges: .top)
     }

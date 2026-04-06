@@ -33,23 +33,23 @@ struct StartupSplashView: View {
 
     var body: some View {
         ZStack {
-            Color(hex: 0x070C17)
+            LectraColor.background
                 .ignoresSafeArea()
 
             LectraGradient.appBackdrop
-                .opacity(0.9)
+                .opacity(0.96)
                 .ignoresSafeArea()
 
             ambientGlow
 
-            VStack(spacing: 16) {
+            VStack(spacing: LectraSpacing.md) {
                 ZStack {
                     Circle()
                         .stroke(
                             LinearGradient(
                                 colors: [
-                                    LectraColor.accentCool.opacity(0.65),
-                                    LectraColor.accent.opacity(0.36)
+                                    LectraColor.accentCool.opacity(0.52),
+                                    LectraColor.accentSoft.opacity(0.28)
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
@@ -60,27 +60,43 @@ struct StartupSplashView: View {
                         .scaleEffect(reduceMotion ? 1.0 : (pulseActive ? 1.26 : 0.86))
                         .opacity(reduceMotion ? 0.12 : (pulseActive ? 0.0 : 0.62))
 
-                    Image("LaunchMark")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 92, height: 92)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .shadow(color: .black.opacity(0.35), radius: 18, x: 0, y: 10)
+                    RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                        .fill(LectraColor.surfaceElevated.opacity(0.84))
+                        .frame(width: 116, height: 116)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                                .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+                        )
+                        .overlay(
+                            Image("LaunchMark")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 92, height: 92)
+                        )
+                        .lectraShadow(LectraElevation.high())
                         .scaleEffect(showMark ? 1.0 : (reduceMotion ? 1.0 : 0.84))
                         .opacity(showMark ? 1.0 : 0.0)
                 }
 
                 Text("Lectra")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .font(LectraTypography.displayLarge)
                     .foregroundStyle(LectraColor.textPrimary)
                     .opacity(showWordmark ? 1.0 : 0.0)
                     .offset(y: reduceMotion ? 0 : (showWordmark ? 0 : 10))
 
                 if showSpinner {
-                    ProgressView()
-                        .tint(LectraColor.accent)
-                        .scaleEffect(0.95)
-                        .transition(.opacity)
+                    VStack(spacing: LectraSpacing.sm) {
+                        ProgressView()
+                            .tint(LectraColor.accent)
+                            .scaleEffect(0.95)
+
+                        LectraStatusBadge(
+                            title: "Preparing workspace",
+                            color: LectraColor.accentSoft,
+                            size: .large
+                        )
+                    }
+                    .transition(.opacity)
                 }
             }
             .padding(.horizontal, 24)
@@ -100,13 +116,13 @@ struct StartupSplashView: View {
     private var ambientGlow: some View {
         ZStack {
             Circle()
-                .fill(LectraColor.accent.opacity(0.14))
+                .fill(LectraColor.accentSoft.opacity(0.12))
                 .frame(width: 420, height: 420)
                 .blur(radius: 70)
                 .offset(x: -220, y: -260)
 
             Circle()
-                .fill(LectraColor.accentCool.opacity(0.12))
+                .fill(LectraColor.accentCool.opacity(0.10))
                 .frame(width: 360, height: 360)
                 .blur(radius: 64)
                 .offset(x: 240, y: 250)

@@ -2,7 +2,7 @@ import Foundation
 import UIKit
 import PDFKit
 
-enum DocumentSyncState: String, Codable, CaseIterable {
+nonisolated enum DocumentSyncState: String, Codable, CaseIterable, Sendable {
     case idle
     case savingLocal
     case flattening
@@ -12,7 +12,7 @@ enum DocumentSyncState: String, Codable, CaseIterable {
     case failed
 }
 
-struct DocumentLocalMetadata: Codable, Equatable {
+nonisolated struct DocumentLocalMetadata: Codable, Equatable, Sendable {
     var syncState: DocumentSyncState = .idle
     var syncErrorMessage: String?
     var dirtyPageIndexes: [Int] = []
@@ -21,6 +21,22 @@ struct DocumentLocalMetadata: Codable, Equatable {
     var lastOpenedPage: Int?
     var thumbnailRevision: Int = 0
     var searchIndexRevision: Int = 0
+}
+
+extension DocumentLocalMetadata {
+    nonisolated func updatingForRecoverySnapshot(
+        lastOpenedPage: Int,
+        dirtyPageIndexes: [Int],
+        editedAt: Date?
+    ) -> DocumentLocalMetadata {
+        var metadata = self
+        metadata.lastOpenedPage = lastOpenedPage
+        metadata.dirtyPageIndexes = dirtyPageIndexes
+        if let editedAt {
+            metadata.lastLocalEditAt = editedAt
+        }
+        return metadata
+    }
 }
 
 struct DocumentSaveResult: Codable, Equatable {

@@ -33,50 +33,51 @@ struct TechnicalDetailsPresentation: Equatable {
 }
 
 struct TechnicalDetailsDisclosure: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let presentation: TechnicalDetailsPresentation
     var accessibilityID: String
 
     @State private var isExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: LectraSpacing.sm) {
             Text(presentation.summary)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white.opacity(0.72))
+                .font(LectraTypography.captionMedium)
+                .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
                 .fixedSize(horizontal: false, vertical: true)
 
             DisclosureGroup(isExpanded: $isExpanded) {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: LectraSpacing.sm) {
                     Button("Copy details") {
+                        LectraHaptics.selection()
                         UIPasteboard.general.string = presentation.details
                     }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(LectraColor.accent)
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.accentSoft)
                     .accessibilityIdentifier("\(accessibilityID).copy")
 
                     Text(presentation.details)
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.72))
+                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("\(accessibilityID).body")
                 }
-                .padding(.top, 4)
+                .padding(.top, LectraSpacing.xs)
             } label: {
                 Label("Technical details", systemImage: "wrench.and.screwdriver")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.92))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.primary))
             }
-            .tint(LectraColor.accent)
+            .tint(LectraColor.accentSoft)
+            .animation(reduceMotion ? nil : LectraMotion.quick, value: isExpanded)
             .accessibilityIdentifier("\(accessibilityID).disclosure")
             .accessibilityHint("Shows diagnostic information for support.")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-        )
+        .padding(LectraSpacing.md)
+        .lectraCard(cornerRadius: LectraRadius.control, shadow: false)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityID)
     }

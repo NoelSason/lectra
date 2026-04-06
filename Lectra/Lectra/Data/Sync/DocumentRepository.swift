@@ -10,7 +10,7 @@
 import Foundation
 import Supabase
 
-final class DocumentRepository {
+nonisolated final class DocumentRepository {
 
     // MARK: - Private
     private let client = SupabaseManager.shared.client

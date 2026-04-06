@@ -65,11 +65,11 @@ struct IntegrationsSettingsView: View {
     private var headerCopy: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Integrations")
-                .font(.system(size: 30, weight: .bold))
+                .font(LectraTypography.displaySmall)
                 .foregroundColor(.white)
 
             Text("Track which external services are connected, how long those sessions should last, and when Lectra will need you to sign in again.")
-                .font(.system(size: 15, weight: .medium))
+                .font(LectraTypography.body)
                 .foregroundColor(Color.white.opacity(0.66))
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -77,19 +77,14 @@ struct IntegrationsSettingsView: View {
 
     private var refreshButton: some View {
         Button {
+            LectraHaptics.selection()
             Task {
                 await refreshStatuses()
             }
         } label: {
             Label(isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .frame(minHeight: LectraSizing.minHitTarget)
-                .background(Color.white.opacity(0.08))
-                .clipShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LectraSecondaryButtonStyle())
         .disabled(isRefreshing)
         .accessibilityIdentifier("settings.integrations.refresh")
     }
@@ -121,7 +116,7 @@ struct IntegrationsSettingsView: View {
                 title: "Canvas",
                 subtitle: "Imports course files through the in-app downloader",
                 systemImage: "graduationcap.fill",
-                tint: Color(hex: 0xF36B58),
+                tint: LectraColor.canvasTint,
                 connectionState: .disconnected,
                 expiry: nil,
                 note: "Connect Canvas by opening a course file from Course Brain and completing the web sign-in flow if prompted."
@@ -156,7 +151,7 @@ struct IntegrationsSettingsView: View {
             title: "Canvas",
             subtitle: "Imports course files through the in-app downloader",
             systemImage: "graduationcap.fill",
-            tint: Color(hex: 0xF36B58),
+            tint: LectraColor.canvasTint,
             connectionState: .connected,
             expiry: expiry,
             note: note
@@ -170,7 +165,7 @@ struct IntegrationsSettingsView: View {
                 title: "Gradescope",
                 subtitle: "Syncs assignments and imports templates",
                 systemImage: "checkmark.seal.fill",
-                tint: Color(hex: 0x2BA98E),
+                tint: LectraColor.gradescopeTint,
                 connectionState: .disconnected,
                 expiry: nil,
                 note: "Connect Gradescope from Lectra's Gradescope workspace."
@@ -194,7 +189,7 @@ struct IntegrationsSettingsView: View {
             title: "Gradescope",
             subtitle: "Syncs assignments and imports templates",
             systemImage: "checkmark.seal.fill",
-            tint: Color(hex: 0x2BA98E),
+            tint: LectraColor.gradescopeTint,
             connectionState: .connected,
             expiry: expiry,
             note: note
@@ -242,18 +237,18 @@ private struct IntegrationStatusCard: View {
                         .frame(width: 56, height: 56)
 
                     Image(systemName: integration.systemImage)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(LectraTypography.title)
                         .foregroundColor(integration.tint)
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(integration.title)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(LectraTypography.title)
                         .foregroundColor(.white)
                         .lineLimit(2)
 
                     Text(integration.subtitle)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(LectraTypography.body)
                         .foregroundColor(Color.white.opacity(0.62))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -261,7 +256,7 @@ private struct IntegrationStatusCard: View {
 
                 Spacer(minLength: 0)
 
-                StatusBadge(state: displayedState)
+                LectraStatusBadge(title: displayedState.statusLabel, color: displayedState.statusColor)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -288,37 +283,16 @@ private struct IntegrationStatusCard: View {
                 }
 
                 Text(integration.note)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(Color.white.opacity(0.54))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(22)
-        .background(Color.white.opacity(0.04))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .lectraCard(cornerRadius: LectraRadius.panel)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(integration.title). \(displayedState.statusLabel). \(integration.note)")
-    }
-}
-
-private struct StatusBadge: View {
-    let state: IntegrationDisplayState
-
-    var body: some View {
-        Text(state.statusLabel)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(state.statusColor)
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(state.statusColor.opacity(0.12))
-            .clipShape(Capsule())
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: true)
     }
 }
 
@@ -330,12 +304,12 @@ private struct LabeledStatusRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text(label)
-                .font(.system(size: 13, weight: .bold))
+                .font(LectraTypography.caption)
                 .foregroundColor(Color.white.opacity(0.42))
                 .frame(width: 62, alignment: .leading)
 
             Text(value)
-                .font(.system(size: 14, weight: .semibold))
+                .font(LectraTypography.bodyEmphasis)
                 .foregroundColor(emphasisColor)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -358,7 +332,7 @@ private struct IntegrationStatusSnapshot: Identifiable {
             title: "Canvas",
             subtitle: "Checking connection",
             systemImage: "graduationcap.fill",
-            tint: Color(hex: 0xF36B58),
+            tint: LectraColor.canvasTint,
             connectionState: .checking,
             expiry: nil,
             note: "Reading Lectra's live and saved Canvas sessions."
@@ -368,7 +342,7 @@ private struct IntegrationStatusSnapshot: Identifiable {
             title: "Gradescope",
             subtitle: "Checking connection",
             systemImage: "checkmark.seal.fill",
-            tint: Color(hex: 0x2BA98E),
+            tint: LectraColor.gradescopeTint,
             connectionState: .checking,
             expiry: nil,
             note: "Reading the current Gradescope session."
@@ -455,13 +429,13 @@ private enum IntegrationDisplayState {
     var statusColor: Color {
         switch self {
         case .checking:
-            return Color(hex: 0xFFB44B)
+            return LectraColor.warning
         case .connected:
             return LectraColor.success
         case .disconnected:
-            return Color(hex: 0xF36B58)
+            return LectraColor.canvasTint
         case .expired:
-            return Color(hex: 0xFFB44B)
+            return LectraColor.warning
         }
     }
 }

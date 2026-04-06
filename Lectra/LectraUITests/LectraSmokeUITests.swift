@@ -1,6 +1,8 @@
 import XCTest
 
 final class LectraSmokeUITests: LectraUITestCase {
+    private let reviewPacketID = "20000000-0000-0000-0000-000000000001"
+
     func testCompactEditorShowsOverflowMenu() {
         let app = launchApp(scenario: .editorCompact)
 
@@ -52,6 +54,28 @@ final class LectraSmokeUITests: LectraUITestCase {
         )
         XCTAssertFalse(
             element(in: app, identifier: "library.notifications").exists
+        )
+    }
+
+    func testLibraryFixtureShowsDocumentCardsAndOptions() {
+        let app = launchApp(scenario: .library)
+        let reviewCard = element(in: app, identifier: "library.document.card.\(reviewPacketID)")
+
+        XCTAssertTrue(
+            element(in: app, identifier: "library.search").waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(
+            element(in: app, identifier: "library.account").exists
+        )
+        XCTAssertTrue(
+            element(in: app, identifier: "library.sidebarToggle").exists
+        )
+        XCTAssertTrue(
+            reviewCard.waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(reviewCard.label.contains("Last modified"))
+        XCTAssertTrue(
+            element(in: app, identifier: "library.document.options.\(reviewPacketID)").exists
         )
     }
 }

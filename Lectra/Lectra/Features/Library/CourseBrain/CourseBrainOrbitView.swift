@@ -10,6 +10,7 @@ import SwiftUI
 ///
 /// Layout: Course sections → horizontally‑scrollable item cards → type‑icon + title + due badge.
 struct CourseBrainOrbitView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let allNodes: [CourseBrainNode]
     let courseSummaries: [CourseBrainCourseSummary]
@@ -61,7 +62,7 @@ struct CourseBrainOrbitView: View {
             .padding(.horizontal, 20)
             .padding(.top, 12)
         }
-        .background(Color(hex: 0x070708))
+        .background(LectraColor.surfaceOverlay)
     }
 
     static func dueSoonNodes(from nodes: [CourseBrainNode], now: Date = Date()) -> [CourseBrainNode] {
@@ -99,12 +100,12 @@ struct CourseBrainOrbitView: View {
             HStack(spacing: 8) {
                 Image(systemName: "flame.fill")
                     .foregroundColor(LectraColor.accent)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(LectraTypography.headline)
                 Text("Due Soon")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(LectraTypography.titleSmall)
                     .foregroundColor(.white)
                 Text("\(urgentItems.count)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(LectraTypography.caption)
                     .foregroundColor(LectraColor.accent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -149,14 +150,14 @@ struct CourseBrainOrbitView: View {
                     if let courseName = node.metadata.courseName {
                         Text(abbreviate(courseName, max: 20))
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.white.opacity(0.5))
                             .lineLimit(1)
                     }
                     Spacer()
                 }
 
                 Text(node.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(LectraTypography.bodyEmphasis)
                     .foregroundColor(.white)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -192,7 +193,7 @@ struct CourseBrainOrbitView: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(0.18), radius: 12, x: 0, y: 6)
+            .lectraShadow(LectraElevation.medium())
         }
         .buttonStyle(.plain)
     }
@@ -203,11 +204,20 @@ struct CourseBrainOrbitView: View {
         VStack(alignment: .leading, spacing: 0) {
             // ─── Course Header ───
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                LectraHaptics.selection()
+                if reduceMotion {
                     if expandedCourseIDs.contains(group.courseId) {
                         expandedCourseIDs.remove(group.courseId)
                     } else {
                         expandedCourseIDs.insert(group.courseId)
+                    }
+                } else {
+                    withAnimation(LectraMotion.expand) {
+                        if expandedCourseIDs.contains(group.courseId) {
+                            expandedCourseIDs.remove(group.courseId)
+                        } else {
+                            expandedCourseIDs.insert(group.courseId)
+                        }
                     }
                 }
             } label: {
@@ -217,11 +227,11 @@ struct CourseBrainOrbitView: View {
                         .frame(width: 4, height: 24)
 
                     Text(group.courseName)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(LectraTypography.headline)
                         .foregroundColor(.white)
 
                     Text("\(group.items.count)")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(LectraTypography.caption)
                         .foregroundColor(.white.opacity(0.4))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
@@ -231,7 +241,7 @@ struct CourseBrainOrbitView: View {
                     Spacer()
 
                     Image(systemName: expandedCourseIDs.contains(group.courseId) ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(LectraTypography.caption)
                         .foregroundColor(.white.opacity(0.3))
                 }
                 .padding(.vertical, 14)
@@ -284,13 +294,13 @@ struct CourseBrainOrbitView: View {
             HStack(spacing: 12) {
                 // Type icon
                 typeIcon(node.type)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(LectraTypography.body)
                     .frame(width: 28)
 
                 // Title + module
                 VStack(alignment: .leading, spacing: 2) {
                     Text(node.title)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(LectraTypography.body)
                         .foregroundColor(node.id == selectedNodeID ? .white : .white.opacity(0.88))
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -319,13 +329,14 @@ struct CourseBrainOrbitView: View {
                     if isPDFLike(node) {
                         // Import into Lectra button
                         Button {
+                            LectraHaptics.tap()
                             onImportPDF(url, node.title)
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.down.doc.fill")
-                                    .font(.system(size: 11, weight: .bold))
+                                    .font(LectraTypography.footnoteBold)
                                 Text("Open")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(LectraTypography.caption)
                             }
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
@@ -355,10 +366,11 @@ struct CourseBrainOrbitView: View {
                     } else {
                         // External link button
                         Button {
+                            LectraHaptics.tap()
                             onNodeOpen(node.id)
                         } label: {
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(LectraTypography.caption)
                                 .foregroundColor(.white.opacity(0.9))
                                 .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                                 .background(
@@ -411,15 +423,15 @@ struct CourseBrainOrbitView: View {
         } label: {
             HStack(spacing: 6) {
                 typeIcon(node.type)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(LectraTypography.footnote)
                 Text(abbreviate(node.title, max: 24))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(.white.opacity(0.8))
                     .lineLimit(1)
 
                 if let submissionStatus = node.metadata.headlineSubmissionStatus {
                     Text(submissionStatus.displayTitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(LectraTypography.footnoteBold)
                         .foregroundColor(submissionBadgeForegroundColor(for: submissionStatus))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -427,7 +439,7 @@ struct CourseBrainOrbitView: View {
                         .clipShape(Capsule())
                 } else if node.metadata.dueAt != nil {
                     Circle()
-                        .fill(Color(hex: 0xFF5E5E))
+                        .fill(LectraColor.accentDestructive)
                         .frame(width: 6, height: 6)
                 }
             }
@@ -458,16 +470,16 @@ struct CourseBrainOrbitView: View {
         let color: Color
         if isPast {
             text = "Past due"
-            color = Color(hex: 0xFF5E5E)
+            color = LectraColor.accentDestructive
         } else if isToday {
             text = "Today"
-            color = Color(hex: 0xFF5E5E)
+            color = LectraColor.accentDestructive
         } else if isTomorrow {
             text = "Tomorrow"
-            color = Color(hex: 0xFFA033)
+            color = LectraColor.warning
         } else if daysUntil <= 7 {
             text = "\(daysUntil)d left"
-            color = Color(hex: 0xFFA033)
+            color = LectraColor.warning
         } else {
             let formatter = DateFormatter()
             formatter.dateFormat = "MMM d"
@@ -476,7 +488,7 @@ struct CourseBrainOrbitView: View {
         }
 
         return Text(text)
-            .font(.system(size: 11, weight: .semibold))
+            .font(LectraTypography.footnoteBold)
             .foregroundColor(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -486,7 +498,7 @@ struct CourseBrainOrbitView: View {
 
     private func submissionBadge(_ status: CourseBrainSubmissionStatus) -> some View {
         Text(status.displayTitle)
-            .font(.system(size: 11, weight: .semibold))
+            .font(LectraTypography.footnoteBold)
             .foregroundColor(submissionBadgeForegroundColor(for: status))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)

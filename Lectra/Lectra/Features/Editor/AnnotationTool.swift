@@ -22,18 +22,12 @@ enum AnnotationInkColor: String, CaseIterable, Hashable, Codable {
 
     var inkUIColor: UIColor {
         switch self {
-        case .black:
-            return UIColor(white: 0.0, alpha: 1.0)
-        case .white:
-            return UIColor(white: 1.0, alpha: 1.0)
-        case .accent:
-            return LectraColor.accentUIColor
-        case .yellow:
-            return UIColor(red: 255.0 / 255.0, green: 214.0 / 255.0, blue: 64.0 / 255.0, alpha: 1.0)
-        case .blue:
-            return UIColor(red: 0.0 / 255.0, green: 122.0 / 255.0, blue: 255.0 / 255.0, alpha: 1.0)
-        case .green:
-            return UIColor(red: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1.0)
+        case .black:   return LectraInkPalette.black
+        case .white:   return LectraInkPalette.white
+        case .accent:  return LectraInkPalette.accent
+        case .yellow:  return LectraInkPalette.yellow
+        case .blue:    return LectraInkPalette.blue
+        case .green:   return LectraInkPalette.green
         }
     }
 }

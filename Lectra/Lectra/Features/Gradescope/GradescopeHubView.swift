@@ -91,41 +91,35 @@ struct GradescopeHubView: View {
     private var topBar: some View {
         HStack {
             Text("Gradescope")
-                .font(.largeTitle.weight(.bold))
+                .font(LectraTypography.displaySmall)
                 .foregroundColor(.white.opacity(0.96))
 
             Spacer(minLength: 0)
 
             if gradescopeManager.isAuthenticated {
                 Button {
+                    LectraHaptics.selection()
                     Task {
                         await gradescopeManager.refreshCourses()
                         bootstrapAuthenticatedState()
                     }
                 } label: {
                     Text("Refresh")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: LectraSizing.minHitTarget)
-                        .background(Color(hex: 0xE84D4D).opacity(0.12))
-                        .clipShape(Capsule())
+                        .foregroundColor(.white)
                 }
+                .buttonStyle(LectraSecondaryButtonStyle())
                 .accessibilityIdentifier("gradescope.refresh")
 
                 Button {
+                    LectraHaptics.warning()
                     gradescopeManager.logout()
                     selectedCourseID = ""
                     localMessage = nil
                 } label: {
                     Text("Sign Out")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: LectraSizing.minHitTarget)
-                        .background(Color(hex: 0xE84D4D).opacity(0.12))
-                        .clipShape(Capsule())
+                        .foregroundColor(LectraColor.accentDestructive)
                 }
+                .buttonStyle(LectraSecondaryButtonStyle())
                 .accessibilityIdentifier("gradescope.signOut")
             }
         }
@@ -134,24 +128,25 @@ struct GradescopeHubView: View {
     private var authBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sign in with your Gradescope account to sync assignments and import templates.")
-                .font(.body)
+                .font(LectraTypography.body)
                 .foregroundColor(.white.opacity(0.74))
 
             TextField("Email", text: $email)
                 .textInputAutocapitalization(.never)
                 .disableAutocorrection(true)
                 .padding(10)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(Color.white.opacity(LectraOpacity.subtle))
+                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
 
             SecureField("Password", text: $password)
                 .textInputAutocapitalization(.never)
                 .disableAutocorrection(true)
                 .padding(10)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(Color.white.opacity(LectraOpacity.subtle))
+                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
 
             Button {
+                LectraHaptics.tap()
                 Task {
                     await gradescopeManager.login(email: email, password: password)
                     if gradescopeManager.isAuthenticated {
@@ -165,42 +160,36 @@ struct GradescopeHubView: View {
                             .tint(.white)
                     }
                     Text("Sign In")
-                        .font(.headline.weight(.semibold))
                 }
-                .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: LectraSizing.minHitTarget)
-                .background(Color(hex: 0x4A222A))
-                .clipShape(Capsule())
             }
+            .buttonStyle(LectraPrimaryButtonStyle(disabled: gradescopeManager.isBusy))
             .disabled(gradescopeManager.isBusy)
 
             Button {
+                LectraHaptics.selection()
                 showWebLoginSheet = true
             } label: {
                 Text("Sign In via Gradescope Web")
-                    .font(.headline.weight(.semibold))
-                    .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: LectraSizing.minHitTarget)
-                    .background(Color.white.opacity(0.10))
-                    .clipShape(Capsule())
             }
+            .buttonStyle(LectraSecondaryButtonStyle())
             .disabled(gradescopeManager.isBusy)
 
             Text("Use web sign-in for Google or school-credential Gradescope accounts.")
-                .font(.callout)
+                .font(LectraTypography.captionMedium)
                 .foregroundColor(.white.opacity(0.62))
 
             if let error = gradescopeManager.errorMessage {
                 Text(error)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.accentSoft)
             }
 
             Spacer(minLength: 0)
         }
         .padding(18)
+        .lectraCard(cornerRadius: LectraRadius.panel)
     }
 
     private var authenticatedBody: some View {
@@ -224,7 +213,7 @@ struct GradescopeHubView: View {
 
             if assignments.isEmpty, !gradescopeManager.isBusy {
                 Text("No assignments available for this course.")
-                    .font(.body)
+                    .font(LectraTypography.body)
                     .foregroundColor(.white.opacity(0.72))
                     .padding(.top, 8)
             }
@@ -239,18 +228,18 @@ struct GradescopeHubView: View {
 
             if let localMessage {
                 Text(localMessage)
-                    .font(.footnote.weight(.semibold))
+                    .font(LectraTypography.caption)
                     .foregroundColor(
                         localMessage.contains("Imported")
-                        ? Color(hex: 0x35B77A)
-                        : (localMessage.contains("No template") ? Color(hex: 0xF0BA5C) : Color(hex: 0xE84D4D))
+                        ? LectraColor.gradescopeTint
+                        : (localMessage.contains("No template") ? LectraColor.warningSubtle : LectraColor.accentSoft)
                     )
             }
 
             if let error = gradescopeManager.errorMessage {
                 Text(error)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.accentSoft)
             }
 
             if let assignmentTechnicalDetails {
@@ -268,6 +257,7 @@ struct GradescopeHubView: View {
             }
         }
         .padding(18)
+        .lectraCard(cornerRadius: LectraRadius.panel)
         .onChange(of: selectedCourseID) { _, newValue in
             guard !newValue.isEmpty else { return }
             if gradescopeManager.assignments(for: newValue).isEmpty {
@@ -293,6 +283,7 @@ struct GradescopeHubView: View {
                 Spacer(minLength: 0)
 
                 Button {
+                    LectraHaptics.tap()
                     Task { await importTemplate(for: assignment) }
                 } label: {
                     HStack(spacing: 6) {
@@ -304,18 +295,14 @@ struct GradescopeHubView: View {
                         Image(systemName: "square.and.arrow.down")
                         Text("Import Template")
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
                     .frame(minHeight: LectraSizing.minHitTarget)
-                    .background(Color(hex: 0x4A222A))
-                    .clipShape(Capsule())
                 }
+                .buttonStyle(LectraPrimaryButtonStyle(disabled: isImportingTemplate))
                 .disabled(isImportingTemplate)
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
+        .lectraCard(cornerRadius: LectraRadius.element)
     }
 
     private func bootstrapAuthenticatedState() {

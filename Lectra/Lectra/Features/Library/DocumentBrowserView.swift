@@ -416,10 +416,6 @@ struct DocumentBrowserView: View {
                 sidebar
                     .frame(width: sidebarWidth)
 
-                Rectangle()
-                    .fill(Color.white.opacity(0.04))
-                    .frame(width: 1)
-
                 mainPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(Color.black)
@@ -520,8 +516,6 @@ struct DocumentBrowserView: View {
             } else {
                 hasPendingBackgroundSyncToast = true
             }
-        } else if payload.metadata.syncState == .failed {
-            featureNotice = payload.metadata.syncErrorMessage
         } else if editorRoute != nil {
             hasPendingBackgroundSyncToast = true
         }
@@ -796,6 +790,19 @@ struct DocumentBrowserView: View {
         return "Notice"
     }
 
+    private func showFeatureNotice(_ message: String?, force: Bool = false) {
+        guard let message else { return }
+        guard force || !Self.shouldSuppressBlockingNotice(for: message) else { return }
+        featureNotice = message
+    }
+
+    static func shouldSuppressBlockingNotice(for message: String) -> Bool {
+        message == "Saved locally. We'll retry upload automatically."
+            || message.hasPrefix("Saved locally, but iCloud sync did not finish")
+            || message.hasPrefix("Changes not saved locally")
+            || message.hasPrefix("Changes weren't saved locally")
+    }
+
     private var resolvedAccountDisplayName: String {
         if let userName = authManager.userName?.trimmingCharacters(in: .whitespacesAndNewlines),
            !userName.isEmpty {
@@ -822,14 +829,14 @@ struct DocumentBrowserView: View {
 
     private func showBackgroundSyncToast(_ message: String) {
         backgroundSyncToastTask?.cancel()
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(LectraMotion.quick) {
             backgroundSyncToast = message
         }
 
         backgroundSyncToastTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_300_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(LectraMotion.quick) {
                 backgroundSyncToast = nil
             }
         }
@@ -845,7 +852,7 @@ struct DocumentBrowserView: View {
     private var sidebar: some View {
         VStack(alignment: isSidebarCollapsed ? .center : .leading, spacing: isSidebarCollapsed ? 12 : 10) {
             Button {
-                withAnimation(.easeInOut(duration: 0.22)) {
+                withAnimation(LectraMotion.toolbarDock) {
                     isSidebarCollapsed.toggle()
                 }
             } label: {
@@ -855,16 +862,12 @@ struct DocumentBrowserView: View {
                     .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                     .background {
                         Circle()
-                            .fill(.regularMaterial)
-                            .environment(\.colorScheme, .dark)
+                            .fill(LectraColor.sidebarControl)
                             .overlay(
                                 Circle()
-                                    .fill(LectraGlass.sidebarTint)
+                                    .stroke(LectraColor.sidebarDivider, lineWidth: 1)
                             )
-                            .overlay(
-                                Circle()
-                                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
-                            )
+                            .shadow(color: Color.black.opacity(0.22), radius: 8, x: 0, y: 4)
                     }
             }
             .buttonStyle(.plain)
@@ -893,32 +896,32 @@ struct DocumentBrowserView: View {
         .padding(.horizontal, isSidebarCollapsed ? 10 : 16)
         .padding(.vertical, 16)
         .background(
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .environment(\.colorScheme, .dark)
-
-                LectraGlass.sidebarTint
-
-                LinearGradient(
-                    colors: [Color.white.opacity(0.08), Color.clear],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(LectraGlass.hairlineStroke)
-                    .frame(width: 0.5)
-            }
-            .ignoresSafeArea()
+            Rectangle()
+                .fill(LectraColor.sidebarBackground)
+                .overlay {
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.05),
+                            Color(hex: 0x6B7689, opacity: 0.08),
+                            Color.clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(LectraColor.sidebarDivider)
+                        .frame(width: 1)
+                }
+                .ignoresSafeArea()
         )
     }
 
     @ViewBuilder
     private func sidebarRow(for section: LibrarySection) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
+            withAnimation(LectraMotion.quick) {
                 selectSection(section)
             }
         } label: {
@@ -941,14 +944,18 @@ struct DocumentBrowserView: View {
                 .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
 
             }
-            .foregroundColor(Color.white.opacity(0.95))
+            .foregroundColor(activeSection == section ? Color.white.opacity(0.96) : Color.white.opacity(0.82))
             .padding(.horizontal, isSidebarCollapsed ? 0 : 10)
             .padding(.vertical, isSidebarCollapsed ? 12 : 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: isSidebarCollapsed ? .center : .leading)
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(activeSection == section ? Color(hex: 0x4A222A) : Color.clear)
+                    .fill(activeSection == section ? LectraColor.sidebarSelection : Color.clear)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(activeSection == section ? Color.white.opacity(0.08) : Color.clear, lineWidth: 1)
+                    }
             )
         }
         .buttonStyle(.plain)
@@ -1392,10 +1399,10 @@ struct DocumentBrowserView: View {
         let metrics = libraryGridMetrics
         let baseCard = DocumentCardView(
             document: doc,
-            subtitle: formattedDocumentDate(for: doc),
+            subtitle: formattedDocumentGridDate(for: doc),
             metrics: metrics,
             onOptionsTap: isSelectionMode ? nil : {
-                    selectedDocumentForOptions = doc
+                selectedDocumentForOptions = doc
             },
             onSyncRetryTap: doc.syncState == .failed ? {
                 Task { await DocumentSyncCoordinator.shared.retry(documentId: doc.id) }
@@ -1491,7 +1498,7 @@ struct DocumentBrowserView: View {
         HStack(spacing: 16) {
             if showSearch {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(LectraMotion.quick) {
                         showSearchOverlay = true
                         searchText = ""
                     }
@@ -1829,7 +1836,7 @@ struct DocumentBrowserView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
+                        withAnimation(LectraMotion.quick) {
                             showSearchOverlay = false
                         }
                     } label: {
@@ -2043,7 +2050,7 @@ struct DocumentBrowserView: View {
         if isSelectionMode {
             exitSelectionMode()
         }
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(LectraMotion.quick) {
             currentFolderId = folder.id
             documentFilter = .all
         }
@@ -2059,7 +2066,7 @@ struct DocumentBrowserView: View {
         if isSelectionMode {
             exitSelectionMode()
         }
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(LectraMotion.quick) {
             if let currentFolderId,
                let parentFolderId = parentFolderId(for: currentFolderId) {
                 self.currentFolderId = parentFolderId
@@ -2371,6 +2378,12 @@ struct DocumentBrowserView: View {
         document.updatedAt.formatted(date: .abbreviated, time: .shortened)
     }
 
+    private func formattedDocumentGridDate(for document: LocalDocument) -> String {
+        let date = document.updatedAt.formatted(.dateTime.month(.abbreviated).day().year())
+        let time = document.updatedAt.formatted(.dateTime.hour().minute())
+        return "\(date) • \(time)"
+    }
+
     private func documentType(for document: LocalDocument) -> String {
         if let url = document.localPDFURL {
             return url.pathExtension.lowercased()
@@ -2516,7 +2529,10 @@ struct DocumentBrowserView: View {
             }
         } catch {
             await MainActor.run {
-                featureNotice = "Saved locally, but iCloud sync did not finish: \(error.localizedDescription)"
+                showFeatureNotice(
+                    "Saved locally, but iCloud sync did not finish: \(error.localizedDescription)",
+                    force: triggeredByUser
+                )
             }
         }
 
@@ -2913,7 +2929,7 @@ struct DocumentBrowserView: View {
         let documentIDs = items.compactMap(UUID.init(uuidString:))
         guard !documentIDs.isEmpty else { return false }
 
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(LectraMotion.quick) {
             for documentId in documentIDs {
                 moveDocument(documentId: documentId, to: folderId, shouldAnimate: false)
             }
@@ -2944,7 +2960,7 @@ struct DocumentBrowserView: View {
             return
         }
 
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(LectraMotion.quick) {
             for doc in docsToMove {
                 moveDocument(documentId: doc.id, to: targetFolderId)
             }
@@ -4782,53 +4798,7 @@ struct ShareSheetView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-struct ProfileAvatarView: View {
-    let avatarURL: String?
-    let fallbackName: String?
-    var size: CGFloat = 36
-
-    var body: some View {
-        Group {
-            if let avatarURL,
-               let url = URL(string: avatarURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure, .empty:
-                        fallbackAvatar
-                    @unknown default:
-                        fallbackAvatar
-                    }
-                }
-            } else {
-                fallbackAvatar
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(Circle())
-    }
-
-    private var fallbackAvatar: some View {
-        ZStack {
-            Circle().fill(Color(hex: 0xA88F63))
-            Text(fallbackInitial)
-                .font(.system(size: size * 0.42, weight: .medium))
-                .foregroundColor(.white)
-        }
-    }
-
-    private var fallbackInitial: String {
-        if let initial = fallbackName?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .first {
-            return String(initial).uppercased()
-        }
-        return "N"
-    }
-}
+// ProfileAvatarView has been moved to Shared/Components/ProfileAvatarView.swift
 
 // MARK: - Document Picker (Files app)
 

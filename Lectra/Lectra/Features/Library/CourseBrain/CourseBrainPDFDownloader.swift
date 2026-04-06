@@ -236,7 +236,8 @@ extension CourseBrainPDFDownloader: WKNavigationDelegate {
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction
     ) async -> WKNavigationActionPolicy {
-        guard let url = navigationAction.request.url else { return .allow }
+        let request = await MainActor.run { navigationAction.request }
+        guard let url = request.url else { return .allow }
         let host = url.host?.lowercased() ?? ""
 
         // If navigating to a Canvas file page that isn't the force-download variant
@@ -251,7 +252,7 @@ extension CourseBrainPDFDownloader: WKNavigationDelegate {
                 let correctURL = await MainActor.run { Self.canvasDownloadURL(from: url) }
                 if correctURL.absoluteString != url.absoluteString {
                     await MainActor.run {
-                        webView.load(URLRequest(url: correctURL))
+                        _ = webView.load(URLRequest(url: correctURL))
                     }
                     return .cancel
                 }

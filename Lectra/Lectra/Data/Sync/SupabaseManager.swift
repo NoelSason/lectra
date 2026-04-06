@@ -10,7 +10,7 @@ import Foundation
 import Supabase
 
 /// Central access point for the shared Supabase client.
-final class SupabaseManager {
+nonisolated final class SupabaseManager {
 
     // MARK: - Singleton
     static let shared = SupabaseManager()

@@ -10,34 +10,35 @@ struct GradescopeSubmissionWebSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: LectraSpacing.md) {
                 Text("Use this page to add group partners and assign pages before final submission.")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(.white.opacity(0.72))
+                    .font(LectraTypography.body)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
 
                 GradescopeSubmissionWebView(url: url, onNavigation: { currentURL = $0 })
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                            .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
                     )
 
                 if let currentURL {
                     Text(currentURL.absoluteString)
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.62))
+                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
                         .textSelection(.enabled)
                         .lineLimit(2)
                 }
             }
-            .padding(14)
-            .background(Color(hex: 0x111214).ignoresSafeArea())
+            .padding(LectraSpacing.lg)
+            .background(LectraColor.surfaceElevated.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
+                        LectraHaptics.selection()
                         dismiss()
                     }
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }

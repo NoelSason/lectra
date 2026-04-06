@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 enum LectraUITestScenario: String {
@@ -100,17 +101,73 @@ struct LectraLibraryLaunchConfiguration {
     let lastCloudSyncDate: Date
     let lastBackupDate: Date
 
-    static let smoke = LectraLibraryLaunchConfiguration(
-        documents: [],
-        folders: [],
-        documentFolderMap: [:],
-        recentDocumentIDs: [],
-        currentFolderID: nil,
-        isCloudSyncEnabled: false,
-        isAutoBackupEnabled: true,
-        lastCloudSyncDate: Date(timeIntervalSince1970: 1_731_974_400),
-        lastBackupDate: Date(timeIntervalSince1970: 1_731_974_400)
-    )
+    static let smoke: LectraLibraryLaunchConfiguration = {
+        let importedFolder = LocalFolder(
+            id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
+            name: "Imported",
+            createdAt: Date(timeIntervalSince1970: 1_774_160_800),
+            colorHex: 0x8B6AA6,
+            iconSystemName: "tray",
+            systemTag: nil
+        )
+
+        let reviewPacket = makeMockDocument(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
+            title: "Organic Chemistry Midterm Review Packet",
+            updatedAt: Date(timeIntervalSince1970: 1_774_679_200)
+        )
+        let staticsLab = makeMockDocument(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000002")!,
+            title: "Statics Lab 4 Worksheet",
+            updatedAt: Date(timeIntervalSince1970: 1_774_635_700),
+            syncState: .queuedUpload
+        )
+        let notebook = makeMockDocument(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000003")!,
+            title: "Lecture Notebook - Week 8",
+            updatedAt: Date(timeIntervalSince1970: 1_774_548_000),
+            isFavorite: true
+        )
+        let importedScan = makeMockDocument(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000004")!,
+            title: "Imported Problem Set Scan",
+            updatedAt: Date(timeIntervalSince1970: 1_774_462_000)
+        )
+
+        return LectraLibraryLaunchConfiguration(
+            documents: [reviewPacket, staticsLab, notebook, importedScan],
+            folders: [importedFolder],
+            documentFolderMap: [
+                importedScan.id.uuidString: importedFolder.id.uuidString
+            ],
+            recentDocumentIDs: [reviewPacket.id, notebook.id],
+            currentFolderID: nil,
+            isCloudSyncEnabled: false,
+            isAutoBackupEnabled: true,
+            lastCloudSyncDate: Date(timeIntervalSince1970: 1_731_974_400),
+            lastBackupDate: Date(timeIntervalSince1970: 1_731_974_400)
+        )
+    }()
+
+    private static func makeMockDocument(
+        id: UUID,
+        title: String,
+        updatedAt: Date,
+        syncState: DocumentSyncState = .idle,
+        isFavorite: Bool = false
+    ) -> LocalDocument {
+        let document = LocalDocument(
+            title: title,
+            localURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(id.uuidString).pdf"),
+            id: id,
+            isFavorite: isFavorite,
+            createdAt: updatedAt.addingTimeInterval(-60 * 60 * 24),
+            updatedAt: updatedAt
+        )
+        document.localPDFURL = nil
+        document.syncState = syncState
+        return document
+    }
 }
 
 struct LectraUITestRootView: View {

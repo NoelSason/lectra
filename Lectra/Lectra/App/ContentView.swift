@@ -25,6 +25,9 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
+            LectraColor.background
+                .ignoresSafeArea()
+
             switch rootScreen {
             case .library:
                 DocumentBrowserView()

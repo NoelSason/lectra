@@ -48,7 +48,7 @@ struct CourseBrainPane: View {
                     }
                 }
             }
-            .background(Color.black)
+            .background(LectraColor.surfaceOverlay)
         }
         .onAppear {
             viewModel.load(documents: documents)
@@ -76,12 +76,12 @@ struct CourseBrainPane: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
                 Text("Course Brain")
-                    .font(.system(size: 36, weight: .semibold))
+                    .font(LectraTypography.displayLarge)
                     .foregroundColor(.white)
 
                 if let syncedAt = viewModel.headerLastSyncedAt() {
                     Text("Last synced \(syncedAt.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(LectraTypography.captionMedium)
                         .foregroundColor(Color.white.opacity(0.74))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
@@ -126,7 +126,7 @@ struct CourseBrainPane: View {
         ZStack(alignment: .topLeading) {
             if viewModel.isLoading {
                 ProgressView("Loading Course Brain")
-                    .tint(Color(hex: 0xE84D4D))
+                    .tint(LectraColor.accentSoft)
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.sections.isEmpty {
@@ -137,7 +137,7 @@ struct CourseBrainPane: View {
                         ForEach(viewModel.sections) { section in
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(section.bucket.rawValue)
-                                    .font(.system(size: 17, weight: .semibold))
+                                    .font(LectraTypography.headlineMedium)
                                     .foregroundColor(.white)
 
                                 VStack(spacing: 8) {
@@ -154,17 +154,17 @@ struct CourseBrainPane: View {
 
             if let message = viewModel.bannerMessage {
                 Text(message)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Color(hex: 0x53242C).opacity(0.96))
+                    .background(LectraColor.surfaceCard.opacity(0.96))
                     .clipShape(Capsule())
                     .padding(.leading, 16)
                     .padding(.top, 14)
             }
         }
-        .background(Color(hex: 0x0A0A0B))
+        .background(LectraColor.surfaceOverlay)
     }
 
     private func assignmentRow(_ assignment: CourseBrainAssignmentSummary, isCompact: Bool) -> some View {
@@ -174,7 +174,7 @@ struct CourseBrainPane: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(assignment.title)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(LectraTypography.bodyEmphasis)
                         .foregroundColor(.white)
                         .lineLimit(2)
 
@@ -186,28 +186,28 @@ struct CourseBrainPane: View {
                         }
 
                         Text(relativeDateLabel(for: assignment.anchorDate))
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color(hex: 0xFFCA8A))
+                            .font(LectraTypography.footnoteBold)
+                            .foregroundColor(LectraColor.warning)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(Color(hex: 0x3A2312))
+                            .background(LectraColor.warning.opacity(LectraOpacity.medium))
                             .clipShape(Capsule())
                     }
                 }
 
                 Text(assignment.courseName)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(Color.white.opacity(0.72))
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
                     Text(assignment.anchorDate.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 12, weight: .regular))
+                        .font(LectraTypography.captionMedium)
                         .foregroundColor(Color.white.opacity(0.78))
 
                     if let moduleName = assignment.moduleName {
                         Text(moduleName)
-                            .font(.system(size: 12, weight: .regular))
+                            .font(LectraTypography.captionMedium)
                             .foregroundColor(Color.white.opacity(0.56))
                             .lineLimit(1)
                     }
@@ -216,10 +216,11 @@ struct CourseBrainPane: View {
 
             if let url = assignment.url {
                 Button {
+                    LectraHaptics.tap()
                     openResourceURL(url, preferCanvasApp: true)
                 } label: {
                     Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(LectraTypography.bodyEmphasis)
                         .foregroundColor(.white.opacity(0.9))
                         .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                         .background(Color.white.opacity(0.08))
@@ -231,14 +232,15 @@ struct CourseBrainPane: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(isSelected ? Color(hex: 0x241417) : Color.white.opacity(0.05))
+                .fill(isSelected ? LectraColor.surfaceCard.opacity(0.52) : Color.white.opacity(0.05))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(isSelected ? Color(hex: 0xE84D4D).opacity(0.45) : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? LectraColor.accentSoft.opacity(0.45) : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            LectraHaptics.selection()
             viewModel.selectAssignment(assignment.id)
             if isCompact {
                 showsCompactDetail = true
@@ -260,20 +262,20 @@ struct CourseBrainPane: View {
     private var emptyQueueState: some View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "checklist.checked")
-                .font(.system(size: 34, weight: .regular))
+                .font(LectraTypography.displayLarge)
                 .foregroundColor(Color.white.opacity(0.84))
 
             Text("No recent assignments")
-                .font(.system(size: 21, weight: .semibold))
+                .font(LectraTypography.title)
                 .foregroundColor(.white)
 
             Text("Course Brain now only shows assignments with dates between the past 7 days and the next 30 days. Undated assignments stay hidden.")
-                .font(.system(size: 14, weight: .regular))
+                .font(LectraTypography.body)
                 .foregroundColor(Color.white.opacity(0.68))
 
             if let syncedAt = viewModel.headerLastSyncedAt() {
                 Text("Latest snapshot: \(syncedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(Color.white.opacity(0.62))
             }
         }
@@ -296,16 +298,16 @@ struct CourseBrainPane: View {
                     }
                 } else if viewModel.isLoading {
                     ProgressView("Loading")
-                        .tint(Color(hex: 0xE84D4D))
+                        .tint(LectraColor.accentSoft)
                         .frame(maxWidth: .infinity, minHeight: 320)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Assignment Details")
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(LectraTypography.title)
                             .foregroundColor(.white)
 
                         Text("Select a recent assignment to inspect instructions, supporting resources, related PDFs, and sync freshness.")
-                            .font(.system(size: 14, weight: .regular))
+                            .font(LectraTypography.body)
                             .foregroundColor(Color.white.opacity(0.68))
                     }
                     .padding(.top, 8)
@@ -313,7 +315,7 @@ struct CourseBrainPane: View {
             }
             .padding(18)
         }
-        .background(Color(hex: 0x111114))
+        .background(LectraColor.surfaceElevated)
     }
 
     private func detailHeader(_ detail: CourseBrainAssignmentDetail) -> some View {
@@ -706,12 +708,12 @@ struct CourseBrainPane: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(LectraTypography.caption)
                     .lineLimit(1)
 
                 if let count {
                     Text("\(count)")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(LectraTypography.footnoteBold)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.white.opacity(isSelected ? 0.16 : 0.08))
@@ -723,7 +725,7 @@ struct CourseBrainPane: View {
             .padding(.vertical, 9)
             .background(
                 Capsule(style: .continuous)
-                    .fill(isSelected ? Color(hex: 0x4A222A) : Color.white.opacity(0.08))
+                    .fill(isSelected ? LectraColor.surfaceCard : Color.white.opacity(0.08))
             )
         }
         .buttonStyle(.plain)
@@ -847,18 +849,18 @@ private struct CourseBrainSearchBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .semibold))
+                .font(LectraTypography.bodyEmphasis)
                 .foregroundColor(Color.white.opacity(0.58))
 
             if isEditable {
                 TextField("", text: $text, prompt: Text(placeholder).foregroundColor(Color.white.opacity(0.42)))
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
-                    .font(.system(size: 14, weight: .regular))
+                    .font(LectraTypography.body)
                     .foregroundColor(.white)
             } else {
                 Text(text.isEmpty ? placeholder : text)
-                    .font(.system(size: 14, weight: .regular))
+                    .font(LectraTypography.body)
                     .foregroundColor(text.isEmpty ? Color.white.opacity(0.42) : .white)
             }
 
@@ -867,7 +869,7 @@ private struct CourseBrainSearchBar: View {
                     text = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(LectraTypography.bodyEmphasis)
                         .foregroundColor(Color.white.opacity(0.45))
                 }
                 .buttonStyle(.plain)

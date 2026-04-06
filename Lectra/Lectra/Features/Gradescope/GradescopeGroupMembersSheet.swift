@@ -26,75 +26,80 @@ struct GradescopeGroupMembersSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Add group members for this submission. Leave role blank if not needed.")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(.white.opacity(0.72))
+            VStack(alignment: .leading, spacing: LectraSpacing.md) {
+                Text("Add group members for this submission. Leave role blank if it is not required by the assignment.")
+                    .font(LectraTypography.body)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
 
                 ScrollView {
-                    VStack(spacing: 10) {
+                    VStack(spacing: LectraSpacing.sm) {
                         ForEach($rows) { $row in
-                            VStack(alignment: .leading, spacing: 8) {
-                                TextField("Email or user ID", text: $row.emailOrUserId)
-                                    .textInputAutocapitalization(.never)
-                                    .disableAutocorrection(true)
-                                    .padding(10)
-                                    .background(Color.white.opacity(0.08))
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                                TextField("Role (optional)", text: $row.role)
-                                    .padding(10)
-                                    .background(Color.white.opacity(0.08))
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            VStack(alignment: .leading, spacing: LectraSpacing.sm) {
+                                memberField("Email or user ID", text: $row.emailOrUserId)
+                                memberField("Role (optional)", text: $row.role)
 
                                 HStack {
                                     Spacer(minLength: 0)
                                     Button("Remove") {
+                                        LectraHaptics.selection()
                                         removeRow(id: row.id)
                                     }
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(Color(hex: 0xE84D4D))
+                                    .font(LectraTypography.caption)
+                                    .foregroundColor(LectraColor.accentDestructive)
                                 }
                             }
-                            .padding(10)
-                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.04)))
+                            .padding(LectraSpacing.md)
+                            .lectraCard(cornerRadius: LectraRadius.card, shadow: false)
                         }
                     }
                 }
 
                 Button("Add Member") {
+                    LectraHaptics.selection()
                     rows.append(MemberRow(emailOrUserId: "", role: ""))
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(Color.white.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .buttonStyle(LectraSecondaryButtonStyle())
 
                 Button("Save Members") {
                     let members = rows
-                        .map { GSGroupMemberDraft(emailOrUserId: $0.emailOrUserId.trimmingCharacters(in: .whitespacesAndNewlines), role: normalizedRole($0.role)) }
+                        .map {
+                            GSGroupMemberDraft(
+                                emailOrUserId: $0.emailOrUserId.trimmingCharacters(in: .whitespacesAndNewlines),
+                                role: normalizedRole($0.role)
+                            )
+                        }
                         .filter { !$0.emailOrUserId.isEmpty }
+                    LectraHaptics.success()
                     onSave(members)
                     dismiss()
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(Color(hex: 0x4A222A))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .buttonStyle(LectraPrimaryButtonStyle())
             }
-            .padding(14)
-            .background(Color(hex: 0x111214).ignoresSafeArea())
+            .padding(LectraSpacing.lg)
+            .background(LectraColor.surfaceElevated.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }
+    }
+
+    private func memberField(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .textInputAutocapitalization(.never)
+            .disableAutocorrection(true)
+            .font(LectraTypography.body)
+            .foregroundColor(.white)
+            .padding(.horizontal, LectraSpacing.md)
+            .frame(minHeight: LectraSizing.minHitTarget)
+            .background(Color.white.opacity(LectraOpacity.subtle))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                    .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
     }
 
     private func removeRow(id: UUID) {

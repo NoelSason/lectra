@@ -8,24 +8,31 @@ struct PopoverActionRow: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
+        Button {
+            if isDestructive {
+                LectraHaptics.warning()
+            } else {
+                LectraHaptics.selection()
+            }
+            action()
+        } label: {
+            HStack(spacing: LectraSpacing.sm) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(LectraTypography.body)
                     .frame(width: 24)
                 Text(title)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(LectraTypography.body)
                 Spacer(minLength: 0)
             }
-            .foregroundColor(isDestructive ? Color(hex: 0xE84D4D) : .white)
+            .foregroundColor(isDestructive ? LectraColor.accentDestructive : .white)
             .padding(.horizontal, 12)
-            .frame(height: 44)
+            .frame(height: LectraSizing.minHitTarget)
         }
         .buttonStyle(.plain)
 
         if showDivider {
             Divider()
-                .background(Color.white.opacity(0.12))
+                .background(Color.white.opacity(LectraOpacity.muted))
                 .padding(.leading, 12)
         }
     }

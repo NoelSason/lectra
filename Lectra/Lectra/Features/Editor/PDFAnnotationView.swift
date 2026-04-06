@@ -22,7 +22,7 @@ struct PDFAnnotationView: View {
             case .success:
                 return LectraColor.success.opacity(0.9)
             case .info:
-                return Color(hex: 0x2E8DFF, opacity: 0.92)
+                return LectraColor.info.opacity(0.92)
             case .error:
                 return LectraColor.accent.opacity(0.95)
             }
@@ -130,13 +130,14 @@ struct PDFAnnotationView: View {
                                     Spacer()
                                     HStack {
                                         Text("Page \(currentPage + 1) / \(max(totalPages, 1))")
-                                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                            .font(LectraTypography.caption)
                                             .foregroundColor(.white)
+                                            .contentTransition(.numericText())
                                             .padding(.horizontal, 14)
                                             .padding(.vertical, 9)
                                             .background(
                                                 Capsule()
-                                                    .fill(Color(hex: 0x0E1628, opacity: 0.9))
+                                                    .fill(LectraColor.surfaceFloating.opacity(0.9))
                                             )
                                             .overlay(
                                                 Capsule()
@@ -413,11 +414,11 @@ struct PDFAnnotationView: View {
         case .idle:
             return nil
         case .savingLocal, .flattening:
-            return EditorSyncStatusDescriptor(title: "Saving", color: Color(hex: 0x2E8DFF))
+            return EditorSyncStatusDescriptor(title: "Saving", color: LectraColor.info)
         case .queuedUpload:
-            return EditorSyncStatusDescriptor(title: "Queued", color: Color(hex: 0xD0A13A))
+            return EditorSyncStatusDescriptor(title: "Queued", color: LectraColor.warningSubtle)
         case .uploading:
-            return EditorSyncStatusDescriptor(title: "Uploading", color: Color(hex: 0x2E8DFF))
+            return EditorSyncStatusDescriptor(title: "Uploading", color: LectraColor.info)
         case .synced:
             return EditorSyncStatusDescriptor(title: "Synced", color: LectraColor.success)
         case .failed:
@@ -826,11 +827,11 @@ struct PDFAnnotationView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(result.subtitle)
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(LectraTypography.bodyEmphasis)
                                     .foregroundColor(.white)
                                 if let snippet = result.snippet {
                                     Text(snippet)
-                                        .font(.system(size: 13, weight: .medium))
+                                        .font(LectraTypography.body)
                                         .foregroundColor(Color.white.opacity(0.72))
                                         .multilineTextAlignment(.leading)
                                 }
@@ -843,7 +844,7 @@ struct PDFAnnotationView: View {
                     .background(Color.clear)
                 }
             }
-            .background(Color(hex: 0x0E1628).ignoresSafeArea())
+            .background(LectraColor.surfaceFloating.ignoresSafeArea())
             .navigationTitle("Search PDF")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -878,7 +879,7 @@ struct PDFAnnotationView: View {
                 .listRowBackground(Color.clear)
             }
             .scrollContentBackground(.hidden)
-            .background(Color(hex: 0x0E1628).ignoresSafeArea())
+            .background(LectraColor.surfaceFloating.ignoresSafeArea())
             .navigationTitle("Outline")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -899,7 +900,7 @@ extension Notification.Name {
     static let lectraBackgroundSyncCompleted = Notification.Name("lectraBackgroundSyncCompleted")
 }
 
-private struct DocumentOutlineDestination: Identifiable, Hashable {
+struct DocumentOutlineDestination: Identifiable, Hashable {
     let title: String
     let pageIndex: Int
     let depth: Int
@@ -977,7 +978,7 @@ private struct PDFEditorSearchBar: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 48)
-        .background(Color(hex: 0x171A22))
+        .background(LectraColor.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
@@ -1151,7 +1152,7 @@ private final class TiledPDFPageView: UIView {
     }
 }
 
-private enum InkBlendMode: String, Codable {
+nonisolated enum InkBlendMode: String, Codable, Sendable {
     case normal
     case multiply
 
@@ -1165,7 +1166,7 @@ private enum InkBlendMode: String, Codable {
     }
 }
 
-private struct InkColorComponents: Codable, Equatable {
+nonisolated struct InkColorComponents: Codable, Equatable, Sendable {
     var red: CGFloat
     var green: CGFloat
     var blue: CGFloat
@@ -1192,20 +1193,20 @@ private struct InkColorComponents: Codable, Equatable {
     }
 }
 
-private struct InkPoint: Codable, Equatable {
+nonisolated struct InkPoint: Codable, Equatable, Sendable {
     var x: CGFloat
     var y: CGFloat
     var force: CGFloat
 }
 
-private struct InkStroke: Codable, Equatable {
+nonisolated struct InkStroke: Codable, Equatable, Sendable {
     var points: [InkPoint]
     var width: CGFloat
     var color: InkColorComponents
     var blendMode: InkBlendMode
 }
 
-private struct InkPageDrawing: Codable, Equatable {
+nonisolated struct InkPageDrawing: Codable, Equatable, Sendable {
     var strokes: [InkStroke] = []
 
     nonisolated var isEmpty: Bool {
@@ -1213,9 +1214,70 @@ private struct InkPageDrawing: Codable, Equatable {
     }
 }
 
-private struct InkDrawingStore: Codable {
+nonisolated struct InkDrawingStore: Codable, Sendable {
     var version: Int
     var pages: [Int: InkPageDrawing]
+}
+
+nonisolated struct RecoveryPersistencePayload: Sendable {
+    let generation: UInt64
+    let documentId: UUID
+    let lastOpenedPage: Int
+    let dirtyPageIndexes: [Int]
+    let drawings: [Int: InkPageDrawing]
+    let editedAt: Date?
+}
+
+nonisolated struct RecoveryPreparedWrite: Sendable {
+    let generation: UInt64
+    let documentId: UUID
+    let drawingsData: Data
+    let metadata: DocumentLocalMetadata
+}
+
+actor RecoveryPersistenceWorker {
+    typealias PrepareOperation = @Sendable (RecoveryPersistencePayload) async -> RecoveryPreparedWrite?
+    typealias CommitOperation = @Sendable (RecoveryPreparedWrite) async -> Void
+
+    private let prepareOperation: PrepareOperation
+    private let commitOperation: CommitOperation
+    private var latestGeneration: UInt64 = 0
+    private var inFlight = false
+    private var pendingLatest: RecoveryPersistencePayload?
+
+    init(
+        prepareOperation: @escaping PrepareOperation,
+        commitOperation: @escaping CommitOperation
+    ) {
+        self.prepareOperation = prepareOperation
+        self.commitOperation = commitOperation
+    }
+
+    func schedule(_ payload: RecoveryPersistencePayload) {
+        guard payload.generation >= latestGeneration else { return }
+        latestGeneration = payload.generation
+        pendingLatest = payload
+
+        guard !inFlight else { return }
+        inFlight = true
+        Task {
+            await processLoop()
+        }
+    }
+
+    private func processLoop() async {
+        while let payload = pendingLatest {
+            pendingLatest = nil
+
+            guard payload.generation == latestGeneration else { continue }
+            guard let prepared = await prepareOperation(payload) else { continue }
+            guard prepared.generation == latestGeneration else { continue }
+
+            await commitOperation(prepared)
+        }
+
+        inFlight = false
+    }
 }
 
 private struct InkToolDescriptor {
@@ -1329,7 +1391,7 @@ private final class PencilStrokeGestureRecognizer: UIGestureRecognizer {
     }
 }
 
-private final class VectorInkCanvasView: UIView {
+final class VectorInkCanvasView: UIView {
     private struct LassoSelection {
         let strokeIndexes: [Int]
         let sourceStrokes: [InkStroke]
@@ -1343,7 +1405,7 @@ private final class VectorInkCanvasView: UIView {
     }
 
     var onDrawingChanged: ((InkPageDrawing) -> Void)?
-    var tool: InkToolDescriptor = .default {
+    fileprivate var tool: InkToolDescriptor = .default {
         didSet {
             if tool.mode == .eraser {
                 if let center = eraserPreviewCenter {
@@ -1431,6 +1493,33 @@ private final class VectorInkCanvasView: UIView {
 
     func currentDrawing() -> InkPageDrawing {
         drawing
+    }
+
+    func snapshotDrawing() -> InkPageDrawing {
+        var snapshot = drawing
+        if let activeStroke = activeStrokeSnapshot() {
+            snapshot.strokes.append(activeStroke)
+        }
+        return snapshot
+    }
+
+#if DEBUG
+    func testingSetActiveStroke(
+        normalizedPoints: [InkPoint],
+        width: CGFloat = 1.0,
+        color: InkColorComponents = InkColorComponents(red: 0, green: 0, blue: 0, alpha: 1),
+        blendMode: InkBlendMode = .normal
+    ) {
+        activeStrokePoints = normalizedPoints
+        activeStrokeWidth = width
+        activeStrokeColor = color
+        activeBlendMode = blendMode
+    }
+#endif
+
+    func finalizeActiveStrokeIfNeeded() {
+        guard activeStrokeLayer != nil else { return }
+        finishStroke()
     }
 
     func refreshForZoom(zoomScale: CGFloat, forceRedraw: Bool = false) {
@@ -2038,18 +2127,24 @@ private final class VectorInkCanvasView: UIView {
         updateActiveStrokePath()
     }
 
-    private func finishStroke() {
-        guard let strokeLayer = activeStrokeLayer, !activeStrokePoints.isEmpty else {
-            discardActiveStroke()
-            return
-        }
+    private func activeStrokeSnapshot() -> InkStroke? {
+        guard !activeStrokePoints.isEmpty else { return nil }
 
-        let stroke = InkStroke(
+        return InkStroke(
             points: activeStrokePoints,
             width: activeStrokeWidth,
             color: activeStrokeColor,
             blendMode: activeBlendMode
         )
+    }
+
+    private func finishStroke() {
+        guard let strokeLayer = activeStrokeLayer,
+              let stroke = activeStrokeSnapshot() else {
+            discardActiveStroke()
+            return
+        }
+
         drawing.strokes.append(stroke)
         strokeLayers.append(strokeLayer)
         onDrawingChanged?(drawing)
@@ -2433,6 +2528,15 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private let zoomedInFlingVelocityThreshold: CGFloat = 1.15
     private let zoomedInBoundaryPullThreshold: CGFloat = 72.0
     private let zoomedInEmptyViewportSnapThreshold: CGFloat = 0.5
+    private let recoverySaveDelay: TimeInterval = 1.5
+    private var recoverySaveWorkItem: DispatchWorkItem?
+    private var hasPendingRecoverySnapshotChanges = false
+    private var recoveryGeneration: UInt64 = 0
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private lazy var recoveryPersistenceWorker = RecoveryPersistenceWorker(
+        prepareOperation: Self.prepareRecoveryWrite,
+        commitOperation: Self.commitRecoveryWrite
+    )
 
     // MARK: - Lifecycle
 
@@ -2445,9 +2549,20 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
         setupScrollView()
         setupPencilSqueezeInteractionIfAvailable()
+        installRecoveryObservers()
         
         // Report total pages mapping
         coordinator?.pageDidChange(to: 0, total: pdfDocument?.pageCount ?? 1)
+    }
+
+    deinit {
+        recoverySaveWorkItem?.cancel()
+        lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        flushRecoverySnapshot()
     }
 
     override func viewDidLayoutSubviews() {
@@ -2466,6 +2581,50 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             relayoutPages(preservingPageIndex: currentPageIndex)
             lastLaidOutViewportSize = view.bounds.size
         }
+    }
+
+    private static func prepareRecoveryWrite(
+        _ payload: RecoveryPersistencePayload
+    ) async -> RecoveryPreparedWrite? {
+        await Task.detached(priority: .utility) {
+            let drawingsPayload = InkDrawingStore(
+                version: 1,
+                pages: payload.drawings.filter { !$0.value.isEmpty }
+            )
+            guard let drawingsData = try? JSONEncoder().encode(drawingsPayload) else {
+                return nil
+            }
+
+            let repository = DocumentRepository()
+            let metadata = repository
+                .loadLocalMetadata(documentId: payload.documentId)
+                .updatingForRecoverySnapshot(
+                    lastOpenedPage: payload.lastOpenedPage,
+                    dirtyPageIndexes: payload.dirtyPageIndexes,
+                    editedAt: payload.editedAt
+                )
+
+            return RecoveryPreparedWrite(
+                generation: payload.generation,
+                documentId: payload.documentId,
+                drawingsData: drawingsData,
+                metadata: metadata
+            )
+        }.value
+    }
+
+    private static func commitRecoveryWrite(_ prepared: RecoveryPreparedWrite) async {
+        await Task.detached(priority: .utility) {
+            let repository = DocumentRepository()
+            try? repository.saveDrawingsLocally(
+                data: prepared.drawingsData,
+                documentId: prepared.documentId
+            )
+            repository.saveLocalMetadata(
+                prepared.metadata,
+                documentId: prepared.documentId
+            )
+        }.value
     }
     // MARK: - Setup
 
@@ -2545,7 +2704,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         if highestDrawingPage >= pageViews.count {
             let pagesToAdd = highestDrawingPage - pageViews.count + 1
             for _ in 0..<pagesToAdd {
-                _ = appendBlankPage()
+                _ = appendBlankPage(trackRecoveryChange: false)
             }
         }
 
@@ -2616,7 +2775,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     }
 
     @discardableResult
-    private func appendBlankPage() -> Int {
+    private func appendBlankPage(trackRecoveryChange: Bool = true) -> Int {
         let newIndex = pageViews.count
         let bounds = pageDescriptors.last?.pageBounds ?? fallbackPageBounds()
         let descriptor = PageDescriptor(kind: .blank, pageBounds: bounds)
@@ -2624,6 +2783,9 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         let drawing = initialDrawingForPage(index: newIndex, canvasSize: canvasSize)
         let appendedIndex = appendPage(descriptor: descriptor, drawing: drawing)
         updateContainerLayout()
+        if trackRecoveryChange {
+            scheduleRecoverySnapshotSave()
+        }
         return appendedIndex
     }
 
@@ -3309,6 +3471,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         )
         redoStack.removeAll(keepingCapacity: true)
         reportUndoRedoState()
+        scheduleRecoverySnapshotSave()
     }
 
     func undoLastAction() {
@@ -3364,6 +3527,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         relayoutPages(preservingPageIndex: currentPageIndex)
         coordinator?.pageDidChange(to: currentPageIndex, total: pageViews.count)
         reportUndoRedoState()
+        scheduleRecoverySnapshotSave()
         return true
     }
 
@@ -3373,6 +3537,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         pageDrawings[pageIndex] = drawing
         pageViews[pageIndex].canvasView.setDrawing(drawing)
         isApplyingHistoryChange = false
+        scheduleRecoverySnapshotSave()
     }
 
     private func reportUndoRedoState() {
@@ -3383,10 +3548,10 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
     @MainActor
     func prepareSaveResult() async throws -> DocumentSaveResult {
-        // Capture drawing state from all loaded page views
-        for (i, pageView) in pageViews.enumerated() {
-            pageDrawings[i] = pageView.canvasView.currentDrawing()
-        }
+        recoverySaveWorkItem?.cancel()
+        recoverySaveWorkItem = nil
+        hasPendingRecoverySnapshotChanges = false
+        captureLoadedPageDrawings()
 
         let snapshotDrawings = pageDrawings
         let drawingsPayload = InkDrawingStore(
@@ -3408,6 +3573,11 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         let localEditAt = Date()
         let currentPage = currentPageIndex
         let pdfURL = self.pdfURL!
+        let recoveryPayload = makeRecoveryPayload(
+            drawings: snapshotDrawings,
+            lastOpenedPage: currentPage,
+            editedAt: localEditAt
+        )
 
         let annotatedFilePath = try await Task.detached(priority: .userInitiated) { () -> String? in
             try FileManager.default.createDirectory(
@@ -3428,6 +3598,12 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             try annotatedData.write(to: annotatedURL, options: [.atomic])
             return annotatedURL.path
         }.value
+
+        if let recoveryPayload {
+            Task {
+                await recoveryPersistenceWorker.schedule(recoveryPayload)
+            }
+        }
 
         return DocumentSaveResult(
             documentId: documentId,
@@ -3622,11 +3798,90 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
     // MARK: - Local Drawing Persistence
 
-    private func saveDrawingsToDisk() {
-        let populatedPages = pageDrawings.filter { !$0.value.isEmpty }
-        let payload = InkDrawingStore(version: 1, pages: populatedPages)
-        if let encoded = try? JSONEncoder().encode(payload) {
-            try? repository.saveDrawingsLocally(data: encoded, documentId: documentId)
+    private func installRecoveryObservers() {
+        let center = NotificationCenter.default
+        lifecycleObservers = [
+            center.addObserver(
+                forName: UIApplication.willResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.flushRecoverySnapshot()
+            },
+            center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.flushRecoverySnapshot()
+            }
+        ]
+    }
+
+    private func captureLoadedPageDrawings() {
+        for (index, pageView) in pageViews.enumerated() {
+            pageView.canvasView.finalizeActiveStrokeIfNeeded()
+            pageDrawings[index] = pageView.canvasView.currentDrawing()
+        }
+    }
+
+    private func captureRecoverySnapshot(
+        bumpLastEditedAt: Bool
+    ) -> RecoveryPersistencePayload? {
+        var snapshotDrawings = pageDrawings
+        for (index, pageView) in pageViews.enumerated() {
+            snapshotDrawings[index] = pageView.canvasView.snapshotDrawing()
+        }
+
+        return makeRecoveryPayload(
+            drawings: snapshotDrawings,
+            lastOpenedPage: currentPageIndex,
+            editedAt: bumpLastEditedAt ? Date() : nil
+        )
+    }
+
+    private func makeRecoveryPayload(
+        drawings: [Int: InkPageDrawing],
+        lastOpenedPage: Int,
+        editedAt: Date?
+    ) -> RecoveryPersistencePayload? {
+        guard let documentId else { return nil }
+
+        recoveryGeneration &+= 1
+
+        let dirtyIndexes = Array(drawings.filter { !$0.value.isEmpty }.keys).sorted()
+        return RecoveryPersistencePayload(
+            generation: recoveryGeneration,
+            documentId: documentId,
+            lastOpenedPage: lastOpenedPage,
+            dirtyPageIndexes: dirtyIndexes,
+            drawings: drawings,
+            editedAt: editedAt
+        )
+    }
+
+    private func scheduleRecoverySnapshotSave() {
+        hasPendingRecoverySnapshotChanges = true
+        recoverySaveWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.persistRecoverySnapshot(bumpLastEditedAt: true)
+        }
+        recoverySaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + recoverySaveDelay, execute: workItem)
+    }
+
+    private func flushRecoverySnapshot() {
+        recoverySaveWorkItem?.cancel()
+        recoverySaveWorkItem = nil
+        persistRecoverySnapshot(bumpLastEditedAt: hasPendingRecoverySnapshotChanges)
+    }
+
+    private func persistRecoverySnapshot(bumpLastEditedAt: Bool) {
+        guard let payload = captureRecoverySnapshot(bumpLastEditedAt: bumpLastEditedAt) else { return }
+        hasPendingRecoverySnapshotChanges = false
+        Task {
+            await recoveryPersistenceWorker.schedule(payload)
         }
     }
 

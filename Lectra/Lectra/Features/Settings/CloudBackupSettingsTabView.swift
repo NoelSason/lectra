@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct CloudBackupSettingsTabView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let isCloudSyncEnabled: Bool
     let isAutoBackupEnabled: Bool
     let isICloudAvailable: Bool
@@ -18,55 +20,84 @@ struct CloudBackupSettingsTabView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Cloud & Backup")
-                        .font(.system(size: 30, weight: .bold))
-                        .foregroundColor(.white)
-
-                    Text("Control Lectra's explicit iCloud sync and the local backup snapshots used to protect your documents.")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.66))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
+            VStack(alignment: .leading, spacing: LectraSpacing.lg) {
+                hero
                 statusCard
                 controlsCard
                 recoveryCard
 
                 Text("Cloud sync stays off until you turn it on. Manual backup always creates a local snapshot and uses iCloud Drive when it is available.")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.56))
+                    .font(LectraTypography.captionMedium)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: 700, alignment: .leading)
+            .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(28)
+            .padding(LectraSpacing.xl)
         }
+        .background(LectraGradient.appBackdrop.ignoresSafeArea())
+    }
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: LectraSpacing.md) {
+            LectraStatusBadge(
+                title: isCloudSyncEnabled ? "Sync Enabled" : "Sync Off",
+                color: isCloudSyncEnabled ? LectraColor.info : LectraColor.canvasTint,
+                size: .large
+            )
+
+            Text("Cloud & Backup")
+                .font(LectraTypography.displaySmall)
+                .foregroundColor(.white)
+
+            Text("Control Lectra's explicit iCloud sync and the local recovery snapshots that protect your documents when a save or upload needs a second chance.")
+                .font(LectraTypography.body)
+                .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(LectraSpacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                        .fill(LectraGradient.spotlight.opacity(0.18))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                        .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
+                )
+        )
+        .lectraShadow(LectraElevation.medium())
     }
 
     private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Status")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.white)
+        VStack(alignment: .leading, spacing: LectraSpacing.md) {
+            HStack(spacing: LectraSpacing.md) {
+                VStack(alignment: .leading, spacing: LectraSpacing.xs) {
+                    Text("Status")
+                        .font(LectraTypography.title)
+                        .foregroundColor(.white)
+
+                    Text("Check iCloud availability, recent sync activity, and your latest local protection point.")
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Spacer(minLength: 0)
 
-                Text(isCloudSyncEnabled ? "Sync Enabled" : "Sync Off")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(isCloudSyncEnabled ? LectraColor.success : Color(hex: 0xF36B58))
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .background((isCloudSyncEnabled ? LectraColor.success : Color(hex: 0xF36B58)).opacity(0.12))
-                    .clipShape(Capsule())
+                LectraStatusBadge(
+                    title: isCloudSyncEnabled ? "Sync Enabled" : "Sync Off",
+                    color: isCloudSyncEnabled ? LectraColor.success : LectraColor.canvasTint
+                )
             }
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 170, maximum: 220), spacing: 16)],
+                columns: [GridItem(.adaptive(minimum: 170, maximum: 220), spacing: LectraSpacing.md)],
                 alignment: .leading,
-                spacing: 16
+                spacing: LectraSpacing.md
             ) {
                 metric(title: "iCloud", value: isICloudAvailable ? "Available" : "Unavailable")
                 metric(title: "Last Sync", value: lastCloudSyncDate.formatted(date: .abbreviated, time: .shortened))
@@ -74,140 +105,118 @@ struct CloudBackupSettingsTabView: View {
             }
 
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
+                HStack(spacing: LectraSpacing.sm) {
                     actionButton(
                         title: isSyncInProgress ? "Syncing…" : "Sync Now",
                         systemImage: "arrow.clockwise",
+                        style: .primary,
                         isDisabled: isSyncInProgress,
-                        action: onRunCloudSync
+                        action: {
+                            LectraHaptics.tap()
+                            onRunCloudSync()
+                        }
                     )
 
                     actionButton(
                         title: "Backup Now",
-                        systemImage: "externaldrive",
+                        systemImage: "externaldrive.badge.icloud",
+                        style: .secondary,
                         isDisabled: false,
-                        action: onRunManualBackup
+                        action: {
+                            LectraHaptics.tap()
+                            onRunManualBackup()
+                        }
                     )
                 }
 
-                VStack(spacing: 12) {
+                VStack(spacing: LectraSpacing.sm) {
                     actionButton(
                         title: isSyncInProgress ? "Syncing…" : "Sync Now",
                         systemImage: "arrow.clockwise",
+                        style: .primary,
                         isDisabled: isSyncInProgress,
-                        action: onRunCloudSync
+                        action: {
+                            LectraHaptics.tap()
+                            onRunCloudSync()
+                        }
                     )
 
                     actionButton(
                         title: "Backup Now",
-                        systemImage: "externaldrive",
+                        systemImage: "externaldrive.badge.icloud",
+                        style: .secondary,
                         isDisabled: false,
-                        action: onRunManualBackup
+                        action: {
+                            LectraHaptics.tap()
+                            onRunManualBackup()
+                        }
                     )
                 }
             }
         }
-        .padding(22)
-        .background(Color.white.opacity(0.04))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(LectraSpacing.lg)
+        .lectraCard(cornerRadius: LectraRadius.panel)
     }
 
     private var recoveryCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: LectraSpacing.md) {
+            HStack(alignment: .top, spacing: LectraSpacing.md) {
+                VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                     Text("Recovery Center")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(LectraTypography.title)
                         .foregroundColor(.white)
 
-                    Text("Restore snapshot copies safely, or replace current local versions when you need a full rollback.")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.56))
+                    Text("Restore a snapshot as a safe copy, or replace the current local version when you need a full rollback.")
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
 
                 Button("Reload") {
+                    LectraHaptics.selection()
                     onReloadRecoverySnapshots()
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color(hex: 0xE84D4D))
-                .frame(minHeight: LectraSizing.minHitTarget)
+                .buttonStyle(LectraSecondaryButtonStyle())
                 .accessibilityIdentifier("settings.cloud.reloadSnapshots")
             }
 
             if recoverySnapshots.isEmpty {
-                Text("No recovery snapshots yet. Run a manual backup or iCloud sync to populate recovery points.")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.62))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.03))
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                VStack(alignment: .leading, spacing: LectraSpacing.sm) {
+                    Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                        .font(LectraTypography.title)
+                        .foregroundColor(LectraColor.info)
+
+                    Text("No recovery snapshots yet.")
+                        .font(LectraTypography.headlineMedium)
+                        .foregroundColor(.white)
+
+                    Text("Run a manual backup or complete an iCloud sync to start building recovery points.")
+                        .font(LectraTypography.body)
+                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(LectraSpacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(LectraOpacity.faint))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                        .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: LectraSpacing.sm) {
                     ForEach(recoverySnapshots.prefix(6)) { snapshot in
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(snapshot.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(.white)
-
-                                    Text("\(snapshot.itemCount) document\(snapshot.itemCount == 1 ? "" : "s") in \(snapshot.source)")
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(Color.white.opacity(0.58))
-                                }
-
-                                Spacer(minLength: 0)
-
-                                Text(snapshot.location == .iCloudDrive ? "iCloud Drive" : "On Device")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(snapshot.location == .iCloudDrive ? Color(hex: 0x2E8DFF) : LectraColor.success)
-                                    .padding(.horizontal, 10)
-                                    .frame(height: 24)
-                                    .background((snapshot.location == .iCloudDrive ? Color(hex: 0x2E8DFF) : LectraColor.success).opacity(0.14))
-                                    .clipShape(Capsule())
-                            }
-
-                            if !snapshot.items.isEmpty {
-                                Text(snapshot.items.prefix(3).map(\.title).joined(separator: " • "))
-                                    .font(.system(size: 13, weight: .regular))
-                                    .foregroundColor(Color.white.opacity(0.72))
-                                    .lineLimit(2)
-                            }
-
-                            HStack(spacing: 10) {
-                                snapshotActionButton(title: "Restore Copy") {
-                                    onRestoreSnapshotAsCopy(snapshot)
-                                }
-
-                                snapshotActionButton(title: "Replace Current") {
-                                    onRestoreSnapshotReplacing(snapshot)
-                                }
-                            }
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.03))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        snapshotRow(snapshot)
+                            .transition(reduceMotion ? .opacity : LectraMotion.cardTransition)
                     }
                 }
+                .animation(reduceMotion ? nil : LectraMotion.tabSwitch, value: recoverySnapshots.count)
             }
         }
-        .padding(22)
-        .background(Color.white.opacity(0.04))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(LectraSpacing.lg)
+        .lectraCard(cornerRadius: LectraRadius.panel)
     }
 
     private var controlsCard: some View {
@@ -215,75 +224,139 @@ struct CloudBackupSettingsTabView: View {
             settingsToggleRow(
                 title: "Cloud Sync",
                 subtitle: "Explicit opt-in only",
-                isOn: isCloudSyncEnabled,
-                onToggle: onSetCloudSyncEnabled
-            )
+                isOn: isCloudSyncEnabled
+            ) { newValue in
+                LectraHaptics.selection()
+                onSetCloudSyncEnabled(newValue)
+            }
 
             divider
 
             settingsToggleRow(
                 title: "Automatic Backup",
                 subtitle: "Create a backup snapshot after successful sync work",
-                isOn: isAutoBackupEnabled,
-                onToggle: onSetAutoBackupEnabled
-            )
+                isOn: isAutoBackupEnabled
+            ) { newValue in
+                LectraHaptics.selection()
+                onSetAutoBackupEnabled(newValue)
+            }
         }
-        .padding(.horizontal, 22)
-        .background(Color.white.opacity(0.04))
+        .padding(.horizontal, LectraSpacing.lg)
+        .lectraCard(cornerRadius: LectraRadius.panel)
+    }
+
+    private func snapshotRow(_ snapshot: RecoverySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: LectraSpacing.sm) {
+            HStack(alignment: .top, spacing: LectraSpacing.md) {
+                VStack(alignment: .leading, spacing: LectraSpacing.xs) {
+                    Text(snapshot.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(LectraTypography.bodyEmphasis)
+                        .foregroundColor(.white)
+
+                    Text("\(snapshot.itemCount) document\(snapshot.itemCount == 1 ? "" : "s") in \(snapshot.source)")
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                }
+
+                Spacer(minLength: 0)
+
+                LectraStatusBadge(
+                    title: snapshot.location == .iCloudDrive ? "iCloud Drive" : "On Device",
+                    color: snapshot.location == .iCloudDrive ? LectraColor.info : LectraColor.success
+                )
+            }
+
+            if !snapshot.items.isEmpty {
+                Text(snapshot.items.prefix(3).map(\.title).joined(separator: " • "))
+                    .font(LectraTypography.captionMedium)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.primary))
+                    .lineLimit(2)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: LectraSpacing.sm) {
+                    Button("Restore Copy") {
+                        LectraHaptics.tap()
+                        onRestoreSnapshotAsCopy(snapshot)
+                    }
+                    .buttonStyle(LectraSecondaryButtonStyle())
+
+                    Button("Replace Current") {
+                        LectraHaptics.warning()
+                        onRestoreSnapshotReplacing(snapshot)
+                    }
+                    .buttonStyle(LectraDestructiveButtonStyle())
+                }
+
+                VStack(spacing: LectraSpacing.sm) {
+                    Button("Restore Copy") {
+                        LectraHaptics.tap()
+                        onRestoreSnapshotAsCopy(snapshot)
+                    }
+                    .buttonStyle(LectraSecondaryButtonStyle())
+
+                    Button("Replace Current") {
+                        LectraHaptics.warning()
+                        onRestoreSnapshotReplacing(snapshot)
+                    }
+                    .buttonStyle(LectraDestructiveButtonStyle())
+                }
+            }
+        }
+        .padding(LectraSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(LectraOpacity.faint))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
     }
 
     private func metric(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: LectraSpacing.xs) {
             Text(title)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(Color.white.opacity(0.42))
+                .font(LectraTypography.footnoteBold)
+                .foregroundColor(Color.white.opacity(LectraOpacity.strong))
 
             Text(value)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white.opacity(0.86))
+                .font(LectraTypography.bodyEmphasis)
+                .foregroundColor(Color.white.opacity(LectraOpacity.primary))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(Color.white.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(LectraSpacing.md)
+        .background(Color.white.opacity(LectraOpacity.faint))
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
     }
 
+    @ViewBuilder
     private func actionButton(
         title: String,
         systemImage: String,
+        style: ActionButtonStyle,
         isDisabled: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-                .background(isDisabled ? Color.white.opacity(0.06) : Color(hex: 0x4A222A))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        if style == .primary {
+            Button(action: action) {
+                Label(title, systemImage: systemImage)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(LectraPrimaryButtonStyle(disabled: isDisabled))
+            .disabled(isDisabled)
+        } else {
+            Button(action: action) {
+                Label(title, systemImage: systemImage)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(LectraSecondaryButtonStyle())
+            .disabled(isDisabled)
         }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-    }
-
-    private func snapshotActionButton(title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: LectraSizing.minHitTarget)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 
     private func settingsToggleRow(
@@ -292,24 +365,22 @@ struct CloudBackupSettingsTabView: View {
         isOn: Bool,
         onToggle: @escaping (Bool) -> Void
     ) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: LectraSpacing.md) {
+            VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                 Text(title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(LectraTypography.headlineMedium)
                     .foregroundColor(.white)
 
                 Text(subtitle)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.56))
+                    .font(LectraTypography.captionMedium)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 0)
-
             Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
                 .labelsHidden()
-                .tint(Color(hex: 0x4A222A))
+                .tint(LectraColor.surfaceCard)
                 .accessibilityLabel(title)
                 .accessibilityValue(isOn ? "On" : "Off")
         }
@@ -319,7 +390,12 @@ struct CloudBackupSettingsTabView: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(Color.white.opacity(LectraOpacity.subtle))
             .frame(height: 1)
+    }
+
+    private enum ActionButtonStyle {
+        case primary
+        case secondary
     }
 }

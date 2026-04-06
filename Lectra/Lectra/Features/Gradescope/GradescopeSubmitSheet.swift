@@ -69,14 +69,14 @@ struct GradescopeSubmitSheet: View {
 
                     if let localError {
                         Text(localError)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color(hex: 0xE84D4D))
+                            .font(LectraTypography.caption)
+                            .foregroundColor(LectraColor.accentDestructive)
                     }
 
                     if let managerError = gradescopeManager.errorMessage {
                         Text(managerError)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color(hex: 0xE84D4D))
+                            .font(LectraTypography.caption)
+                            .foregroundColor(LectraColor.accentDestructive)
                     }
 
                     if let diagnosticsPresentation {
@@ -88,7 +88,7 @@ struct GradescopeSubmitSheet: View {
                 }
                 .padding(16)
             }
-            .background(Color(hex: 0x0D1017).ignoresSafeArea())
+            .background(LectraColor.surfaceOverlay.ignoresSafeArea())
             .navigationTitle("Submit to Gradescope")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -149,46 +149,49 @@ struct GradescopeSubmitSheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(document.title)
-                .font(.system(size: 19, weight: .semibold))
+                .font(LectraTypography.titleSmall)
                 .foregroundColor(.white)
 
             if let url = exportURL,
                let attr = try? FileManager.default.attributesOfItem(atPath: url.path),
                let size = attr[.size] as? NSNumber {
                 Text("File: \(url.lastPathComponent) • \(ByteCountFormatter.string(fromByteCount: size.int64Value, countStyle: .file))")
-                    .font(.system(size: 12, weight: .regular))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(.white.opacity(0.72))
             } else {
                 Text("No local PDF available for submission.")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .font(LectraTypography.captionMedium)
+                    .foregroundColor(LectraColor.accentDestructive)
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
+        .lectraCard(cornerRadius: LectraRadius.control)
     }
 
     private var loginCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Sign in to Gradescope")
-                .font(.system(size: 16, weight: .semibold))
+                .font(LectraTypography.headlineMedium)
                 .foregroundColor(.white)
 
             TextField("Email", text: $loginEmail)
                 .textInputAutocapitalization(.never)
                 .disableAutocorrection(true)
+                .font(LectraTypography.body)
                 .padding(10)
                 .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
 
             SecureField("Password", text: $loginPassword)
                 .textInputAutocapitalization(.never)
                 .disableAutocorrection(true)
+                .font(LectraTypography.body)
                 .padding(10)
                 .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
 
             Button {
+                LectraHaptics.tap()
                 Task {
                     await gradescopeManager.login(email: loginEmail, password: loginPassword)
                     if gradescopeManager.isAuthenticated {
@@ -201,69 +204,66 @@ struct GradescopeSubmitSheet: View {
                         ProgressView().tint(.white)
                     }
                     Text("Sign In")
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: LectraSizing.minHitTarget)
-                .background(Color(hex: 0x4A222A))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+            .buttonStyle(LectraPrimaryButtonStyle(disabled: gradescopeManager.isBusy))
             .disabled(gradescopeManager.isBusy)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
+        .lectraCard(cornerRadius: LectraRadius.control)
     }
 
     private var assignmentCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Assignment")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(LectraTypography.headlineMedium)
                     .foregroundColor(.white)
 
                 Spacer()
 
                 Button("Pick") {
+                    LectraHaptics.selection()
                     showPicker = true
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color(hex: 0xE84D4D))
+                .font(LectraTypography.caption)
+                .foregroundColor(LectraColor.accentSoft)
             }
 
             if let assignment = selectedAssignment {
                 Text(assignment.name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(LectraTypography.bodyEmphasis)
                     .foregroundColor(.white)
 
                 if let course = selectedCourse {
                     Text(course.shortName)
-                        .font(.system(size: 12, weight: .regular))
+                        .font(LectraTypography.captionMedium)
                         .foregroundColor(.white.opacity(0.72))
                 }
 
                 if let due = assignment.dueDate {
                     Text("Due \(due.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.system(size: 12, weight: .regular))
+                        .font(LectraTypography.captionMedium)
                         .foregroundColor(.white.opacity(0.72))
                 }
             } else {
                 Text("No assignment selected.")
-                    .font(.system(size: 13, weight: .regular))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(.white.opacity(0.72))
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
+        .lectraCard(cornerRadius: LectraRadius.control)
     }
 
     private var preflightCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Preflight")
-                .font(.system(size: 16, weight: .semibold))
+                .font(LectraTypography.headlineMedium)
                 .foregroundColor(.white)
 
             Button {
+                LectraHaptics.selection()
                 Task { await runPreflight() }
             } label: {
                 HStack {
@@ -271,50 +271,47 @@ struct GradescopeSubmitSheet: View {
                         ProgressView().tint(.white)
                     }
                     Text("Run Preflight")
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: LectraSizing.minHitTarget)
-                .background(Color.white.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+            .buttonStyle(LectraSecondaryButtonStyle())
             .disabled(isRunningPreflight || selectedAssignment == nil)
 
             if let result = preflightResult {
-                Text(result.isReady ? "Ready" : "Fix issues before submit")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(result.isReady ? Color(hex: 0x35B77A) : Color(hex: 0xE84D4D))
+                LectraStatusBadge(
+                    title: result.isReady ? "Ready" : "Fix issues before submit",
+                    color: result.isReady ? LectraColor.gradescopeTint : LectraColor.accentSoft,
+                    size: .large
+                )
 
                 ForEach(result.issues, id: \.self) { issue in
                     Text("• \(issue)")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(LectraColor.accentDestructive)
                 }
 
                 ForEach(result.warnings, id: \.self) { warning in
                     Text("• \(warning)")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color(hex: 0xF0BA5C))
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(LectraColor.warning)
                 }
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
+        .lectraCard(cornerRadius: LectraRadius.control)
     }
 
     private var submitCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Submit")
-                .font(.system(size: 16, weight: .semibold))
+                .font(LectraTypography.headlineMedium)
                 .foregroundColor(.white)
 
             Toggle(isOn: $confirmationChecked) {
                 Text("I confirm this should be submitted")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(LectraTypography.captionMedium)
                     .foregroundColor(.white)
             }
-            .tint(Color(hex: 0xE84D4D))
+            .tint(LectraColor.accentSoft)
 
             if let workflow {
                 workflowProgressView(workflow)
@@ -323,21 +320,24 @@ struct GradescopeSubmitSheet: View {
             if let uploadResult, uploadResult.status == .uploadedNeedsFinalize {
                 if workflow?.requiresGroupStep == true {
                     Button("Edit Group Members") {
+                        LectraHaptics.selection()
                         showGroupSheet = true
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.accentSoft)
                 }
 
                 if workflow?.requiresPageStep == true {
                     Button("Edit Page Assignment") {
+                        LectraHaptics.selection()
                         showPageSheet = true
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.accentSoft)
                 }
 
                 Button {
+                    LectraHaptics.tap()
                     Task { await finalizeSubmission() }
                 } label: {
                     HStack {
@@ -345,18 +345,14 @@ struct GradescopeSubmitSheet: View {
                             ProgressView().tint(.white)
                         }
                         Text("Finalize Submission")
-                            .font(.system(size: 14, weight: .semibold))
                     }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: LectraSizing.minHitTarget)
-                    .background(Color(hex: 0x4A222A))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
+                .buttonStyle(LectraPrimaryButtonStyle(disabled: isFinalizing || !canFinalize))
                 .disabled(isFinalizing || !canFinalize)
             }
 
             Button {
+                LectraHaptics.tap()
                 Task { await uploadPDF() }
             } label: {
                 HStack {
@@ -364,29 +360,25 @@ struct GradescopeSubmitSheet: View {
                         ProgressView().tint(.white)
                     }
                     Text("Upload PDF")
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: LectraSizing.minHitTarget)
-                .background(Color.white.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+            .buttonStyle(LectraSecondaryButtonStyle())
             .disabled(isUploading || isFinalizing || selectedAssignment == nil || exportURL == nil || !confirmationChecked)
 
             if let activeURL = uploadResult?.submissionURL ?? submitReceipt?.submissionURL {
                 Button("Open Submission Editor (Emergency Fallback)") {
+                    LectraHaptics.selection()
                     manageSubmissionURL = activeURL
                     showManageSubmissionSheet = true
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color(hex: 0xE84D4D))
+                .font(LectraTypography.caption)
+                .foregroundColor(LectraColor.accentSoft)
             }
 
             if let receipt = submitReceipt {
                 Text(receipt.isDryRun ? "Dry-run passed." : "Final submission recorded.")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color(hex: 0x35B77A))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.gradescopeTint)
 
                 if let submissionURL = receipt.submissionURL {
                     Text(submissionURL.absoluteString)
@@ -397,7 +389,7 @@ struct GradescopeSubmitSheet: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
+        .lectraCard(cornerRadius: LectraRadius.control)
     }
 
     @ViewBuilder
@@ -409,20 +401,20 @@ struct GradescopeSubmitSheet: View {
 
             if workflow.requiresGroupStep {
                 Text(groupMembers.isEmpty ? "Group step pending" : "Group members ready (\(groupMembers.count))")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(groupMembers.isEmpty ? Color(hex: 0xF0BA5C) : Color(hex: 0x35B77A))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(groupMembers.isEmpty ? LectraColor.warning : LectraColor.gradescopeTint)
             }
 
             if workflow.requiresPageStep {
                 Text(pageAssignments.isEmpty ? "Page mapping pending" : "Page mapping ready (\(pageAssignments.count) questions)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(pageAssignments.isEmpty ? Color(hex: 0xF0BA5C) : Color(hex: 0x35B77A))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(pageAssignments.isEmpty ? LectraColor.warning : LectraColor.gradescopeTint)
             }
 
             if workflow.finalized {
                 Text("Workflow finalized")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color(hex: 0x35B77A))
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.gradescopeTint)
             }
         }
     }
@@ -488,8 +480,14 @@ struct GradescopeSubmitSheet: View {
                 courseId: assignment.courseId,
                 assignmentId: assignment.id
             )
+            if preflightResult?.isReady == true {
+                LectraHaptics.success()
+            } else {
+                LectraHaptics.warning()
+            }
         } catch {
             preflightResult = nil
+            LectraHaptics.warning()
             localError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -545,6 +543,7 @@ struct GradescopeSubmitSheet: View {
                     isDryRun: false
                 )
                 submitReceipt = receipt
+                LectraHaptics.success()
                 gradescopeManager.linkDocument(
                     documentId: document.id,
                     courseId: course.id,
@@ -552,6 +551,7 @@ struct GradescopeSubmitSheet: View {
                     mode: .direct
                 )
             case .uploadedNeedsFinalize:
+                LectraHaptics.selection()
                 if uploaded.nextAction == .manageGroupMembers {
                     showGroupSheet = true
                 } else if uploaded.nextAction == .assignPages {
@@ -559,6 +559,7 @@ struct GradescopeSubmitSheet: View {
                 }
             }
         } catch {
+            LectraHaptics.warning()
             localError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -587,6 +588,7 @@ struct GradescopeSubmitSheet: View {
             let receipt = try await gradescopeManager.finalizeSubmission(workflowId: workflow.id)
             submitReceipt = receipt
             manageSubmissionURL = receipt.submissionURL
+            LectraHaptics.success()
 
             gradescopeManager.linkDocument(
                 documentId: document.id,
@@ -595,6 +597,7 @@ struct GradescopeSubmitSheet: View {
                 mode: .direct
             )
         } catch {
+            LectraHaptics.warning()
             localError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }

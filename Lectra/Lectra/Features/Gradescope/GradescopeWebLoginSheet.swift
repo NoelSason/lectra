@@ -22,14 +22,14 @@ struct GradescopeWebLoginSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: LectraSpacing.md) {
                 Text("Gradescope Web Sign-In")
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(LectraTypography.displaySmall)
                     .foregroundColor(.white)
 
                 Text(statusMessage)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.white.opacity(0.74))
+                    .font(LectraTypography.body)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
 
                 GradescopeWebSessionView(
                     onPageLoaded: { url in
@@ -45,56 +45,58 @@ struct GradescopeWebLoginSheet: View {
                         statusMessage = "Authenticated session detected. Importing into Lectra…"
                         debugReport = nil
 
+                        LectraHaptics.selection()
                         Task { @MainActor in
                             let result = await onSessionCaptured(cookies, html)
                             if result.errorMessage == nil {
+                                LectraHaptics.success()
                                 dismiss()
                             } else {
                                 isImporting = false
                                 statusMessage = "Session import failed: \(result.errorMessage ?? "Unknown error")"
                                 debugReport = result.debugReport
+                                LectraHaptics.warning()
                             }
                         }
                     }
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
                 )
+                .lectraShadow(LectraElevation.low())
 
                 if isImporting {
-                    HStack(spacing: 10) {
+                    HStack(spacing: LectraSpacing.sm) {
                         ProgressView()
                             .tint(.white)
                         Text("Importing session…")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.8))
+                            .font(LectraTypography.caption)
+                            .foregroundColor(.white.opacity(LectraOpacity.primary))
                     }
                 }
 
                 if !isImporting && !lastCookies.isEmpty {
                     Button("Try Import Again") {
+                        LectraHaptics.selection()
                         isImporting = true
                         statusMessage = "Retrying session import…"
                         debugReport = nil
                         Task { @MainActor in
                             let result = await onSessionCaptured(lastCookies, lastHTML)
                             if result.errorMessage == nil {
+                                LectraHaptics.success()
                                 dismiss()
                             } else {
                                 isImporting = false
                                 statusMessage = "Session import failed: \(result.errorMessage ?? "Unknown error")"
                                 debugReport = result.debugReport
+                                LectraHaptics.warning()
                             }
                         }
                     }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: LectraSizing.minHitTarget)
-                    .background(Color.white.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .buttonStyle(LectraSecondaryButtonStyle())
                 }
 
                 if let technicalDetailsPresentation {
@@ -104,14 +106,14 @@ struct GradescopeWebLoginSheet: View {
                     )
                 }
             }
-            .padding(16)
-            .background(Color(hex: 0x111214).ignoresSafeArea())
+            .padding(LectraSpacing.lg)
+            .background(LectraColor.surfaceElevated.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }

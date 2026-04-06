@@ -10,6 +10,7 @@ import SwiftUI
 struct AuthView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hasAppeared = false
 
     var body: some View {
         ZStack {
@@ -19,28 +20,35 @@ struct AuthView: View {
             ambientBlobs
 
             VStack(spacing: LectraSpacing.lg) {
-                Spacer(minLength: 28)
+                Spacer(minLength: LectraSpacing.xl)
 
                 authPanel
                     .padding(.horizontal, LectraSpacing.lg)
+                    .scaleEffect(reduceMotion ? 1.0 : (hasAppeared ? 1.0 : 0.97))
+                    .offset(y: reduceMotion ? 0 : (hasAppeared ? 0 : 18))
+                    .opacity(hasAppeared ? 1.0 : 0.0)
 
-                Spacer(minLength: 22)
+                Spacer(minLength: LectraSpacing.lg)
             }
         }
         .animation(reduceMotion ? nil : LectraMotion.quick, value: authManager.isLoading)
         .animation(reduceMotion ? nil : LectraMotion.quick, value: authManager.errorMessage)
+        .onAppear {
+            guard !hasAppeared else { return }
+            hasAppeared = true
+        }
     }
 
     private var ambientBlobs: some View {
         ZStack {
             Circle()
-                .fill(LectraColor.accent.opacity(0.15))
+                .fill(LectraColor.accentSoft.opacity(0.14))
                 .frame(width: 520, height: 520)
                 .blur(radius: 60)
                 .offset(x: -210, y: -260)
 
             Circle()
-                .fill(LectraColor.accentCool.opacity(0.14))
+                .fill(LectraColor.accentCool.opacity(0.12))
                 .frame(width: 460, height: 460)
                 .blur(radius: 72)
                 .offset(x: 230, y: 240)
@@ -50,12 +58,12 @@ struct AuthView: View {
 
     private var authPanel: some View {
         VStack(spacing: LectraSpacing.lg) {
-            VStack(spacing: 14) {
+            VStack(spacing: LectraSpacing.md) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
                         .fill(LectraGradient.panel)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
                                 .stroke(LectraColor.edgeStroke, lineWidth: 1)
                         )
                         .frame(width: 86, height: 86)
@@ -64,7 +72,7 @@ struct AuthView: View {
                         .font(.system(size: 38, weight: .semibold))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [LectraColor.accentCool, LectraColor.accent],
+                                colors: [LectraColor.accentCool, LectraColor.accentSoft],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -72,12 +80,12 @@ struct AuthView: View {
                 }
 
                 Text("Lectra Studio")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                    .font(LectraTypography.displayLarge)
                     .foregroundColor(LectraColor.textPrimary)
                     .multilineTextAlignment(.center)
 
                 Text("Precision annotation for lecture PDFs.\nBuilt for Apple Pencil, tuned for long sessions.")
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .font(LectraTypography.headlineMedium)
                     .foregroundColor(LectraColor.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
@@ -99,7 +107,7 @@ struct AuthView: View {
 
             if let error = authManager.errorMessage {
                 Text(error)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(LectraTypography.caption)
                     .foregroundColor(LectraColor.accent)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, LectraSpacing.md)
@@ -108,62 +116,49 @@ struct AuthView: View {
             }
 
             Button {
+                LectraHaptics.tap()
                 Task { @MainActor in await authManager.signInWithGoogle() }
             } label: {
-                HStack(spacing: 12) {
+                HStack(spacing: LectraSpacing.sm) {
                     if authManager.isLoading {
                         ProgressView()
                             .tint(.white)
                     } else {
                         Image(systemName: "globe")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(LectraTypography.headline)
                     }
 
                     Text(authManager.isLoading ? "Connecting…" : "Continue with Google")
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .font(LectraTypography.headline)
                 }
                 .foregroundColor(.white)
-                .frame(maxWidth: .infinity, minHeight: 56)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [LectraColor.accent, Color(hex: 0xD83E3A)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                )
-                .shadow(color: LectraColor.accent.opacity(0.35), radius: 14, x: 0, y: 8)
+                .frame(maxWidth: .infinity)
             }
+            .buttonStyle(LectraPrimaryButtonStyle(disabled: authManager.isLoading))
             .disabled(authManager.isLoading)
             .accessibilityHint("Starts Google sign-in for your Canvascope account.")
             .accessibilityIdentifier("auth.signIn")
 
             Text("Sign in with your Canvascope account")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(LectraTypography.captionMedium)
                 .foregroundColor(LectraColor.textTertiary)
         }
         .padding(.horizontal, LectraSpacing.lg)
         .padding(.vertical, LectraSpacing.xl)
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .fill(Color(hex: 0x0F1628, opacity: 0.88))
+                RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                    .fill(LectraColor.surfaceElevated.opacity(0.88))
 
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .fill(LectraGradient.spotlight.opacity(0.55))
+                RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(0.42))
 
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
                     .stroke(LectraColor.edgeStroke, lineWidth: 1)
             }
         )
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .shadow(color: .black.opacity(0.35), radius: 22, x: 0, y: 16)
+        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous))
+        .lectraShadow(LectraElevation.high())
         .frame(maxWidth: 620)
         .accessibilityElement(children: .contain)
     }
@@ -174,14 +169,14 @@ private struct AuthFeatureChip: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .font(LectraTypography.caption)
             .foregroundColor(LectraColor.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.white.opacity(0.07))
+            .padding(.horizontal, LectraSpacing.sm)
+            .padding(.vertical, LectraSpacing.sm)
+            .background(Color.white.opacity(LectraOpacity.subtle))
             .overlay(
                 Capsule()
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
             )
             .clipShape(Capsule())
             .lineLimit(1)

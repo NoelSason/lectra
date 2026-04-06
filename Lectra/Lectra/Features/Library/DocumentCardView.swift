@@ -27,8 +27,8 @@ struct LibraryGridMetrics {
         LibraryGridMetrics(
             cardWidth: cardWidth,
             pdfPreviewHeight: 120,
-            pdfFooterHeight: 52,
-            pdfTotalHeight: 180,
+            pdfFooterHeight: 60,
+            pdfTotalHeight: 188,
             folderArtworkHeight: 128,
             folderFooterHeight: 44,
             folderTotalHeight: 180,
@@ -45,8 +45,8 @@ struct LibraryGridMetrics {
         LibraryGridMetrics(
             cardWidth: cardWidth,
             pdfPreviewHeight: 120,
-            pdfFooterHeight: 52,
-            pdfTotalHeight: 180,
+            pdfFooterHeight: 60,
+            pdfTotalHeight: 188,
             folderArtworkHeight: 128,
             folderFooterHeight: 44,
             folderTotalHeight: 180,
@@ -67,35 +67,20 @@ struct DocumentCardView: View {
     var onOptionsTap: (() -> Void)? = nil
     var onFavoriteToggle: (() -> Void)? = nil
     var onSyncRetryTap: (() -> Void)? = nil
+    @State private var favoritePulse = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             previewCard
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(displayTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.95))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    Spacer(minLength: 0)
-
-                    if let onOptionsTap {
-                        Button(action: onOptionsTap) {
-                            Image(systemName: "ellipsis.circle.fill")
-                                .symbolRenderingMode(.hierarchical)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(Color.white.opacity(0.8))
-                                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("More options for \(displayTitle)")
-                        .accessibilityIdentifier("library.document.options.\(document.id.uuidString)")
-                    }
-                }
+                Text(displayTitle)
+                    .font(LectraTypography.bodyEmphasis)
+                    .foregroundColor(Color.white.opacity(0.95))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.trailing, trailingAccessoryWidth)
+                    .accessibilityIdentifier("library.document.title.\(document.id.uuidString)")
 
                 HStack(spacing: 6) {
                     if document.syncState != .idle {
@@ -107,23 +92,29 @@ struct DocumentCardView: View {
                         .fixedSize()
                     }
 
-                    Text("Last modified \(subtitle)")
-                        .font(.system(size: 12, weight: .regular))
+                    Text(subtitle)
+                        .font(LectraTypography.captionMedium)
                         .foregroundColor(Color.white.opacity(0.62))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .accessibilityIdentifier("library.document.metadata.\(document.id.uuidString)")
 
                     Spacer(minLength: 0)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .frame(height: metrics.pdfFooterHeight, alignment: .topLeading)
+            .frame(minHeight: metrics.pdfFooterHeight, alignment: .topLeading)
+            .overlay(alignment: .topTrailing) {
+                if let onOptionsTap {
+                    optionsButton(action: onOptionsTap)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: metrics.pdfTotalHeight, alignment: .topLeading)
-        .clipped()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(displayTitle). Last modified \(subtitle).")
+        .accessibilityIdentifier("library.document.card.\(document.id.uuidString)")
     }
 
     private var previewCard: some View {
@@ -137,14 +128,14 @@ struct DocumentCardView: View {
                 } else {
                     ZStack {
                         LinearGradient(
-                            colors: [Color(hex: 0xD86A6A), Color(hex: 0xB54747)],
+                            colors: [LectraColor.placeholderStart, LectraColor.placeholderEnd],
                             startPoint: .top,
                             endPoint: .bottom
                         )
 
                         VStack(spacing: 4) {
                             Image(systemName: document.status == .downloading ? "arrow.down.circle" : "doc.text")
-                                .font(.system(size: 20, weight: .medium))
+                                .font(LectraTypography.titleSmall)
                                 .foregroundColor(Color.white.opacity(0.85))
 
                             if document.status == .downloading {
@@ -157,27 +148,31 @@ struct DocumentCardView: View {
             }
             .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
             .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
                     .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
             )
-            .shadow(
+            .lectraShadow((
                 color: Color.black.opacity(0.2),
                 radius: LectraElevation.libraryCardRadius,
-                x: 0,
                 y: LectraElevation.libraryCardYOffset
-            )
+            ))
             .clipped()
 
             Button {
+                LectraHaptics.tap()
+                withAnimation(LectraMotion.bounce) {
+                    favoritePulse.toggle()
+                }
                 onFavoriteToggle?()
             } label: {
                 Image(systemName: document.isFavorite ? "star.fill" : "star")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(LectraTypography.headline)
                     .foregroundColor(document.isFavorite ? Color.yellow : Color.gray.opacity(0.8))
                     .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                     .contentShape(Rectangle())
+                    .scaleEffect(favoritePulse ? 1.08 : 1.0)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(document.isFavorite ? "Remove favorite" : "Mark favorite")
@@ -185,6 +180,27 @@ struct DocumentCardView: View {
             .accessibilityIdentifier("library.document.favorite.\(document.id.uuidString)")
         }
         .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+    }
+
+    private var trailingAccessoryWidth: CGFloat {
+        onOptionsTap == nil ? 0 : (LectraSizing.minHitTarget + 6)
+    }
+
+    private func optionsButton(action: @escaping () -> Void) -> some View {
+        Button {
+            LectraHaptics.tap()
+            action()
+        } label: {
+            Image(systemName: "ellipsis.circle.fill")
+                .symbolRenderingMode(.hierarchical)
+                .font(LectraTypography.headline)
+                .foregroundColor(Color.white.opacity(0.8))
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("More options for \(displayTitle)")
+        .accessibilityIdentifier("library.document.options.\(document.id.uuidString)")
     }
 
     private var displayTitle: String {
@@ -269,24 +285,22 @@ struct DocumentSyncBadgeView: View {
         case .idle:
             return .clear
         case .savingLocal, .flattening, .uploading:
-            return Color(hex: 0x2E8DFF)
+            return LectraColor.info
         case .queuedUpload:
-            return Color(hex: 0xD0A13A)
+            return LectraColor.warningSubtle
         case .synced:
             return LectraColor.success
         case .failed:
-            return LectraColor.accent
+            return LectraColor.accentSoft
         }
     }
 
     private func badge(title: String, color: Color) -> some View {
-        Text(title)
-            .font(.system(size: size.fontSize, weight: .bold))
-            .foregroundColor(color)
-            .padding(.horizontal, size.horizontalPadding)
-            .frame(height: size.height)
-            .background(color.opacity(0.12))
-            .clipShape(Capsule())
+        LectraStatusBadge(
+            title: title,
+            color: color,
+            size: size == .compact ? .compact : .regular
+        )
     }
 }
 

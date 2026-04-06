@@ -40,6 +40,7 @@ struct AccountSettingsView: View {
     let onSignOut: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab: SettingsTab
 
     init(
@@ -95,26 +96,26 @@ struct AccountSettingsView: View {
                             compactHeader
 
                             Rectangle()
-                                .fill(Color.white.opacity(0.08))
+                                .fill(LectraColor.sidebarDivider)
                                 .frame(height: 1)
 
                             detailPane
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                .background(Color(hex: 0x0F1115))
+                                .background(LectraColor.surfaceOverlay)
                         }
                     } else {
                         HStack(spacing: 0) {
                             sidebar
                                 .frame(width: 284)
-                                .background(Color(hex: 0x15181E))
+                                .background(LectraColor.sidebarBackground)
 
                             Rectangle()
-                                .fill(Color.white.opacity(0.08))
+                                .fill(LectraColor.sidebarDivider)
                                 .frame(width: 1)
 
                             detailPane
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                .background(Color(hex: 0x0F1115))
+                                .background(LectraColor.surfaceOverlay)
                         }
                     }
                 }
@@ -126,9 +127,10 @@ struct AccountSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
+                        LectraHaptics.selection()
                         dismiss()
                     }
-                    .foregroundColor(Color(hex: 0xE84D4D))
+                    .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }
@@ -136,6 +138,7 @@ struct AccountSettingsView: View {
         .lectraSheetPageSizing()
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .animation(reduceMotion ? nil : LectraMotion.tabSwitch, value: selectedTab)
     }
 
     private var sidebar: some View {
@@ -149,13 +152,13 @@ struct AccountSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(userName)
-                        .font(.system(size: 21, weight: .bold))
+                        .font(LectraTypography.title)
                         .foregroundColor(.white)
                         .lineLimit(2)
 
                     if let userEmail, !userEmail.isEmpty {
                         Text(userEmail)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(LectraTypography.captionMedium)
                             .foregroundColor(Color.white.opacity(0.58))
                             .lineLimit(1)
                     }
@@ -174,7 +177,7 @@ struct AccountSettingsView: View {
             Spacer(minLength: 0)
 
             Text("Only Lectra account, integration, and backup controls live here.")
-                .font(.system(size: 12, weight: .medium))
+                .font(LectraTypography.captionMedium)
                 .foregroundColor(Color.white.opacity(0.44))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 22)
@@ -193,13 +196,13 @@ struct AccountSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(userName)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(LectraTypography.title)
                         .foregroundColor(.white)
                         .lineLimit(2)
 
                     if let userEmail, !userEmail.isEmpty {
                         Text(userEmail)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(LectraTypography.captionMedium)
                             .foregroundColor(Color.white.opacity(0.58))
                             .lineLimit(1)
                     }
@@ -220,20 +223,21 @@ struct AccountSettingsView: View {
         .padding(.horizontal, 22)
         .padding(.top, 20)
         .padding(.bottom, 18)
-        .background(Color(hex: 0x15181E))
+        .background(LectraColor.sidebarBackground)
     }
 
     private func settingsTabButton(_ tab: SettingsTab, compact: Bool) -> some View {
         Button {
+            LectraHaptics.selection()
             selectedTab = tab
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: tab.systemImage)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(LectraTypography.bodyEmphasis)
                     .frame(width: 20)
 
                 Text(tab.rawValue)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(LectraTypography.bodyEmphasis)
                     .lineLimit(1)
 
                 if !compact {
@@ -243,8 +247,8 @@ struct AccountSettingsView: View {
             .foregroundColor(selectedTab == tab ? .white : Color.white.opacity(0.66))
             .padding(.horizontal, 14)
             .frame(minHeight: LectraSizing.minHitTarget)
-            .background(selectedTab == tab ? Color(hex: 0x4A222A) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(selectedTab == tab ? LectraColor.sidebarSelection : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
@@ -253,29 +257,33 @@ struct AccountSettingsView: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        switch selectedTab {
-        case .account:
-            accountTab
-        case .integrations:
-            IntegrationsSettingsView()
-        case .cloudBackup:
-            CloudBackupSettingsTabView(
-                isCloudSyncEnabled: isCloudSyncEnabled,
-                isAutoBackupEnabled: isAutoBackupEnabled,
-                isICloudAvailable: isICloudAvailable,
-                isSyncInProgress: isSyncInProgress,
-                lastCloudSyncDate: lastCloudSyncDate,
-                lastBackupDate: lastBackupDate,
-                recoverySnapshots: recoverySnapshots,
-                onSetCloudSyncEnabled: onSetCloudSyncEnabled,
-                onSetAutoBackupEnabled: onSetAutoBackupEnabled,
-                onRunCloudSync: onRunCloudSync,
-                onRunManualBackup: onRunManualBackup,
-                onReloadRecoverySnapshots: onReloadRecoverySnapshots,
-                onRestoreSnapshotAsCopy: onRestoreSnapshotAsCopy,
-                onRestoreSnapshotReplacing: onRestoreSnapshotReplacing
-            )
+        Group {
+            switch selectedTab {
+            case .account:
+                accountTab
+            case .integrations:
+                IntegrationsSettingsView()
+            case .cloudBackup:
+                CloudBackupSettingsTabView(
+                    isCloudSyncEnabled: isCloudSyncEnabled,
+                    isAutoBackupEnabled: isAutoBackupEnabled,
+                    isICloudAvailable: isICloudAvailable,
+                    isSyncInProgress: isSyncInProgress,
+                    lastCloudSyncDate: lastCloudSyncDate,
+                    lastBackupDate: lastBackupDate,
+                    recoverySnapshots: recoverySnapshots,
+                    onSetCloudSyncEnabled: onSetCloudSyncEnabled,
+                    onSetAutoBackupEnabled: onSetAutoBackupEnabled,
+                    onRunCloudSync: onRunCloudSync,
+                    onRunManualBackup: onRunManualBackup,
+                    onReloadRecoverySnapshots: onReloadRecoverySnapshots,
+                    onRestoreSnapshotAsCopy: onRestoreSnapshotAsCopy,
+                    onRestoreSnapshotReplacing: onRestoreSnapshotReplacing
+                )
+            }
         }
+        .id(selectedTab)
+        .transition(reduceMotion ? .opacity : LectraMotion.cardTransition)
     }
 
     private var accountTab: some View {
@@ -283,11 +291,11 @@ struct AccountSettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Account")
-                        .font(.system(size: 30, weight: .bold))
+                        .font(LectraTypography.displaySmall)
                         .foregroundColor(.white)
 
                     Text("This panel only keeps the app-level account details Lectra actually uses.")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(LectraTypography.body)
                         .foregroundColor(Color.white.opacity(0.66))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -302,53 +310,39 @@ struct AccountSettingsView: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text(userName)
-                                .font(.system(size: 25, weight: .bold))
+                                .font(LectraTypography.displaySmall)
                                 .foregroundColor(.white)
                                 .lineLimit(2)
 
                             if let userEmail, !userEmail.isEmpty {
                                 Text(userEmail)
-                                    .font(.system(size: 15, weight: .medium))
+                                    .font(LectraTypography.body)
                                     .foregroundColor(Color.white.opacity(0.62))
                                     .lineLimit(2)
                             }
 
-                            Text("Signed in to Lectra")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(LectraColor.success)
-                                .padding(.horizontal, 10)
-                                .frame(height: 28)
-                                .background(LectraColor.success.opacity(0.12))
-                                .clipShape(Capsule())
+                            LectraStatusBadge(title: "Signed in to Lectra", color: LectraColor.success)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Google account details are used for your Lectra session. Integrations and backups are managed in the tabs alongside this one.")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(LectraTypography.body)
                             .foregroundColor(Color.white.opacity(0.62))
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Button(role: .destructive, action: onSignOut) {
+                        Button(role: .destructive) {
+                            LectraHaptics.warning()
+                            onSignOut()
+                        } label: {
                             Label("Sign Out of Lectra", systemImage: "rectangle.portrait.and.arrow.right")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(Color(hex: 0xFF8E8E))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .background(Color.red.opacity(0.16))
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(LectraDestructiveButtonStyle())
                     }
                 }
                 .padding(22)
-                .background(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .lectraCard(cornerRadius: LectraRadius.panel)
             }
             .frame(maxWidth: 700, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)

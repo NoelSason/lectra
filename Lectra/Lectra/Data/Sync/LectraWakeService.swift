@@ -166,7 +166,16 @@ actor LectraWakeService {
             }
         }
 
-        await channel.subscribe()
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            realtimeStatusTask?.cancel()
+            realtimeStatusTask = nil
+            realtimeBroadcastTask?.cancel()
+            realtimeBroadcastTask = nil
+            realtimeChannel = nil
+            await client.removeChannel(channel)
+        }
     }
 
     private func stopRealtime() async {
@@ -227,10 +236,13 @@ actor LectraWakeService {
             }
         }
 
-        NotificationCenter.default.post(
-            name: .lectraRemoteDocumentsDidChange,
-            object: RemoteDocumentsChangePayload(documentIds: prefetchedIds, reason: reason)
-        )
+        let notifiedDocumentIds = prefetchedIds
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .lectraRemoteDocumentsDidChange,
+                object: RemoteDocumentsChangePayload(documentIds: notifiedDocumentIds, reason: reason)
+            )
+        }
 
         return !candidates.isEmpty
     }

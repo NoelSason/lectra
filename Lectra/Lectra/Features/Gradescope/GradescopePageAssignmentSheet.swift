@@ -57,46 +57,52 @@ struct GradescopePageAssignmentSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Map PDF pages to questions. Use comma-separated page numbers (1-based), e.g. 1,2,3.")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(.white.opacity(0.72))
+            VStack(alignment: .leading, spacing: LectraSpacing.md) {
+                Text("Map PDF pages to questions. Use comma-separated page numbers with 1-based indexing, like 1,2,3.")
+                    .font(LectraTypography.body)
+                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
 
                 if let pageCount {
-                    Text("Detected pages: \(pageCount)")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.8))
+                    LectraStatusBadge(
+                        title: "Detected pages: \(pageCount)",
+                        color: LectraColor.info,
+                        size: .large
+                    )
                 }
 
                 ScrollView {
-                    VStack(spacing: 10) {
+                    VStack(spacing: LectraSpacing.sm) {
                         ForEach($rows) { $row in
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: LectraSpacing.sm) {
                                 Text(row.questionTitle)
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(LectraTypography.caption)
                                     .foregroundColor(.white)
+
                                 TextField("Pages", text: $row.pagesText)
                                     .textInputAutocapitalization(.never)
                                     .disableAutocorrection(true)
-                                    .padding(10)
-                                    .background(Color.white.opacity(0.08))
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .font(LectraTypography.body)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, LectraSpacing.md)
+                                    .frame(minHeight: LectraSizing.minHitTarget)
+                                    .background(Color.white.opacity(LectraOpacity.subtle))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                                            .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
                             }
-                            .padding(10)
-                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.04)))
+                            .padding(LectraSpacing.md)
+                            .lectraCard(cornerRadius: LectraRadius.card, shadow: false)
                         }
                     }
                 }
 
                 Button("Assign Sequentially") {
+                    LectraHaptics.selection()
                     applySequentialAssignments()
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(Color.white.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .buttonStyle(LectraSecondaryButtonStyle())
 
                 Button("Save Page Mapping") {
                     let mapped = rows.compactMap { row -> GSPageAssignmentDraft? in
@@ -104,22 +110,18 @@ struct GradescopePageAssignmentSheet: View {
                         guard !pages.isEmpty else { return nil }
                         return GSPageAssignmentDraft(questionId: row.questionId, pageIndexes: pages)
                     }
+                    LectraHaptics.success()
                     onSave(mapped)
                     dismiss()
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(Color(hex: 0x4A222A))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .buttonStyle(LectraPrimaryButtonStyle())
             }
-            .padding(14)
-            .background(Color(hex: 0x111214).ignoresSafeArea())
+            .padding(LectraSpacing.lg)
+            .background(LectraColor.surfaceElevated.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }
