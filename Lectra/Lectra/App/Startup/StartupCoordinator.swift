@@ -65,15 +65,15 @@ final class StartupCoordinator: ObservableObject {
         guard !Task.isCancelled else { return }
         stage = .mark
 
-        try? await Task.sleep(for: .milliseconds(160))
+        try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }
         stage = .pulse
 
-        try? await Task.sleep(for: .milliseconds(240))
+        try? await Task.sleep(for: .milliseconds(120))
         guard !Task.isCancelled else { return }
         stage = .wordmark
 
-        try? await Task.sleep(for: .milliseconds(684))
+        try? await Task.sleep(for: .milliseconds(180))
         guard !Task.isCancelled else { return }
 
         minimumDurationElapsed = true

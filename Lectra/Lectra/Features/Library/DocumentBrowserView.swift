@@ -34,6 +34,7 @@ struct SavedLocalFolder: Codable {
     var colorHex: Int?
     var iconSystemName: String?
     var systemTag: String?
+    var parentFolderId: UUID?
 }
 
 struct LocalFolder: Identifiable {
@@ -43,6 +44,7 @@ struct LocalFolder: Identifiable {
     var colorHex: Int?
     var iconSystemName: String?
     var systemTag: String?
+    var parentFolderId: UUID?
 }
 
 struct SharePayload: Identifiable {
@@ -188,6 +190,7 @@ struct DocumentBrowserView: View {
 
     @State private var featureNotice: String?
     @State private var activePDFDownloader: CourseBrainPDFDownloader?
+    @StateObject private var canvasImportService = CanvasImportService()
     @State private var backgroundSyncToast: String?
     @State private var backgroundSyncToastTask: Task<Void, Never>? = nil
     @State private var hasPendingBackgroundSyncToast = false
@@ -204,6 +207,7 @@ struct DocumentBrowserView: View {
     @State private var lastCloudSyncDate = Date()
     @State private var lastBackupDate = Date().addingTimeInterval(-20 * 60)
     @State private var recoverySnapshots: [RecoverySnapshot] = []
+    @State private var recoverySnapshotsLoadGeneration = 0
 
     private let launchConfiguration: LectraLibraryLaunchConfiguration?
     private let repository = DocumentRepository()
@@ -225,6 +229,8 @@ struct DocumentBrowserView: View {
     }
     private let importedCanvascopeFolderName = "Imported From Canvascope"
     private let importedCanvascopeSystemTag = "imported_canvascope"
+    private let importedCanvasFolderName = "Imported From Canvas"
+    private let importedCanvasSystemTag = "imported_canvas"
     private let importedGradescopeFolderName = "Imported From Gradescope"
     private let importedGradescopeSystemTag = "imported_gradescope"
     private let importedFolderPollingIntervalNanoseconds: UInt64 = 5_000_000_000
@@ -270,6 +276,14 @@ struct DocumentBrowserView: View {
         importedGradescopeFolder?.id
     }
 
+    private var importedCanvasFolder: LocalFolder? {
+        folders.first(where: { $0.systemTag == importedCanvasSystemTag })
+    }
+
+    private var importedCanvasFolderId: UUID? {
+        importedCanvasFolder?.id
+    }
+
     private var documentsInScope: [LocalDocument] {
         if currentFolderId == importedRootFolderId {
             return []
@@ -281,14 +295,19 @@ struct DocumentBrowserView: View {
         let scopedFolders: [LocalFolder]
         if currentFolderId == importedRootFolderId {
             scopedFolders = folders.filter {
-                $0.systemTag == importedCanvascopeSystemTag || $0.systemTag == importedGradescopeSystemTag
+                $0.systemTag == importedCanvascopeSystemTag
+                || $0.systemTag == importedCanvasSystemTag
+                || $0.systemTag == importedGradescopeSystemTag
             }
-        } else if currentFolderId == nil {
-            scopedFolders = folders.filter {
-                $0.systemTag != importedCanvascopeSystemTag && $0.systemTag != importedGradescopeSystemTag
-            }
+        } else if let currentFolderId {
+            scopedFolders = folders.filter { $0.parentFolderId == currentFolderId }
         } else {
-            scopedFolders = []
+            scopedFolders = folders.filter {
+                $0.parentFolderId == nil
+                && $0.systemTag != importedCanvascopeSystemTag
+                && $0.systemTag != importedCanvasSystemTag
+                && $0.systemTag != importedGradescopeSystemTag
+            }
         }
 
         guard activeSection == .documents else { return [] }
@@ -362,10 +381,17 @@ struct DocumentBrowserView: View {
     }
 
     private var selectedDocumentsInSelectedFolders: [LocalDocument] {
-        guard !activeSelectedFolderIDs.isEmpty else { return [] }
+        let folderTreeIDs = selectedFolderTreeIDs
+        guard !folderTreeIDs.isEmpty else { return [] }
         return documents.filter { doc in
             guard let folderID = folderId(for: doc) else { return false }
-            return activeSelectedFolderIDs.contains(folderID)
+            return folderTreeIDs.contains(folderID)
+        }
+    }
+
+    private var selectedFolderTreeIDs: Set<UUID> {
+        activeSelectedFolderIDs.reduce(into: Set<UUID>()) { result, folderId in
+            result.formUnion(descendantFolderIDs(including: folderId))
         }
     }
 
@@ -566,7 +592,7 @@ struct DocumentBrowserView: View {
 
         isICloudAvailable = ICloudDocumentStore.shared.isAvailable()
         loadRecoverySnapshots()
-        Task {
+        Task(priority: .utility) {
             await DocumentSyncCoordinator.shared.resumePendingJobs()
         }
     }
@@ -582,10 +608,15 @@ struct DocumentBrowserView: View {
 
         loadRecentDocuments()
         loadCloudPreferences()
+        loadRecoverySnapshots()
         await loadDocuments()
-        await DocumentSyncCoordinator.shared.resumePendingJobs()
+        Task(priority: .utility) {
+            await DocumentSyncCoordinator.shared.resumePendingJobs()
+        }
         if isCloudSyncEnabled {
-            await runCloudSync(triggeredByUser: false)
+            Task(priority: .utility) {
+                await runCloudSync(triggeredByUser: false)
+            }
         }
     }
 
@@ -1160,8 +1191,37 @@ struct DocumentBrowserView: View {
             },
             onOpenDocument: { documentId in
                 openEditor(documentId: documentId)
+            },
+            canvasImportService: canvasImportService,
+            onStartCanvasImport: { selectedCourses in
+                startCanvasCourseImport(courses: selectedCourses)
             }
         )
+    }
+
+    private func startCanvasCourseImport(courses: [CourseTwin]) {
+        ensureImportedFolderHierarchyExists()
+
+        let dependencies = CanvasImportService.Dependencies(
+            canvasFolderId: { importedCanvasFolderId },
+            findOrCreateFolder: { name, parentId in
+                findOrCreateChildFolder(named: name, parentFolderId: parentId)
+            },
+            documentIdForSourceURL: { url in
+                existingLectraDocumentID(forSourceURL: url)
+            },
+            importDownloadedPDF: { tempURL, title, sourceURL, folderId, createdAt in
+                importCanvasImportedPDF(
+                    from: tempURL,
+                    title: title,
+                    sourceURL: sourceURL,
+                    folderId: folderId,
+                    createdAt: createdAt
+                )
+            }
+        )
+
+        canvasImportService.start(courses: courses, dependencies: dependencies)
     }
 
     /// Downloads a PDF from a Canvas URL using an in-app WKWebView
@@ -1308,13 +1368,14 @@ struct DocumentBrowserView: View {
         let metrics = libraryGridMetrics
         let protectedFolderManagerName = importedFolderManagerName(for: folder.id)
         let isProtectedFolder = protectedFolderManagerName != nil
+        let allowsFolderDeletion = canDeleteFolder(folder.id)
         GoodnotesFolderCardView(
             folderName: folder.name,
             subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
             metrics: metrics,
             accent: folderAccentColor(for: folder),
             iconSystemName: folder.iconSystemName,
-            showsOptionsButton: !isSelectionMode && !isProtectedFolder,
+            showsOptionsButton: !isSelectionMode && (!isProtectedFolder || allowsFolderDeletion),
             isOptionsVisible: !isSelectionMode && activeFolderOptionsID == folder.id,
             onOpen: {
                 if isSelectionMode {
@@ -1357,6 +1418,7 @@ struct DocumentBrowserView: View {
                     selectedIcon: activeFolder.iconSystemName ?? "folder",
                     isProtectedFolder: isProtectedFolder,
                     protectedFolderManagerName: protectedFolderManagerName,
+                    canMoveToTrash: allowsFolderDeletion,
                     onClose: {
                         activeFolderOptionsID = nil
                     },
@@ -2028,8 +2090,15 @@ struct DocumentBrowserView: View {
     }
 
     private func parentFolderId(for folderId: UUID) -> UUID? {
-        if folderId == importedCanvascopeFolderId || folderId == importedGradescopeFolderId {
+        if folderId == importedCanvascopeFolderId
+            || folderId == importedCanvasFolderId
+            || folderId == importedGradescopeFolderId {
             return importedRootFolderId
+        }
+        if let folder = folders.first(where: { $0.id == folderId }),
+           let parentId = folder.parentFolderId,
+           folders.contains(where: { $0.id == parentId }) {
+            return parentId
         }
         return nil
     }
@@ -2155,25 +2224,68 @@ struct DocumentBrowserView: View {
     private func ensureImportedFolderHierarchyExists() {
         ensureImportedRootFolderExists()
         ensureImportedCanvascopeFolderExists()
+        ensureImportedCanvasFolderExists()
         ensureImportedGradescopeFolderExists()
     }
 
     private func importedFolderManagerName(for folderId: UUID) -> String? {
-        guard let systemTag = folders.first(where: { $0.id == folderId })?.systemTag else { return nil }
-        switch systemTag {
-        case importedRootSystemTag:
-            return "Lectra"
-        case importedCanvascopeSystemTag:
-            return "Canvascope"
-        case importedGradescopeSystemTag:
-            return "Gradescope"
-        default:
-            return nil
+        if let systemTag = folders.first(where: { $0.id == folderId })?.systemTag {
+            switch systemTag {
+            case importedRootSystemTag:
+                return "Lectra"
+            case importedCanvascopeSystemTag:
+                return "Canvascope"
+            case importedCanvasSystemTag:
+                return "Canvas"
+            case importedGradescopeSystemTag:
+                return "Gradescope"
+            default:
+                break
+            }
         }
+        if let ancestorTag = ancestorImportedSystemTag(for: folderId) {
+            switch ancestorTag {
+            case importedCanvascopeSystemTag: return "Canvascope"
+            case importedCanvasSystemTag: return "Canvas"
+            case importedGradescopeSystemTag: return "Gradescope"
+            default: return nil
+            }
+        }
+        return nil
     }
 
     private func isProtectedImportedFolder(_ folderId: UUID) -> Bool {
         importedFolderManagerName(for: folderId) != nil
+    }
+
+    private func canDeleteFolder(_ folderId: UUID) -> Bool {
+        if isImportedCanvasDescendantFolder(folderId) { return true }
+        return !isProtectedImportedFolder(folderId)
+    }
+
+    private func isImportedCanvasDescendantFolder(_ folderId: UUID) -> Bool {
+        guard let folder = folders.first(where: { $0.id == folderId }) else { return false }
+        guard folder.systemTag == nil else { return false }
+        return ancestorImportedSystemTag(for: folderId) == importedCanvasSystemTag
+    }
+
+    private func ancestorImportedSystemTag(for folderId: UUID) -> String? {
+        var current: UUID? = folderId
+        var visited: Set<UUID> = []
+        let recognized: Set<String> = [
+            importedCanvascopeSystemTag,
+            importedCanvasSystemTag,
+            importedGradescopeSystemTag
+        ]
+        while let id = current {
+            if !visited.insert(id).inserted { return nil }
+            guard let folder = folders.first(where: { $0.id == id }) else { return nil }
+            if let tag = folder.systemTag, recognized.contains(tag) {
+                return tag
+            }
+            current = folder.parentFolderId
+        }
+        return nil
     }
 
     private func managedFolderNotice(for folderId: UUID) -> String {
@@ -2183,12 +2295,22 @@ struct DocumentBrowserView: View {
         return "This folder is managed and can’t be changed."
     }
 
+    private func folderDeletionNotice(for folderId: UUID) -> String {
+        if isProtectedImportedFolder(folderId) {
+            return managedFolderNotice(for: folderId)
+        }
+        return "This folder can’t be deleted."
+    }
+
     private func reservedImportedFolderNameNotice(for proposedName: String) -> String? {
         if proposedName.localizedCaseInsensitiveCompare(importedFolderName) == .orderedSame {
             return "\"\(importedFolderName)\" is reserved."
         }
         if proposedName.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) == .orderedSame {
             return "\"\(importedCanvascopeFolderName)\" is reserved."
+        }
+        if proposedName.localizedCaseInsensitiveCompare(importedCanvasFolderName) == .orderedSame {
+            return "\"\(importedCanvasFolderName)\" is reserved."
         }
         if proposedName.localizedCaseInsensitiveCompare(importedGradescopeFolderName) == .orderedSame {
             return "\"\(importedGradescopeFolderName)\" is reserved."
@@ -2233,7 +2355,8 @@ struct DocumentBrowserView: View {
                 createdAt: Date(),
                 colorHex: nil,
                 iconSystemName: "tray.full",
-                systemTag: importedRootSystemTag
+                systemTag: importedRootSystemTag,
+                parentFolderId: nil
             )
             folders = [folder] + folders
             changed = true
@@ -2281,7 +2404,57 @@ struct DocumentBrowserView: View {
                 createdAt: Date(),
                 colorHex: nil,
                 iconSystemName: "folder",
-                systemTag: importedCanvascopeSystemTag
+                systemTag: importedCanvascopeSystemTag,
+                parentFolderId: nil
+            )
+            folders = [folder] + folders
+            changed = true
+        }
+
+        if changed {
+            saveFolders()
+        }
+    }
+
+    private func ensureImportedCanvasFolderExists() {
+        var changed = false
+
+        var taggedIndices = folders.indices.filter { folders[$0].systemTag == importedCanvasSystemTag }
+        if taggedIndices.count > 1 {
+            for idx in taggedIndices.dropFirst() {
+                folders[idx].systemTag = nil
+                changed = true
+            }
+            taggedIndices = folders.indices.filter { folders[$0].systemTag == importedCanvasSystemTag }
+        }
+
+        if let taggedIndex = taggedIndices.first {
+            if folders[taggedIndex].name != importedCanvasFolderName {
+                folders[taggedIndex].name = importedCanvasFolderName
+                changed = true
+            }
+            if changed {
+                saveFolders()
+            }
+            return
+        }
+
+        if let namedIndex = folders.firstIndex(where: {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .localizedCaseInsensitiveCompare(importedCanvasFolderName) == .orderedSame
+        }) {
+            folders[namedIndex].name = importedCanvasFolderName
+            folders[namedIndex].systemTag = importedCanvasSystemTag
+            changed = true
+        } else {
+            let folder = LocalFolder(
+                id: UUID(),
+                name: importedCanvasFolderName,
+                createdAt: Date(),
+                colorHex: nil,
+                iconSystemName: "folder",
+                systemTag: importedCanvasSystemTag,
+                parentFolderId: nil
             )
             folders = [folder] + folders
             changed = true
@@ -2329,7 +2502,8 @@ struct DocumentBrowserView: View {
                 createdAt: Date(),
                 colorHex: nil,
                 iconSystemName: "folder",
-                systemTag: importedGradescopeSystemTag
+                systemTag: importedGradescopeSystemTag,
+                parentFolderId: nil
             )
             folders = [folder] + folders
             changed = true
@@ -2370,8 +2544,18 @@ struct DocumentBrowserView: View {
             Color(hex: 0x8B6AA6)
         ]
 
-        let index = abs(folder.id.uuidString.hashValue) % palette.count
+        let index = stablePaletteIndex(for: folder.id.uuidString, modulo: palette.count)
         return palette[index]
+    }
+
+    private func stablePaletteIndex(for key: String, modulo: Int) -> Int {
+        guard modulo > 0 else { return 0 }
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in key.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return Int(hash % UInt64(modulo))
     }
 
     private func formattedDocumentDate(for document: LocalDocument) -> String {
@@ -2643,7 +2827,8 @@ struct DocumentBrowserView: View {
                     createdAt: $0.createdAt,
                     colorHex: $0.colorHex,
                     iconSystemName: $0.iconSystemName,
-                    systemTag: $0.systemTag
+                    systemTag: $0.systemTag,
+                    parentFolderId: $0.parentFolderId
                 )
             },
             items: snapshotItems
@@ -2697,13 +2882,29 @@ struct DocumentBrowserView: View {
     }
 
     private func loadRecoverySnapshots() {
+        recoverySnapshotsLoadGeneration += 1
+        let generation = recoverySnapshotsLoadGeneration
+        let roots = availableRecoveryRoots()
+
+        DispatchQueue.global(qos: .utility).async {
+            let snapshots = Self.readRecoverySnapshots(from: roots)
+            DispatchQueue.main.async {
+                guard generation == recoverySnapshotsLoadGeneration else { return }
+                recoverySnapshots = snapshots
+            }
+        }
+    }
+
+    private static func readRecoverySnapshots(
+        from roots: [(RecoverySnapshotLocation, URL)]
+    ) -> [RecoverySnapshot] {
         let fileManager = FileManager.default
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
         var snapshots: [RecoverySnapshot] = []
 
-        for (location, rootURL) in availableRecoveryRoots() {
+        for (location, rootURL) in roots {
             guard fileManager.fileExists(atPath: rootURL.path),
                   let snapshotFolders = try? fileManager.contentsOfDirectory(
                     at: rootURL,
@@ -2739,7 +2940,7 @@ struct DocumentBrowserView: View {
             }
         }
 
-        recoverySnapshots = snapshots.sorted { lhs, rhs in
+        return snapshots.sorted { lhs, rhs in
             lhs.createdAt > rhs.createdAt
         }
     }
@@ -2887,7 +3088,8 @@ struct DocumentBrowserView: View {
                 createdAt: savedFolder.createdAt,
                 colorHex: savedFolder.colorHex,
                 iconSystemName: savedFolder.iconSystemName,
-                systemTag: savedFolder.systemTag
+                systemTag: savedFolder.systemTag,
+                parentFolderId: savedFolder.parentFolderId
             )
             folders = [restoredFolder] + folders
             resolved[savedFolder.id] = restoredFolder.id
@@ -2970,20 +3172,29 @@ struct DocumentBrowserView: View {
     }
 
     private func performBulkDelete() {
-        let docsToDelete = resolvedSelectedDocuments
-        guard !docsToDelete.isEmpty || !activeSelectedFolderIDs.isEmpty else { return }
+        let folderTreeIDs = selectedFolderTreeIDs
+        let directDocsToDelete = selectedDocumentsOnly.filter { doc in
+            guard let mappedFolderId = folderId(for: doc) else { return true }
+            return !folderTreeIDs.contains(mappedFolderId)
+        }
+        guard !directDocsToDelete.isEmpty || !activeSelectedFolderIDs.isEmpty else { return }
 
-        if docsToDelete.contains(where: isDocumentInProtectedImportedFolder) {
+        for folderID in activeSelectedFolderIDs where !canDeleteFolder(folderID) {
+            featureNotice = folderDeletionNotice(for: folderID)
+            return
+        }
+
+        if directDocsToDelete.contains(where: isDocumentInProtectedImportedFolder) {
             featureNotice = "Imported folders are read-only."
             return
         }
 
-        if docsToDelete.contains(where: { $0.status != .local }) {
+        if directDocsToDelete.contains(where: { $0.status != .local }) {
             featureNotice = "Imported/synced documents can’t be deleted in bulk from this screen."
             return
         }
 
-        for doc in docsToDelete {
+        for doc in directDocsToDelete {
             removeDocument(doc)
         }
 
@@ -3006,7 +3217,7 @@ struct DocumentBrowserView: View {
         let savedLocalDocs = loadSavedLocalDocuments()
         documents = savedLocalDocs
         applyTitleOverrides()
-        refreshLibraryDerivatives(reloadRecoverySnapshots: true)
+        refreshLibraryDerivatives()
         pruneFolderMappingForCurrentData()
 
         if let currentFolderId,
@@ -3016,7 +3227,9 @@ struct DocumentBrowserView: View {
 
         isLoading = false
 
-        await refreshRemoteDocuments()
+        Task(priority: .utility) {
+            await refreshRemoteDocuments()
+        }
     }
 
     private func refreshRemoteDocuments() async {
@@ -3054,7 +3267,7 @@ struct DocumentBrowserView: View {
                 }
 
                 routeNonLocalDocumentsToImportedFolder()
-                refreshLibraryDerivatives(reloadRecoverySnapshots: true)
+                refreshLibraryDerivatives()
                 pruneFolderMappingForCurrentData()
                 if let currentFolderId,
                    !folders.contains(where: { $0.id == currentFolderId }) {
@@ -3199,16 +3412,6 @@ struct DocumentBrowserView: View {
 
         let folderMap = folderNameByDocumentID()
         DocumentSearchIndex.shared.refresh(documents: documents, folderNameByDocumentID: folderMap)
-
-        for doc in documents {
-            if let pdfURL = doc.localPDFURL {
-                ThumbnailCache.shared.warmThumbnail(
-                    documentId: doc.id,
-                    pdfURL: pdfURL,
-                    revision: doc.thumbnailRevision
-                )
-            }
-        }
 
         if reloadRecoverySnapshots {
             loadRecoverySnapshots()
@@ -3371,6 +3574,58 @@ struct DocumentBrowserView: View {
             }
         } catch {
             featureNotice = "Could not import PDF: \(error.localizedDescription)"
+        }
+    }
+
+    @discardableResult
+    private func importCanvasImportedPDF(
+        from temporaryURL: URL,
+        title: String,
+        sourceURL: URL,
+        folderId: UUID,
+        createdAt: Date = Date()
+    ) -> UUID? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = trimmedTitle.isEmpty
+            ? temporaryURL.deletingPathExtension().lastPathComponent
+            : trimmedTitle
+
+        let doc = LocalDocument(
+            title: resolvedTitle,
+            localURL: temporaryURL,
+            sourceURLString: sourceURL.absoluteString,
+            createdAt: createdAt,
+            updatedAt: createdAt
+        )
+
+        let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pdfs", isDirectory: true)
+            .appendingPathComponent(doc.id.uuidString, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: localFolder, withIntermediateDirectories: true)
+            let destination = localFolder.appendingPathComponent("original.pdf")
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.copyItem(at: temporaryURL, to: destination)
+            doc.localPDFURL = destination
+
+            let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
+            storeLocalDocumentMetadata(
+                docId: doc.id,
+                title: resolvedTitle,
+                relativePath: relativePath,
+                sourceURLString: sourceURL.absoluteString,
+                folderId: folderId,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt
+            )
+
+            documents = [doc] + documents
+            refreshLibraryDerivatives()
+            try? FileManager.default.removeItem(at: temporaryURL)
+            return doc.id
+        } catch {
+            return nil
         }
     }
 
@@ -3548,11 +3803,43 @@ struct DocumentBrowserView: View {
             createdAt: Date(),
             colorHex: nil,
             iconSystemName: nil,
-            systemTag: nil
+            systemTag: nil,
+            parentFolderId: nil
         )
         folders = [folder] + folders
         saveFolders()
         runGlobalSearch()
+    }
+
+    @discardableResult
+    private func findOrCreateChildFolder(
+        named: String,
+        parentFolderId parent: UUID?,
+        iconSystemName: String? = nil
+    ) -> UUID {
+        let trimmed = named.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.isEmpty ? "Untitled" : trimmed
+
+        if let existing = folders.first(where: {
+            $0.parentFolderId == parent
+            && $0.systemTag == nil
+            && $0.name.localizedCaseInsensitiveCompare(normalized) == .orderedSame
+        }) {
+            return existing.id
+        }
+
+        let folder = LocalFolder(
+            id: UUID(),
+            name: normalized,
+            createdAt: Date(),
+            colorHex: nil,
+            iconSystemName: iconSystemName,
+            systemTag: nil,
+            parentFolderId: parent
+        )
+        folders.insert(folder, at: 0)
+        saveFolders()
+        return folder.id
     }
 
     private func loadSavedFolders() {
@@ -3571,7 +3858,8 @@ struct DocumentBrowserView: View {
                     createdAt: $0.createdAt,
                     colorHex: $0.colorHex,
                     iconSystemName: $0.iconSystemName,
-                    systemTag: $0.systemTag
+                    systemTag: $0.systemTag,
+                    parentFolderId: $0.parentFolderId
                 )
             }
             .sorted { $0.createdAt > $1.createdAt }
@@ -3587,7 +3875,8 @@ struct DocumentBrowserView: View {
                 createdAt: $0.createdAt,
                 colorHex: $0.colorHex,
                 iconSystemName: $0.iconSystemName,
-                systemTag: $0.systemTag
+                systemTag: $0.systemTag,
+                parentFolderId: $0.parentFolderId
             )
         }
         if let encoded = try? JSONEncoder().encode(saved) {
@@ -3647,8 +3936,13 @@ struct DocumentBrowserView: View {
     }
 
     private func deleteFolder(folderId: UUID) {
-        if isProtectedImportedFolder(folderId) {
-            featureNotice = managedFolderNotice(for: folderId)
+        if isImportedCanvasDescendantFolder(folderId) {
+            deleteImportedCanvasFolderTree(folderId: folderId)
+            return
+        }
+
+        if !canDeleteFolder(folderId) {
+            featureNotice = folderDeletionNotice(for: folderId)
             return
         }
         folders.removeAll { $0.id == folderId }
@@ -3662,6 +3956,49 @@ struct DocumentBrowserView: View {
         if currentFolderId == folderId {
             currentFolderId = nil
         }
+    }
+
+    private func deleteImportedCanvasFolderTree(folderId rootFolderId: UUID) {
+        let folderIDs = descendantFolderIDs(including: rootFolderId)
+        let docsToDelete = documents.filter { doc in
+            guard let mappedFolderID = folderId(for: doc) else { return false }
+            return folderIDs.contains(mappedFolderID)
+        }
+
+        for doc in docsToDelete {
+            removeDocument(doc, allowProtectedImportedDelete: true)
+        }
+
+        folders.removeAll { folderIDs.contains($0.id) }
+        for (docID, mappedFolderID) in documentFolderMap {
+            if let id = UUID(uuidString: mappedFolderID), folderIDs.contains(id) {
+                documentFolderMap.removeValue(forKey: docID)
+            }
+        }
+        saveDocumentFolderMap()
+        saveFolders()
+
+        if let currentFolderId, folderIDs.contains(currentFolderId) {
+            self.currentFolderId = importedCanvasFolderId
+        }
+        refreshLibraryDerivatives()
+        runGlobalSearch()
+    }
+
+    private func descendantFolderIDs(including rootFolderId: UUID) -> Set<UUID> {
+        var result: Set<UUID> = [rootFolderId]
+        var stack: [UUID] = [rootFolderId]
+
+        while let parent = stack.popLast() {
+            let children = folders
+                .filter { $0.parentFolderId == parent }
+                .map(\.id)
+            for child in children where result.insert(child).inserted {
+                stack.append(child)
+            }
+        }
+
+        return result
     }
 
     private func storeLocalDocumentMetadata(
@@ -3827,8 +4164,8 @@ struct DocumentBrowserView: View {
         sharePayload = SharePayload(urls: exportableURLs)
     }
 
-    private func removeDocument(_ doc: LocalDocument) {
-        if isDocumentInProtectedImportedFolder(doc) {
+    private func removeDocument(_ doc: LocalDocument, allowProtectedImportedDelete: Bool = false) {
+        if !allowProtectedImportedDelete && isDocumentInProtectedImportedFolder(doc) {
             featureNotice = "Imported folders are read-only."
             return
         }
@@ -4062,6 +4399,7 @@ private struct FolderOptionsPopoverView: View {
     let selectedIcon: String
     let isProtectedFolder: Bool
     let protectedFolderManagerName: String?
+    let canMoveToTrash: Bool
     let onClose: () -> Void
     let onRename: (String) -> Void
     let onSelectColor: (Int) -> Void
@@ -4166,10 +4504,10 @@ private struct FolderOptionsPopoverView: View {
                 FolderMenuActionRow(
                     title: "Export",
                     icon: "square.and.arrow.up",
-                    showDivider: !isProtectedFolder,
+                    showDivider: canMoveToTrash,
                     action: onExport
                 )
-                if !isProtectedFolder {
+                if canMoveToTrash {
                     FolderMenuActionRow(title: "Move to Trash", icon: "trash", isDestructive: true, showDivider: false, action: onMoveToTrash)
                 }
             }

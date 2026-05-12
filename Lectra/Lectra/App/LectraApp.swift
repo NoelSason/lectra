@@ -16,9 +16,6 @@ final class LectraAppDelegate: NSObject, UIApplicationDelegate {
         guard !LectraLaunchConfiguration.current.isUITesting else { return true }
 
         application.registerForRemoteNotifications()
-        Task {
-            await LectraWakeService.shared.applicationDidLaunch()
-        }
         return true
     }
 

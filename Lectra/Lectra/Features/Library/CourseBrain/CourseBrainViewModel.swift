@@ -500,6 +500,7 @@ final class CourseBrainViewModel: ObservableObject {
     @Published private(set) var courseFilters: [CourseBrainCourseFilter] = []
     @Published private(set) var selectedAssignmentDetail: CourseBrainAssignmentDetail?
     @Published private(set) var overallLastSyncedAt: Date?
+    @Published private(set) var importableCourses: [CourseTwin] = []
     @Published var searchText = ""
     @Published var selectedCourseID: Int?
     @Published var bannerMessage: String?
@@ -573,11 +574,26 @@ final class CourseBrainViewModel: ObservableObject {
             let snapshot = try await repository.fetchSnapshot()
             courseTwins = snapshot.courseTwins
             syncedNoteNodes = snapshot.syncedNoteNodes
+            importableCourses = Self.latestCourseTwinsByCourseId(from: courseTwins)
             rebuildDashboard()
             isLoading = false
         } catch {
             isLoading = false
             showBanner("Course Brain load failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func latestCourseTwinsByCourseId(from courseTwins: [CourseTwin]) -> [CourseTwin] {
+        var latest: [Int: CourseTwin] = [:]
+        for twin in courseTwins {
+            if let existing = latest[twin.courseId],
+               (existing.metadata.scannedAt ?? .distantPast) >= (twin.metadata.scannedAt ?? .distantPast) {
+                continue
+            }
+            latest[twin.courseId] = twin
+        }
+        return latest.values.sorted {
+            $0.metadata.courseName.localizedCaseInsensitiveCompare($1.metadata.courseName) == .orderedAscending
         }
     }
 

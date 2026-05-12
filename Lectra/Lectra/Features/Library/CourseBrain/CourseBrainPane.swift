@@ -8,10 +8,13 @@ struct CourseBrainPane: View {
     var importedDocumentIDForResourceURL: ((URL) -> UUID?)? = nil
     var onImportPDF: ((URL, String) -> Void)?
     var onOpenDocument: ((UUID) -> Void)?
+    var canvasImportService: CanvasImportService?
+    var onStartCanvasImport: (([CourseTwin]) -> Void)?
 
     @StateObject private var viewModel = CourseBrainViewModel()
     @Environment(\.openURL) private var openURL
     @State private var showsCompactDetail = false
+    @State private var showsCanvasImportSheet = false
 
     private let compactBreakpoint: CGFloat = 1_040
 
@@ -70,6 +73,22 @@ struct CourseBrainPane: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showsCanvasImportSheet, onDismiss: {
+            canvasImportService?.reset()
+        }) {
+            if let service = canvasImportService {
+                CanvasImportSheet(
+                    availableCourses: viewModel.importableCourses,
+                    service: service,
+                    onImport: { selectedCourses in
+                        onStartCanvasImport?(selectedCourses)
+                    },
+                    onDismiss: {
+                        showsCanvasImportSheet = false
+                    }
+                )
+            }
+        }
     }
 
     private var header: some View {
@@ -90,6 +109,8 @@ struct CourseBrainPane: View {
                 }
 
                 Spacer(minLength: 0)
+
+                importCoursesButton
             }
 
             CourseBrainSearchBar(
@@ -119,6 +140,32 @@ struct CourseBrainPane: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var importCoursesButton: some View {
+        if onStartCanvasImport != nil, canvasImportService != nil {
+            Button {
+                LectraHaptics.tap()
+                showsCanvasImportSheet = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Import Courses")
+                        .font(LectraTypography.bodyEmphasis)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(LectraColor.canvasTint)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Import courses from Canvas")
         }
     }
 

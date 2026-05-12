@@ -1436,9 +1436,11 @@ final class VectorInkCanvasView: UIView {
     private let selectionOutlineLayer = CAShapeLayer()
     private var selectionHandleLayers: [LassoSelectionHandle: CAShapeLayer] = [:]
     private var previewStrokeLayers: [CAShapeLayer] = []
-    private let selectionActionsView = UIStackView()
+    private let selectionActionsView = UIView()
     private let duplicateSelectionButton = UIButton(type: .system)
     private let deleteSelectionButton = UIButton(type: .system)
+    private let selectionActionsViewSize = CGSize(width: 240, height: 46)
+    private let selectionActionsButtonSpacing: CGFloat = 8
     private var activeLassoPoints: [CGPoint] = []
     private var activeSelection: LassoSelection?
     private var lassoInteraction: LassoInteraction?
@@ -1483,6 +1485,7 @@ final class VectorInkCanvasView: UIView {
             updateEraserPreview(at: center)
         }
         updateSelectionOverlay()
+        layoutSelectionActionButtons()
     }
 
     func setDrawing(_ drawing: InkPageDrawing) {
@@ -1679,15 +1682,13 @@ final class VectorInkCanvasView: UIView {
     }
 
     private func configureSelectionActionsView() {
-        selectionActionsView.axis = .horizontal
-        selectionActionsView.alignment = .fill
-        selectionActionsView.distribution = .fillEqually
-        selectionActionsView.spacing = 8
         selectionActionsView.backgroundColor = UIColor(white: 0.08, alpha: 0.92)
         selectionActionsView.layer.cornerRadius = 18
         selectionActionsView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
         selectionActionsView.layer.borderWidth = 1
+        selectionActionsView.clipsToBounds = true
         selectionActionsView.isHidden = true
+        selectionActionsView.frame = CGRect(origin: .zero, size: selectionActionsViewSize)
 
         configureSelectionActionButton(
             duplicateSelectionButton,
@@ -1703,8 +1704,9 @@ final class VectorInkCanvasView: UIView {
         )
         deleteSelectionButton.addTarget(self, action: #selector(handleDeleteSelection), for: .touchUpInside)
 
-        selectionActionsView.addArrangedSubview(duplicateSelectionButton)
-        selectionActionsView.addArrangedSubview(deleteSelectionButton)
+        selectionActionsView.addSubview(duplicateSelectionButton)
+        selectionActionsView.addSubview(deleteSelectionButton)
+        layoutSelectionActionButtons()
         addSubview(selectionActionsView)
     }
 
@@ -1718,6 +1720,25 @@ final class VectorInkCanvasView: UIView {
         button.configuration = configuration
         button.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         button.accessibilityLabel = title
+    }
+
+    private func layoutSelectionActionButtons() {
+        let bounds = selectionActionsView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        let buttonWidth = max((bounds.width - selectionActionsButtonSpacing) * 0.5, 0)
+        duplicateSelectionButton.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: buttonWidth,
+            height: bounds.height
+        )
+        deleteSelectionButton.frame = CGRect(
+            x: buttonWidth + selectionActionsButtonSpacing,
+            y: 0,
+            width: max(bounds.width - buttonWidth - selectionActionsButtonSpacing, 0),
+            height: bounds.height
+        )
     }
 
     private func configureEraserPreviewAppearance() {
@@ -1914,13 +1935,14 @@ final class VectorInkCanvasView: UIView {
             handleLayer.isHidden = false
         }
 
-        let actionsWidth: CGFloat = 240
-        let actionsHeight: CGFloat = 46
+        let actionsWidth = selectionActionsViewSize.width
+        let actionsHeight = selectionActionsViewSize.height
         let clampedX = min(max(displayBounds.midX - (actionsWidth * 0.5), 12), max(bounds.width - actionsWidth - 12, 12))
         let preferredY = displayBounds.minY - actionsHeight - 12
         let fallbackY = displayBounds.maxY + 12
         let originY = preferredY > 8 ? preferredY : min(fallbackY, bounds.height - actionsHeight - 12)
         selectionActionsView.frame = CGRect(x: clampedX, y: originY, width: actionsWidth, height: actionsHeight)
+        layoutSelectionActionButtons()
         selectionActionsView.isHidden = false
     }
 
