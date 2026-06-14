@@ -3296,12 +3296,19 @@ struct DocumentBrowserView: View {
             let fileURL = documentsDir.appendingPathComponent(savedItem.localPath)
             guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
 
-            let fileAttributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
-            let fileCreated = fileAttributes?[.creationDate] as? Date
-            let fileModified = fileAttributes?[.modificationDate] as? Date
+            let createdAt: Date
+            let updatedAt: Date
 
-            let createdAt = savedItem.createdAt ?? fileCreated ?? fileModified ?? Date()
-            let updatedAt = savedItem.updatedAt ?? fileModified ?? createdAt
+            if let savedCreated = savedItem.createdAt, let savedUpdated = savedItem.updatedAt {
+                createdAt = savedCreated
+                updatedAt = savedUpdated
+            } else {
+                let fileAttributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+                let fileCreated = fileAttributes?[.creationDate] as? Date
+                let fileModified = fileAttributes?[.modificationDate] as? Date
+                createdAt = savedItem.createdAt ?? fileCreated ?? fileModified ?? Date()
+                updatedAt = savedItem.updatedAt ?? fileModified ?? createdAt
+            }
 
             let doc = LocalDocument(
                 title: savedItem.title,

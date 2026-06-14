@@ -78,11 +78,13 @@ struct StartupSplashView: View {
                         .opacity(showMark ? 1.0 : 0.0)
                 }
 
-                Text("Lectra")
-                    .font(LectraTypography.displayLarge)
-                    .foregroundStyle(LectraColor.textPrimary)
-                    .opacity(showWordmark ? 1.0 : 0.0)
-                    .offset(y: reduceMotion ? 0 : (showWordmark ? 0 : 10))
+                VStack(spacing: 4) {
+                    Text("Lectra")
+                        .font(LectraTypography.displayLarge)
+                        .foregroundStyle(LectraColor.textPrimary)
+                }
+                .opacity(showWordmark ? 1.0 : 0.0)
+                .offset(y: reduceMotion ? 0 : (showWordmark ? 0 : 10))
 
                 if showSpinner {
                     VStack(spacing: LectraSpacing.sm) {

@@ -462,7 +462,6 @@ struct PDFAnnotationView: View {
         isTitleFieldFocused = false
     }
 
-    @MainActor
     private func saveLocally(showBlockingOverlay: Bool = true) async -> Bool {
         if showBlockingOverlay {
             withAnimation(LectraMotion.quick) {
@@ -528,8 +527,74 @@ struct PDFAnnotationView: View {
 
     @MainActor
     private func saveAndSync() async {
-        guard await saveLocally(showBlockingOverlay: true) else { return }
+        guard let controller = editorBridge.controller else {
+            dismiss()
+            return
+        }
+
+        let doc = document
+        let rep = repository
+        let auth = authManager
+        let currentPageIndex = currentPage
+
+        // Set metadata state to saving local before we dismiss, so UI reflects it immediately
+        let startingMetadata = DocumentLocalMetadata(
+            syncState: .savingLocal,
+            syncErrorMessage: nil,
+            dirtyPageIndexes: Array(doc.dirtyPageIndexes).sorted(),
+            lastLocalEditAt: doc.lastLocalEditAt,
+            lastRemoteSyncAt: doc.lastRemoteSyncAt,
+            lastOpenedPage: currentPageIndex,
+            thumbnailRevision: doc.thumbnailRevision,
+            searchIndexRevision: doc.searchIndexRevision
+        )
+        doc.apply(metadata: startingMetadata)
+        rep.saveLocalMetadata(startingMetadata, documentId: doc.id)
+
+        // Dismiss immediately to prevent UI blocking
         dismiss()
+
+        // Run the background PDF flattening and saving Task
+        Task.detached(priority: .medium) {
+            do {
+                let result = try await controller.prepareSaveResult()
+                
+                await MainActor.run {
+                    doc.updatedAt = result.localEditAt
+                    let metadata = DocumentLocalMetadata(
+                        syncState: doc.isRemoteBacked ? .queuedUpload : .synced,
+                        syncErrorMessage: nil,
+                        dirtyPageIndexes: result.dirtyPageIndexes,
+                        lastLocalEditAt: result.localEditAt,
+                        lastRemoteSyncAt: doc.lastRemoteSyncAt,
+                        lastOpenedPage: result.lastOpenedPage,
+                        thumbnailRevision: doc.thumbnailRevision + 1,
+                        searchIndexRevision: doc.searchIndexRevision + 1
+                    )
+                    doc.apply(metadata: metadata)
+                    rep.saveLocalMetadata(metadata, documentId: doc.id)
+                    
+                    if let pdfURL = doc.localPDFURL {
+                        ThumbnailCache.shared.warmThumbnail(
+                            documentId: doc.id,
+                            pdfURL: pdfURL,
+                            revision: metadata.thumbnailRevision
+                        )
+                    }
+                }
+
+                await DocumentSyncCoordinator.shared.registerLocalSave(
+                    result: result,
+                    documentId: doc.id,
+                    title: doc.title,
+                    rowId: doc.isRemoteBacked ? doc.supabaseRowId : nil,
+                    itemData: doc.sourceDocumentData,
+                    userId: auth.userId
+                )
+            } catch {
+                print("[Editor] Background save and sync failed: \(error)")
+            }
+        }
     }
     
     // MARK: - Sharing
@@ -1094,9 +1159,9 @@ private final class TiledPDFPageView: UIView {
         contentMode = .redraw
 
         let screenScale = UIScreen.main.scale
-        tiledLayer.levelsOfDetail = 4
-        tiledLayer.levelsOfDetailBias = 5
-        tiledLayer.tileSize = CGSize(width: 512 * screenScale, height: 512 * screenScale)
+        tiledLayer.levelsOfDetail = 3
+        tiledLayer.levelsOfDetailBias = 3
+        tiledLayer.tileSize = CGSize(width: 512, height: 512)
         tiledLayer.contentsScale = screenScale
     }
 
@@ -1430,6 +1495,8 @@ final class VectorInkCanvasView: UIView {
     private var activeStrokeColor = InkColorComponents(red: 0, green: 0, blue: 0, alpha: 1)
     private var activeBlendMode: InkBlendMode = .normal
     private var activeStrokeLayer: CAShapeLayer?
+    private var committedActivePath: UIBezierPath?
+    private var lastCommittedPointIndex: Int = 0
     private let eraserPreviewLayer = CAShapeLayer()
     private var eraserPreviewCenter: CGPoint?
     private let lassoPreviewLayer = CAShapeLayer()
@@ -2109,6 +2176,10 @@ final class VectorInkCanvasView: UIView {
         let normalized = normalizedPoint(for: point, force: force)
         activeStrokePoints.append(normalized)
 
+        committedActivePath = UIBezierPath()
+        committedActivePath?.move(to: point)
+        lastCommittedPointIndex = 0
+
         activeStrokeWidth = tool.mode == .pen
             ? max(tool.width * pressureFactor(for: force), 0.4)
             : tool.width
@@ -2146,7 +2217,7 @@ final class VectorInkCanvasView: UIView {
             activeStrokeLayer.lineWidth = activeStrokeWidth
         }
 
-        updateActiveStrokePath()
+        updateActiveStrokePathIncremental()
     }
 
     private func activeStrokeSnapshot() -> InkStroke? {
@@ -2172,12 +2243,16 @@ final class VectorInkCanvasView: UIView {
         onDrawingChanged?(drawing)
 
         activeStrokeLayer = nil
+        committedActivePath = nil
+        lastCommittedPointIndex = 0
         activeStrokePoints.removeAll(keepingCapacity: true)
     }
 
     private func discardActiveStroke() {
         activeStrokeLayer?.removeFromSuperlayer()
         activeStrokeLayer = nil
+        committedActivePath = nil
+        lastCommittedPointIndex = 0
         activeStrokePoints.removeAll(keepingCapacity: true)
     }
 
@@ -2321,6 +2396,10 @@ final class VectorInkCanvasView: UIView {
     }
 
     private func rebuildStrokePaths() {
+        if activeStrokeLayer != nil {
+            rebuildCommittedActivePath()
+        }
+
         guard drawing.strokes.count == strokeLayers.count else {
             rebuildStrokeLayers()
             return
@@ -2346,6 +2425,87 @@ final class VectorInkCanvasView: UIView {
             blendMode: activeBlendMode
         )
         activeStrokeLayer.path = strokePath(for: stroke).cgPath
+    }
+
+    private func updateActiveStrokePathIncremental() {
+        guard let activeStrokeLayer, let committed = committedActivePath else {
+            updateActiveStrokePath()
+            return
+        }
+
+        let count = activeStrokePoints.count
+        guard count > 0 else { return }
+
+        let points = activeStrokePoints.map { denormalizedPoint(for: $0) }
+
+        if lastCommittedPointIndex >= count {
+            lastCommittedPointIndex = 0
+            committed.removeAllPoints()
+            if let first = points.first {
+                committed.move(to: first)
+            }
+        }
+
+        // Commit new stable segments
+        if count >= 3 {
+            let start = lastCommittedPointIndex + 1
+            let end = count - 2
+            if start <= end {
+                for index in start...end {
+                    let current = points[index]
+                    let next = points[index + 1]
+                    let midpoint = CGPoint(
+                        x: (current.x + next.x) * 0.5,
+                        y: (current.y + next.y) * 0.5
+                    )
+                    committed.addQuadCurve(to: midpoint, controlPoint: current)
+                }
+                lastCommittedPointIndex = end
+            }
+        }
+
+        // Create the display path by copying the committed path and appending unstable parts
+        let displayPath = UIBezierPath()
+        displayPath.cgPath = committed.cgPath.copy() ?? committed.cgPath
+
+        if count == 1 {
+            let center = points[0]
+            displayPath.addLine(to: CGPoint(x: center.x + 0.01, y: center.y + 0.01))
+        } else if count == 2 {
+            displayPath.addLine(to: points[1])
+        } else {
+            if let last = points.last {
+                displayPath.addLine(to: last)
+            }
+        }
+
+        activeStrokeLayer.path = displayPath.cgPath
+    }
+
+    private func rebuildCommittedActivePath() {
+        guard activeStrokeLayer != nil else { return }
+        committedActivePath = UIBezierPath()
+        lastCommittedPointIndex = 0
+
+        let count = activeStrokePoints.count
+        guard count > 0 else { return }
+
+        let points = activeStrokePoints.map { denormalizedPoint(for: $0) }
+        committedActivePath?.move(to: points[0])
+
+        if count >= 3 {
+            let end = count - 2
+            for index in 1...end {
+                let current = points[index]
+                let next = points[index + 1]
+                let midpoint = CGPoint(
+                    x: (current.x + next.x) * 0.5,
+                    y: (current.y + next.y) * 0.5
+                )
+                committedActivePath?.addQuadCurve(to: midpoint, controlPoint: current)
+            }
+            lastCommittedPointIndex = end
+        }
     }
 
     private func makeStrokeLayer(color: UIColor, lineWidth: CGFloat) -> CAShapeLayer {
@@ -3236,8 +3396,6 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 coordinator?.pageDidChange(to: resolvedPage, total: pageViews.count)
             }
         }
-
-        refreshVisibleCanvasResolution()
     }
 
     private func renderPage(_ index: Int, into pageView: PageView) {
@@ -3253,6 +3411,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         case .blank:
             pageView.renderBlank(pageBounds: descriptor.pageBounds)
         }
+        pageView.canvasView.refreshForZoom(zoomScale: scrollView.zoomScale, forceRedraw: true)
     }
 
     private func refreshVisibleCanvasResolution(forceRedraw: Bool = false) {

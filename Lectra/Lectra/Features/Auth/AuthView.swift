@@ -79,10 +79,12 @@ struct AuthView: View {
                         )
                 }
 
-                Text("Lectra Studio")
-                    .font(LectraTypography.displayLarge)
-                    .foregroundColor(LectraColor.textPrimary)
-                    .multilineTextAlignment(.center)
+                VStack(spacing: 4) {
+                    Text("Lectra")
+                        .font(LectraTypography.displayLarge)
+                        .foregroundColor(LectraColor.textPrimary)
+                        .multilineTextAlignment(.center)
+                }
 
                 Text("Precision annotation for lecture PDFs.\nBuilt for Apple Pencil, tuned for long sessions.")
                     .font(LectraTypography.headlineMedium)

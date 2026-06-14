@@ -609,8 +609,7 @@ extension CourseBrainPDFDownloader: WKNavigationDelegate {
             }
 
             let session = URLSession(configuration: config)
-            let task = session.dataTask(with: request) { [weak self] data, response, error in
-                guard let self = self else { return }
+            let task = session.dataTask(with: request) { data, response, error in
                 Task { @MainActor in
                     session.finishTasksAndInvalidate()
                     guard self.isCurrentDownload(downloadID) else { return }
