@@ -1,6 +1,29 @@
 import SpriteKit
 import UIKit
 
+private enum CourseBrainScenePalette {
+    static let background = UIColor(hex: 0x0D0A09)
+    static let textPrimary = UIColor(hex: 0xF6F1E7)
+    static let labelSurface = UIColor(hex: 0x17100F, alpha: 0.9)
+    static let edge = UIColor(hex: 0xDAD2C4)
+    static let file = UIColor(hex: 0xC9BDAF)
+    static let concept = UIColor(hex: 0xD9A18D)
+    static let assignment = UIColor(hex: 0xF3B75D)
+    static let lecture = UIColor(hex: 0xB56A55)
+    static let note = UIColor(hex: 0xAEB878)
+
+    static let courseAccents: [UIColor] = [
+        LectraColor.accentUIColor,
+        UIColor(hex: 0xE85D4D),
+        UIColor(hex: 0xF3B75D),
+        UIColor(hex: 0xD9A18D),
+        UIColor(hex: 0xB56A55),
+        UIColor(hex: 0xAEB878),
+        UIColor(hex: 0xC9BDAF),
+        UIColor(hex: 0x8E5750),
+    ]
+}
+
 // MARK: - Delegate Protocol
 
 protocol CourseBrainSpriteSceneDelegate: AnyObject {
@@ -125,22 +148,13 @@ final class CourseBrainSpriteScene: SKScene {
     private let anchorCategory: UInt32 = 0x1 << 3
 
     // MARK: - Hub color palette (one per course, cycled)
-    private let hubPalette: [UIColor] = [
-        UIColor(red: 0.835, green: 0.392, blue: 0.541, alpha: 1), // rose
-        UIColor(red: 0.298, green: 0.553, blue: 1.000, alpha: 1), // blue
-        UIColor(red: 1.000, green: 0.624, blue: 0.271, alpha: 1), // amber
-        UIColor(red: 0.275, green: 0.788, blue: 0.478, alpha: 1), // green
-        UIColor(red: 0.627, green: 0.427, blue: 1.000, alpha: 1), // purple
-        UIColor(red: 0.200, green: 0.780, blue: 0.820, alpha: 1), // teal
-        UIColor(red: 0.950, green: 0.500, blue: 0.200, alpha: 1), // tangerine
-        UIColor(red: 0.700, green: 0.350, blue: 0.900, alpha: 1), // violet
-    ]
+    private let hubPalette: [UIColor] = CourseBrainScenePalette.courseAccents
 
     // MARK: - Lifecycle
 
     override func didMove(to view: SKView) {
         super.didMove(to: view)
-        backgroundColor = UIColor(red: 0.027, green: 0.027, blue: 0.031, alpha: 1)
+        backgroundColor = CourseBrainScenePalette.background
         physicsWorld.gravity = .zero
 
         addChild(cameraNode)
@@ -336,7 +350,7 @@ final class CourseBrainSpriteScene: SKScene {
         for edge in graphEdges {
             guard renderedIDs.contains(edge.source), renderedIDs.contains(edge.target) else { continue }
             let shape = SKShapeNode()
-            shape.strokeColor = UIColor.white.withAlphaComponent(edgeAlpha)
+            shape.strokeColor = CourseBrainScenePalette.edge.withAlphaComponent(edgeAlpha)
             shape.lineWidth = 1.2
             shape.lineCap = .round
             shape.zPosition = 1
@@ -460,7 +474,7 @@ final class CourseBrainSpriteScene: SKScene {
         let label = SKLabelNode(text: title)
         label.fontSize = hubLabelFontSize
         label.fontName = "SFProDisplay-Semibold"
-        label.fontColor = .white
+        label.fontColor = CourseBrainScenePalette.textPrimary
         label.alpha = 1.0
         label.verticalAlignmentMode = .top
         label.horizontalAlignmentMode = .center
@@ -474,7 +488,7 @@ final class CourseBrainSpriteScene: SKScene {
         // ── Label background pill ──
         let bgW: CGFloat = max(CGFloat(title.count) * 9, 100)
         let bg = SKShapeNode(rectOf: CGSize(width: bgW, height: 26), cornerRadius: 8)
-        bg.fillColor = UIColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 0.82)
+        bg.fillColor = CourseBrainScenePalette.labelSurface
         bg.strokeColor = .clear
         bg.position = CGPoint(x: 0, y: -(hubRadius + 23))
         bg.zPosition = 30
@@ -518,7 +532,7 @@ final class CourseBrainSpriteScene: SKScene {
         let label = SKLabelNode(text: title)
         label.fontSize = satLabelFontSize
         label.fontName = "SFProText-Medium"
-        label.fontColor = .white
+        label.fontColor = CourseBrainScenePalette.textPrimary
         label.alpha = 0.0
         label.verticalAlignmentMode = .top
         label.horizontalAlignmentMode = .center
@@ -537,11 +551,11 @@ final class CourseBrainSpriteScene: SKScene {
     private func satelliteColor(for type: CourseBrainNodeType, hubColor: UIColor) -> UIColor {
         switch type {
         case .topic:    return hubColor.withAlphaComponent(0.9)
-        case .concept:  return UIColor(red: 0.627, green: 0.427, blue: 1.000, alpha: 1)
-        case .assignment: return UIColor(red: 1.000, green: 0.624, blue: 0.271, alpha: 1)
-        case .lecture:  return UIColor(red: 0.298, green: 0.553, blue: 1.000, alpha: 1)
-        case .note:     return UIColor(red: 0.275, green: 0.788, blue: 0.478, alpha: 1)
-        case .file:     return UIColor(red: 0.604, green: 0.627, blue: 0.667, alpha: 1)
+        case .concept:  return CourseBrainScenePalette.concept
+        case .assignment: return CourseBrainScenePalette.assignment
+        case .lecture:  return CourseBrainScenePalette.lecture
+        case .note:     return CourseBrainScenePalette.note
+        case .file:     return CourseBrainScenePalette.file
         }
     }
 
@@ -702,12 +716,9 @@ final class CourseBrainSpriteScene: SKScene {
             if edge.source == sel { connected.insert(edge.target) }
             else if edge.target == sel { connected.insert(edge.source) }
         }
-        // Also connect hub ↔ satellite
-        for (id, _) in spritesByID {
-            if id.hasPrefix("hub:") {
-                // If selected is a satellite of this hub, highlight hub too
-                // and vice versa
-            }
+        for (_, endpoints) in edgeEndpoints {
+            if endpoints.0 == sel { connected.insert(endpoints.1) }
+            if endpoints.1 == sel { connected.insert(endpoints.0) }
         }
 
         for (id, sprite) in spritesByID {
@@ -716,12 +727,8 @@ final class CourseBrainSpriteScene: SKScene {
         }
 
         for (key, shape) in edgeShapes {
-            let visible: Bool
-            if let edge = graphEdges.first(where: { $0.id == key }) {
-                visible = connected.contains(edge.source) && connected.contains(edge.target)
-            } else {
-                visible = false // hub edges: show if connected
-            }
+            let endpoints = edgeEndpoints[key]
+            let visible = endpoints.map { connected.contains($0.0) && connected.contains($0.1) } ?? false
             shape.run(SKAction.fadeAlpha(to: visible ? edgeAlpha * 2.0 : dimmedAlpha * 0.3, duration: 0.22))
         }
 

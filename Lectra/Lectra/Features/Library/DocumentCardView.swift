@@ -2,7 +2,7 @@
 //  DocumentCardView.swift
 //  Lectra
 //
-//  Goodnotes-style document card for library grids.
+//  Canvascope workspace document card for library grids.
 //
 
 import SwiftUI
@@ -35,7 +35,7 @@ struct LibraryGridMetrics {
             sectionGap: 32,
             folderGridSpacing: 28,
             documentGridSpacing: 34,
-            documentShadowColor: Color.black.opacity(0.12),
+            documentShadowColor: LectraColor.background.opacity(0.28),
             documentShadowRadius: 4,
             documentShadowYOffset: 1
         )
@@ -53,7 +53,7 @@ struct LibraryGridMetrics {
             sectionGap: 24,
             folderGridSpacing: 24,
             documentGridSpacing: 30,
-            documentShadowColor: Color.black.opacity(0.12),
+            documentShadowColor: LectraColor.background.opacity(0.28),
             documentShadowRadius: 4,
             documentShadowYOffset: 1
         )
@@ -70,45 +70,38 @@ struct DocumentCardView: View {
     @State private var favoritePulse = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             previewCard
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(displayTitle)
-                    .font(LectraTypography.bodyEmphasis)
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.trailing, trailingAccessoryWidth)
-                    .accessibilityIdentifier("library.document.title.\(document.id.uuidString)")
-
-                HStack(spacing: 6) {
-                    if document.syncState != .idle {
-                        DocumentSyncBadgeView(
-                            state: document.syncState,
-                            size: .compact,
-                            onRetryTap: onSyncRetryTap
-                        )
-                        .fixedSize()
-                    }
-
-                    Text(subtitle)
-                        .font(LectraTypography.captionMedium)
-                        .foregroundColor(Color.white.opacity(0.62))
+            HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(displayTitle)
+                        .font(LectraTypography.bodyEmphasis)
+                        .foregroundColor(LectraColor.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .accessibilityIdentifier("library.document.metadata.\(document.id.uuidString)")
+                        .accessibilityIdentifier("library.document.title.\(document.id.uuidString)")
 
-                    Spacer(minLength: 0)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(statusDotColor)
+                            .frame(width: 5, height: 5)
+
+                        Text(subtitle)
+                            .font(LectraTypography.captionMedium)
+                            .foregroundColor(LectraColor.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .accessibilityIdentifier("library.document.metadata.\(document.id.uuidString)")
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .frame(minHeight: metrics.pdfFooterHeight, alignment: .topLeading)
-            .overlay(alignment: .topTrailing) {
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 if let onOptionsTap {
                     optionsButton(action: onOptionsTap)
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: metrics.pdfFooterHeight, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: metrics.pdfTotalHeight, alignment: .topLeading)
@@ -118,72 +111,137 @@ struct DocumentCardView: View {
     }
 
     private var previewCard: some View {
-        ZStack(alignment: .topTrailing) {
-            Group {
-                if document.localPDFURL != nil {
-                    CachedDocumentThumbnailView(
-                        document: document,
-                        size: CGSize(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+        Group {
+            if document.localPDFURL != nil {
+                CachedDocumentThumbnailView(
+                    document: document,
+                    size: CGSize(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+                )
+            } else {
+                ZStack {
+                    LinearGradient(
+                        colors: [LectraColor.placeholderStart, LectraColor.placeholderEnd],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                } else {
-                    ZStack {
-                        LinearGradient(
-                            colors: [LectraColor.placeholderStart, LectraColor.placeholderEnd],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
 
-                        VStack(spacing: 4) {
-                            Image(systemName: document.status == .downloading ? "arrow.down.circle" : "doc.text")
-                                .font(LectraTypography.titleSmall)
-                                .foregroundColor(Color.white.opacity(0.85))
+                    VStack(spacing: 4) {
+                        Image(systemName: document.status == .downloading ? "arrow.down.circle" : "doc.text")
+                            .font(LectraTypography.titleSmall)
+                            .foregroundColor(LectraColor.textPrimary.opacity(0.86))
 
-                            if document.status == .downloading {
-                                ProgressView()
-                                    .tint(.white)
-                            }
+                        if document.status == .downloading {
+                            ProgressView()
+                                .tint(LectraColor.textPrimary)
                         }
                     }
                 }
             }
-            .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
-            )
-            .lectraShadow((
-                color: Color.black.opacity(0.2),
-                radius: LectraElevation.libraryCardRadius,
-                y: LectraElevation.libraryCardYOffset
-            ))
-            .clipped()
-
-            Button {
-                LectraHaptics.tap()
-                withAnimation(LectraMotion.bounce) {
-                    favoritePulse.toggle()
-                }
-                onFavoriteToggle?()
-            } label: {
-                Image(systemName: document.isFavorite ? "star.fill" : "star")
-                    .font(LectraTypography.headline)
-                    .foregroundColor(document.isFavorite ? Color.yellow : Color.gray.opacity(0.8))
-                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                    .contentShape(Rectangle())
-                    .scaleEffect(favoritePulse ? 1.08 : 1.0)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(document.isFavorite ? "Remove favorite" : "Mark favorite")
-            .accessibilityValue(document.isFavorite ? "Favorite" : "Not favorite")
-            .accessibilityIdentifier("library.document.favorite.\(document.id.uuidString)")
         }
+        .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
+        .background(LectraColor.paper)
+        .overlay(alignment: .bottom) {
+            LinearGradient(
+                colors: [Color.clear, LectraColor.background.opacity(0.45)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+            .frame(height: 48)
+            .allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottomLeading) { syncCloudIndicator }
+        .overlay(alignment: .topTrailing) { favoriteButton }
+        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+        )
+        .lectraShadow((
+            color: LectraColor.background.opacity(0.42),
+            radius: LectraElevation.libraryCardRadius + 2,
+            y: LectraElevation.libraryCardYOffset + 1
+        ))
         .frame(width: metrics.cardWidth, height: metrics.pdfPreviewHeight)
     }
 
-    private var trailingAccessoryWidth: CGFloat {
-        onOptionsTap == nil ? 0 : (LectraSizing.minHitTarget + 6)
+    @ViewBuilder
+    private var syncCloudIndicator: some View {
+        if let cloud = cloudGlyph {
+            Group {
+                if document.syncState == .failed, let onSyncRetryTap {
+                    Button(action: onSyncRetryTap) { cloudChip(symbol: cloud.symbol, tint: cloud.tint) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Retry sync")
+                } else {
+                    cloudChip(symbol: cloud.symbol, tint: cloud.tint)
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private func cloudChip(symbol: String, tint: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(width: 28, height: 28)
+            .background(
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+                    .overlay(Circle().stroke(LectraGlass.hairlineStroke, lineWidth: 0.5))
+            )
+            .accessibilityLabel("Sync status")
+    }
+
+    private var cloudGlyph: (symbol: String, tint: Color)? {
+        switch document.syncState {
+        case .idle:
+            return nil
+        case .synced:
+            return ("checkmark.icloud.fill", LectraColor.success)
+        case .savingLocal, .flattening, .queuedUpload, .uploading:
+            return ("arrow.triangle.2.circlepath.icloud", LectraColor.info)
+        case .failed:
+            return ("exclamationmark.icloud.fill", LectraColor.accentSoft)
+        }
+    }
+
+    private var favoriteButton: some View {
+        Button {
+            LectraHaptics.tap()
+            withAnimation(LectraMotion.bounce) {
+                favoritePulse.toggle()
+            }
+            onFavoriteToggle?()
+        } label: {
+            Image(systemName: document.isFavorite ? "star.fill" : "star")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(document.isFavorite ? LectraColor.warning : LectraColor.textPrimary)
+                .frame(width: 30, height: 30)
+                .background(
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .environment(\.colorScheme, .dark)
+                        .overlay(Circle().stroke(LectraGlass.hairlineStroke, lineWidth: 0.5))
+                )
+                .scaleEffect(favoritePulse ? 1.12 : 1.0)
+                .padding(8)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(document.isFavorite ? "Remove favorite" : "Mark favorite")
+        .accessibilityValue(document.isFavorite ? "Favorite" : "Not favorite")
+        .accessibilityIdentifier("library.document.favorite.\(document.id.uuidString)")
+    }
+
+    private var statusDotColor: Color {
+        switch document.status {
+        case .annotated: return LectraColor.success
+        case .pendingAnnotation: return LectraColor.warningSubtle
+        case .downloading: return LectraColor.info
+        case .error: return LectraColor.accent
+        default: return LectraColor.textTertiary.opacity(0.6)
+        }
     }
 
     private func optionsButton(action: @escaping () -> Void) -> some View {
@@ -191,11 +249,14 @@ struct DocumentCardView: View {
             LectraHaptics.tap()
             action()
         } label: {
-            Image(systemName: "ellipsis.circle.fill")
-                .symbolRenderingMode(.hierarchical)
-                .font(LectraTypography.headline)
-                .foregroundColor(Color.white.opacity(0.8))
-                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(LectraColor.textSecondary)
+                .frame(width: 32, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous)
+                        .fill(LectraColor.surfaceFloating.opacity(0.6))
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -285,11 +346,11 @@ struct DocumentSyncBadgeView: View {
         case .idle:
             return .clear
         case .savingLocal, .flattening, .uploading:
-            return LectraColor.info
+            return LectraColor.accentCool
         case .queuedUpload:
             return LectraColor.warningSubtle
         case .synced:
-            return LectraColor.success
+            return LectraColor.accentSoft
         case .failed:
             return LectraColor.accentSoft
         }
@@ -347,12 +408,12 @@ struct CachedDocumentThumbnailView: View {
     private var placeholder: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(hex: 0xECECEC), Color(hex: 0xDADADA)],
+                colors: [LectraColor.paper, LectraColor.paperMuted],
                 startPoint: .top,
                 endPoint: .bottom
             )
             ProgressView()
-                .tint(Color.gray.opacity(0.8))
+                .tint(LectraColor.accent)
         }
     }
 }

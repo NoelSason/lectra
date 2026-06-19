@@ -46,9 +46,19 @@ final class CanvasImportService: ObservableObject {
     private var activeDownloader: CourseBrainPDFDownloader?
     private var cancelRequested = false
     private var runTask: Task<Void, Never>?
+    private var activePlan: [PlannedDownload] = []
 
     func start(courses: [CourseTwin], dependencies: Dependencies) {
-        guard !isRunning else { return }
+        if isRunning {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                print("[CanvasImport] ◆ planning additional courses…")
+                let newPlan = await Self.buildPlan(for: courses)
+                guard !newPlan.isEmpty else { return }
+                self.appendPlan(newPlan, dependencies: dependencies)
+            }
+            return
+        }
         cancelRequested = false
 
         guard dependencies.canvasFolderId() != nil else {
@@ -62,6 +72,7 @@ final class CanvasImportService: ObservableObject {
             guard let self else { return }
             print("[CanvasImport] ◆ planning…")
             let plan = await Self.buildPlan(for: courses)
+            self.activePlan = plan
             self.progress = Progress(completed: 0, total: plan.count, currentTitle: nil, currentCourseName: nil)
 
             if plan.isEmpty {
@@ -70,7 +81,28 @@ final class CanvasImportService: ObservableObject {
                 return
             }
 
-            await self.run(plan: plan, dependencies: dependencies)
+            await self.run(dependencies: dependencies)
+        }
+    }
+
+    private func appendPlan(_ newPlan: [PlannedDownload], dependencies: Dependencies) {
+        let existingURLs = Set(activePlan.map { $0.sourceURL.absoluteString.lowercased() })
+        let filtered = newPlan.filter { !existingURLs.contains($0.sourceURL.absoluteString.lowercased()) }
+        guard !filtered.isEmpty else { return }
+
+        if isRunning {
+            activePlan.append(contentsOf: filtered)
+            progress.total = activePlan.count
+            print("[CanvasImport] ◆ appended \(filtered.count) items to active plan (new total: \(activePlan.count))")
+        } else {
+            // Started/finished in the interim, launch a new task
+            activePlan = filtered
+            progress = Progress(completed: 0, total: filtered.count, currentTitle: nil, currentCourseName: nil)
+            phase = .running
+            runTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.run(dependencies: dependencies)
+            }
         }
     }
 
@@ -129,13 +161,14 @@ final class CanvasImportService: ObservableObject {
             let inferredHost = course.metadata.platformDomain?.trimmingCharacters(in: .whitespacesAndNewlines)
                 ?? course.resources.compactMap { $0.url?.host }.first
                 ?? course.modules.flatMap(\.items).compactMap { $0.url?.host }.first
-            if let host = inferredHost?.lowercased(), !host.isEmpty {
+            if let rawHost = inferredHost,
+               let host = CanvasFileURLResolver.normalizedHost(rawHost) {
                 let api = await CanvasFilesAPI.fetchAll(host: host, courseId: course.courseId, cookies: cookies)
-                let folderById: [Int: CanvasAPIFolder] = Dictionary(uniqueKeysWithValues: api.folders.map { ($0.id, $0) })
+                let folderById: [Int: CanvasAPIFolder] = Dictionary(api.folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
                 for file in api.files {
                     if file.isUnavailable { continue }
-                    guard let urlString = file.bestDownloadURLString,
+                    guard let urlString = file.bestDownloadURLString(host: host, courseId: course.courseId),
                           let url = URL(string: urlString) else { continue }
 
                     let title = file.resolvedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -171,10 +204,14 @@ final class CanvasImportService: ObservableObject {
             }
 
             for resource in course.resources where resource.kind == .assignment {
-                guard let url = resource.url,
-                      isLikelyPDF(url: url, title: resource.title, contentType: resource.contentType)
+                guard let rawURL = resource.url,
+                      let sourceURL = CanvasFileURLResolver.pdfSourceURL(
+                        from: rawURL,
+                        title: resource.title,
+                        contentType: resource.contentType
+                      )
                 else { continue }
-                let key = canonicalKey(url)
+                let key = canonicalKey(sourceURL)
                 guard seenURLs.insert(key).inserted else { continue }
 
                 let assignmentName: String = {
@@ -192,15 +229,19 @@ final class CanvasImportService: ObservableObject {
                     courseFolderName: courseFolderName,
                     leafFolderPathComponents: ["Assignments", sanitizeSegment(assignmentName)],
                     title: resource.title,
-                    sourceURL: url
+                    sourceURL: sourceURL
                 ))
             }
 
             for resource in course.resources where resource.kind == .file {
-                guard let url = resource.url,
-                      isLikelyPDF(url: url, title: resource.title, contentType: resource.contentType)
+                guard let rawURL = resource.url,
+                      let sourceURL = CanvasFileURLResolver.pdfSourceURL(
+                        from: rawURL,
+                        title: resource.title,
+                        contentType: resource.contentType
+                      )
                 else { continue }
-                let key = canonicalKey(url)
+                let key = canonicalKey(sourceURL)
                 guard seenURLs.insert(key).inserted else { continue }
 
                 var pathComponents: [String] = ["Files"]
@@ -211,16 +252,20 @@ final class CanvasImportService: ObservableObject {
                     courseFolderName: courseFolderName,
                     leafFolderPathComponents: pathComponents,
                     title: resource.title,
-                    sourceURL: url
+                    sourceURL: sourceURL
                 ))
             }
 
             for module in course.modules {
                 for item in module.items where item.type.lowercased().contains("file") {
-                    guard let url = item.url,
-                          isLikelyPDF(url: url, title: item.title, contentType: nil)
+                    guard let rawURL = item.url,
+                          let sourceURL = CanvasFileURLResolver.pdfSourceURL(
+                            from: rawURL,
+                            title: item.title,
+                            contentType: nil
+                          )
                     else { continue }
-                    let key = canonicalKey(url)
+                    let key = canonicalKey(sourceURL)
                     guard seenURLs.insert(key).inserted else { continue }
 
                     let moduleSegment = sanitizeSegment(module.name)
@@ -229,7 +274,7 @@ final class CanvasImportService: ObservableObject {
                         courseFolderName: courseFolderName,
                         leafFolderPathComponents: ["Files", moduleSegment],
                         title: item.title,
-                        sourceURL: url
+                        sourceURL: sourceURL
                     ))
                 }
             }
@@ -240,7 +285,7 @@ final class CanvasImportService: ObservableObject {
 
     // MARK: - Execution
 
-    private func run(plan: [PlannedDownload], dependencies: Dependencies) async {
+    private func run(dependencies: Dependencies) async {
         var imported = 0
         var skipped = 0
         var failed = 0
@@ -251,7 +296,7 @@ final class CanvasImportService: ObservableObject {
             return
         }
 
-        print("[CanvasImport] ▶︎ starting batch — \(plan.count) item(s)")
+        print("[CanvasImport] ▶︎ starting batch — \(activePlan.count) item(s)")
 
         // Reuse a single downloader across the batch. Each download was
         // previously creating its own WKWebView (and a new WebContent
@@ -260,29 +305,33 @@ final class CanvasImportService: ObservableObject {
         let downloader = CourseBrainPDFDownloader()
         self.activeDownloader = downloader
 
-        for (index, item) in plan.enumerated() {
+        var index = 0
+        while index < activePlan.count {
             if cancelRequested { break }
+
+            let item = activePlan[index]
 
             progress = Progress(
                 completed: index,
-                total: plan.count,
+                total: activePlan.count,
                 currentTitle: item.title,
                 currentCourseName: item.courseFolderName
             )
 
             if dependencies.documentIdForSourceURL(item.sourceURL) != nil {
-                print("[CanvasImport] [\(index + 1)/\(plan.count)] skip already-imported \"\(item.title)\"")
+                print("[CanvasImport] [\(index + 1)/\(activePlan.count)] skip already-imported \"\(item.title)\"")
                 skipped += 1
                 progress = Progress(
                     completed: index + 1,
-                    total: plan.count,
+                    total: activePlan.count,
                     currentTitle: item.title,
                     currentCourseName: item.courseFolderName
                 )
+                index += 1
                 continue
             }
 
-            print("[CanvasImport] [\(index + 1)/\(plan.count)] downloading \"\(item.title)\"")
+            print("[CanvasImport] [\(index + 1)/\(activePlan.count)] downloading \"\(item.title)\"")
             print("[CanvasImport]    URL: \(item.sourceURL.absoluteString)")
 
             let downloadResult: Result<URL, Error> = await withCheckedContinuation { continuation in
@@ -313,10 +362,12 @@ final class CanvasImportService: ObservableObject {
 
             progress = Progress(
                 completed: index + 1,
-                total: plan.count,
+                total: activePlan.count,
                 currentTitle: item.title,
                 currentCourseName: item.courseFolderName
             )
+
+            index += 1
         }
 
         downloader.teardown()
@@ -324,8 +375,8 @@ final class CanvasImportService: ObservableObject {
         print("[CanvasImport] ⤓ batch complete — imported=\(imported) skipped=\(skipped) failed=\(failed)")
 
         let finalProgress = Progress(
-            completed: cancelRequested ? progress.completed : plan.count,
-            total: plan.count,
+            completed: cancelRequested ? progress.completed : activePlan.count,
+            total: activePlan.count,
             currentTitle: nil,
             currentCourseName: nil
         )

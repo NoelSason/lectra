@@ -20,11 +20,11 @@ struct PDFAnnotationView: View {
         var backgroundColor: Color {
             switch self {
             case .success:
-                return LectraColor.success.opacity(0.9)
+                return LectraColor.accent.opacity(0.92)
             case .info:
-                return LectraColor.info.opacity(0.92)
+                return LectraColor.surfaceCard.opacity(0.96)
             case .error:
-                return LectraColor.accent.opacity(0.95)
+                return LectraColor.accentDestructive.opacity(0.95)
             }
         }
     }
@@ -80,9 +80,13 @@ struct PDFAnnotationView: View {
     @State private var currentDockProfile: EditorDockProfile = .landscapeRegular
     @State private var editorPreferences = EditorPreferencesStore.shared.load()
     @State private var toolbarSize: CGSize = .zero
+    @State private var toastSize: CGSize = .zero
     @State private var isToolbarDragging = false
+    @State private var currentDragLocation: CGPoint? = nil
+    @State private var initialTouchOffset: CGSize = .zero
     @State private var canvascopeDeliveryTask: Task<Void, Never>? = nil
     @State private var showGradescopeSubmitSheet = false
+    @State private var showIntelligenceSheet = false
     @State private var showDocumentSearchSheet = false
     @State private var documentSearchQuery = ""
     @State private var documentSearchResults: [DocumentSearchResult] = []
@@ -122,7 +126,13 @@ struct PDFAnnotationView: View {
                             .ignoresSafeArea(.keyboard)
 
                             GeometryReader { proxy in
-                                floatingToolbar(in: proxy)
+                                ZStack {
+                                    floatingToolbar(in: proxy)
+
+                                    if let msg = saveMessage {
+                                        statusToast(message: msg, in: proxy)
+                                    }
+                                }
                             }
 
                             if showPageIndicator {
@@ -131,17 +141,21 @@ struct PDFAnnotationView: View {
                                     HStack {
                                         Text("Page \(currentPage + 1) / \(max(totalPages, 1))")
                                             .font(LectraTypography.caption)
-                                            .foregroundColor(.white)
+                                            .foregroundColor(LectraColor.textPrimary)
                                             .contentTransition(.numericText())
                                             .padding(.horizontal, 14)
                                             .padding(.vertical, 9)
                                             .background(
-                                                Capsule()
-                                                    .fill(LectraColor.surfaceFloating.opacity(0.9))
+                                                ZStack {
+                                                    Capsule()
+                                                        .fill(LectraColor.surfaceFloating.opacity(0.94))
+                                                    Capsule()
+                                                        .fill(LectraGradient.spotlight.opacity(0.12))
+                                                }
                                             )
                                             .overlay(
                                                 Capsule()
-                                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                                    .stroke(LectraColor.accent.opacity(0.22), lineWidth: 1)
                                             )
                                             .padding(.leading, LectraSpacing.lg)
                                             .padding(.bottom, LectraSpacing.lg)
@@ -152,38 +166,31 @@ struct PDFAnnotationView: View {
                                 .allowsHitTesting(false)
                             }
 
-                            if let msg = saveMessage {
-                                VStack {
-                                    Spacer()
-                                    HStack(spacing: 12) {
-                                        Text(msg)
-                                            .font(.subheadline.bold())
-                                            .foregroundColor(.white)
-
-                                        if let toastAction {
-                                            Button(toastAction.title, action: toastAction.handler)
-                                                .font(.subheadline.bold())
-                                                .foregroundColor(.white)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 8)
-                                                .background(Color.white.opacity(0.18))
-                                                .clipShape(Capsule())
-                                        }
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .background(saveMessageStyle.backgroundColor)
-                                    .clipShape(RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous))
-                                    .padding(.bottom, 100)
-                                }
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                            }
                         }
                         .coordinateSpace(name: "ToolbarDragZone")
                     } else {
                         Spacer()
-                        Text("PDF not available")
-                            .foregroundColor(LectraColor.textSecondary)
+                        VStack(spacing: 12) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(LectraTypography.displaySmall)
+                                .foregroundColor(LectraColor.textTertiary)
+                            Text("PDF not available")
+                                .font(LectraTypography.headlineMedium)
+                                .foregroundColor(LectraColor.textPrimary)
+                            Text("The document record is present, but the local PDF file is missing.")
+                                .font(LectraTypography.body)
+                                .foregroundColor(LectraColor.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(22)
+                        .background(
+                            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                                .fill(LectraColor.surfaceElevated.opacity(0.86))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                                )
+                        )
                         Spacer()
                     }
                 }
@@ -204,6 +211,15 @@ struct PDFAnnotationView: View {
         .sheet(isPresented: $showGradescopeSubmitSheet) {
             GradescopeSubmitSheet(document: document, repository: repository)
                 .environmentObject(gradescopeManager)
+        }
+        .sheet(isPresented: $showIntelligenceSheet) {
+            if let url = document.localPDFURL {
+                DocumentInsightsSheet(
+                    documentTitle: document.title,
+                    pdfURL: url,
+                    currentPage: currentPage
+                )
+            }
         }
         .sheet(isPresented: $showDocumentSearchSheet) {
             documentSearchSheet
@@ -256,16 +272,136 @@ struct PDFAnnotationView: View {
                     }
             }
         )
+        .scaleEffect(isToolbarDragging ? 0.96 : 1.0)
+        .opacity(isToolbarDragging ? 0.90 : 1.0)
+        .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7, blendDuration: 0), value: isToolbarDragging)
         .position(toolbarPosition(in: proxy))
-        .simultaneousGesture(toolbarDragGesture(in: proxy.size, safeAreaInsets: proxy.safeAreaInsets))
+        .simultaneousGesture(toolbarDragGesture(in: proxy.size, safeAreaInsets: proxy.safeAreaInsets, proxy: proxy))
+    }
+
+    private func statusToast(message: String, in proxy: GeometryProxy) -> some View {
+        HStack(spacing: 12) {
+            Text(message)
+                .font(.subheadline.bold())
+                .foregroundColor(LectraColor.textPrimary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+
+            if let toastAction {
+                Button(toastAction.title, action: toastAction.handler)
+                    .font(.subheadline.bold())
+                    .foregroundColor(LectraColor.textPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(LectraColor.surfaceElevated.opacity(0.92))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(LectraGlass.innerHighlight, lineWidth: 1)
+                    )
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: toastMaxWidth(in: proxy))
+        .background(saveMessageStyle.backgroundColor)
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous)
+                .stroke(LectraGlass.innerHighlight, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous))
+        .lectraShadow(LectraElevation.medium())
+        .background(
+            GeometryReader { toastProxy in
+                Color.clear
+                    .onAppear {
+                        toastSize = toastProxy.size
+                    }
+                    .onChange(of: toastProxy.size) { _, newSize in
+                        toastSize = newSize
+                    }
+            }
+        )
+        .position(toastPosition(in: proxy))
+        .allowsHitTesting(toastAction != nil)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func toastMaxWidth(in proxy: GeometryProxy) -> CGFloat {
+        let availableWidth = proxy.size.width
+            - proxy.safeAreaInsets.leading
+            - proxy.safeAreaInsets.trailing
+            - (LectraSpacing.lg * 2)
+        return Swift.max(160, Swift.min(availableWidth, 520))
+    }
+
+    private func toastPosition(in proxy: GeometryProxy) -> CGPoint {
+        let safe = proxy.safeAreaInsets
+        let measuredWidth = toastSize.width > 0 ? toastSize.width : Swift.min(360, toastMaxWidth(in: proxy))
+        let measuredHeight = toastSize.height > 0 ? toastSize.height : LectraSizing.minHitTarget
+        let halfWidth = measuredWidth * 0.5
+        let halfHeight = measuredHeight * 0.5
+        let minX = safe.leading + LectraSpacing.md + halfWidth
+        let maxX = proxy.size.width - safe.trailing - LectraSpacing.md - halfWidth
+        let centerX = clamped(
+            safe.leading + ((proxy.size.width - safe.leading - safe.trailing) * 0.5),
+            min: minX,
+            max: maxX
+        )
+        let minCenterY = safe.top + LectraSpacing.md + halfHeight
+        let bottomContentCenterY = proxy.size.height - safe.bottom - LectraSpacing.md - halfHeight
+
+        guard toolbarSize.height > 0 else {
+            return CGPoint(x: centerX, y: bottomContentCenterY)
+        }
+
+        let toolbarCenter = toolbarPosition(in: proxy)
+        let toolbarTop = toolbarCenter.y - (toolbarSize.height * 0.5)
+        let toolbarBottom = toolbarCenter.y + (toolbarSize.height * 0.5)
+
+        switch toolbarDockEdge {
+        case .bottom:
+            let belowToolbarY = toolbarBottom + LectraSpacing.sm + halfHeight
+            let bottomScreenCenterY = proxy.size.height - LectraSpacing.sm - halfHeight
+
+            if toastAction == nil, belowToolbarY <= bottomScreenCenterY {
+                return CGPoint(x: centerX, y: belowToolbarY)
+            }
+
+            let aboveToolbarY = toolbarTop - LectraSpacing.md - halfHeight
+            return CGPoint(
+                x: centerX,
+                y: clamped(aboveToolbarY, min: minCenterY, max: bottomContentCenterY)
+            )
+        case .top:
+            let belowToolbarY = toolbarBottom + LectraSpacing.md + halfHeight
+            return CGPoint(
+                x: centerX,
+                y: clamped(belowToolbarY, min: minCenterY, max: bottomContentCenterY)
+            )
+        case .left, .right:
+            return CGPoint(x: centerX, y: bottomContentCenterY)
+        }
     }
 
     private func toolbarPosition(in proxy: GeometryProxy) -> CGPoint {
         let safe = proxy.safeAreaInsets
-        let edgeMargin: CGFloat = toolbarDockEdge == .bottom ? (safe.bottom + 28) : LectraSpacing.lg
         let halfWidth = toolbarSize.width * 0.5
         let halfHeight = toolbarSize.height * 0.5
 
+        if let currentDragLocation {
+            let minX = safe.leading + LectraSpacing.lg + halfWidth
+            let maxX = proxy.size.width - safe.trailing - LectraSpacing.lg - halfWidth
+            let minY = safe.top + LectraSpacing.lg + halfHeight
+            let maxY = proxy.size.height - safe.bottom - LectraSpacing.lg - halfHeight
+
+            return CGPoint(
+                x: clamped(currentDragLocation.x, min: minX, max: maxX),
+                y: clamped(currentDragLocation.y, min: minY, max: maxY)
+            )
+        }
+
+        let edgeMargin: CGFloat = toolbarDockEdge == .bottom ? (safe.bottom + 28) : LectraSpacing.lg
         let minX = safe.leading + LectraSpacing.lg + halfWidth
         let maxX = proxy.size.width - safe.trailing - LectraSpacing.lg - halfWidth
         let minY = safe.top + LectraSpacing.lg + halfHeight
@@ -298,13 +434,30 @@ struct PDFAnnotationView: View {
         }
     }
 
-    private func toolbarDragGesture(in size: CGSize, safeAreaInsets: EdgeInsets) -> some Gesture {
+    private func toolbarDragGesture(in size: CGSize, safeAreaInsets: EdgeInsets, proxy: GeometryProxy) -> some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .named("ToolbarDragZone"))
             .onChanged { value in
                 if !isToolbarDragging {
                     isToolbarDragging = true
                 }
-                let newEdge = toolbarDockEdge(for: value.location, in: size, safeAreaInsets: safeAreaInsets)
+
+                currentDragLocation = value.location
+
+                let halfWidth = toolbarSize.width * 0.5
+                let halfHeight = toolbarSize.height * 0.5
+                let safe = proxy.safeAreaInsets
+
+                let minX = safe.leading + LectraSpacing.lg + halfWidth
+                let maxX = size.width - safe.trailing - LectraSpacing.lg - halfWidth
+                let minY = safe.top + LectraSpacing.lg + halfHeight
+                let maxY = size.height - safe.bottom - LectraSpacing.lg - halfHeight
+
+                let currentPos = CGPoint(
+                    x: clamped(value.location.x, min: minX, max: maxX),
+                    y: clamped(value.location.y, min: minY, max: maxY)
+                )
+
+                let newEdge = nearestEdge(for: currentPos, in: size, safeAreaInsets: safe)
                 if newEdge != toolbarDockEdge {
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
@@ -314,41 +467,50 @@ struct PDFAnnotationView: View {
                 }
             }
             .onEnded { value in
-                isToolbarDragging = false
-                let newEdge = toolbarDockEdge(for: value.location, in: size, safeAreaInsets: safeAreaInsets)
+                let halfWidth = toolbarSize.width * 0.5
+                let halfHeight = toolbarSize.height * 0.5
+                let safe = proxy.safeAreaInsets
+
+                let minX = safe.leading + LectraSpacing.lg + halfWidth
+                let maxX = size.width - safe.trailing - LectraSpacing.lg - halfWidth
+                let minY = safe.top + LectraSpacing.lg + halfHeight
+                let maxY = size.height - safe.bottom - LectraSpacing.lg - halfHeight
+
+                let currentPos = CGPoint(
+                    x: clamped(value.location.x, min: minX, max: maxX),
+                    y: clamped(value.location.y, min: minY, max: maxY)
+                )
+
+                let newEdge = nearestEdge(for: currentPos, in: size, safeAreaInsets: safe)
+
                 withAnimation(LectraMotion.toolbarDock) {
                     toolbarDockEdge = newEdge
+                    isToolbarDragging = false
+                    currentDragLocation = nil
                 }
             }
     }
 
-    private func toolbarDockEdge(
+    private func nearestEdge(
         for location: CGPoint,
         in size: CGSize,
         safeAreaInsets: EdgeInsets
     ) -> EditorToolbarDockEdge {
-        let leftZone = safeAreaInsets.leading + (size.width - safeAreaInsets.leading - safeAreaInsets.trailing) * 0.25
-        let rightZone = safeAreaInsets.leading + (size.width - safeAreaInsets.leading - safeAreaInsets.trailing) * 0.75
-        let topZone = safeAreaInsets.top + (size.height - safeAreaInsets.top - safeAreaInsets.bottom) * 0.24
-        let bottomZone = size.height - safeAreaInsets.bottom - (size.height * 0.18)
+        let leftDist = location.x - safeAreaInsets.leading
+        let rightDist = size.width - safeAreaInsets.trailing - location.x
+        let topDist = location.y - safeAreaInsets.top
+        let bottomDist = size.height - safeAreaInsets.bottom - location.y
 
-        if location.y <= topZone {
+        let minDist = min(leftDist, rightDist, topDist, bottomDist)
+        if minDist == leftDist {
+            return .left
+        } else if minDist == rightDist {
+            return .right
+        } else if minDist == topDist {
             return .top
-        }
-
-        if location.y >= bottomZone {
+        } else {
             return .bottom
         }
-
-        if location.x <= leftZone {
-            return .left
-        }
-
-        if location.x >= rightZone {
-            return .right
-        }
-
-        return .bottom
     }
 
     private func clamped(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
@@ -403,6 +565,7 @@ struct PDFAnnotationView: View {
             },
             onShowGradescope: { showGradescopeSubmitSheet = true },
             onShare: shareDocument,
+            onShowIntelligence: { showIntelligenceSheet = true },
             isTitleFocused: $isTitleFieldFocused
         )
     }
@@ -414,13 +577,13 @@ struct PDFAnnotationView: View {
         case .idle:
             return nil
         case .savingLocal, .flattening:
-            return EditorSyncStatusDescriptor(title: "Saving", color: LectraColor.info)
+            return EditorSyncStatusDescriptor(title: "Saving", color: LectraColor.accentCool)
         case .queuedUpload:
             return EditorSyncStatusDescriptor(title: "Queued", color: LectraColor.warningSubtle)
         case .uploading:
-            return EditorSyncStatusDescriptor(title: "Uploading", color: LectraColor.info)
+            return EditorSyncStatusDescriptor(title: "Uploading", color: LectraColor.accentCool)
         case .synced:
-            return EditorSyncStatusDescriptor(title: "Synced", color: LectraColor.success)
+            return EditorSyncStatusDescriptor(title: "Synced", color: LectraColor.accentSoft)
         case .failed:
             return EditorSyncStatusDescriptor(
                 title: "Retry",
@@ -866,59 +1029,45 @@ struct PDFAnnotationView: View {
 
     private var documentSearchSheet: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                PDFEditorSearchBar(text: $documentSearchQuery)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 18)
-                    .onChange(of: documentSearchQuery) { _, _ in
-                        searchCurrentDocument()
-                    }
+            ZStack {
+                editorSheetBackdrop
 
-                if isSearchingDocument {
-                    ProgressView()
-                        .tint(.white)
-                } else if documentSearchResults.isEmpty {
-                    Spacer()
-                    Text(documentSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Start typing to search this PDF." : "No matches found.")
-                        .foregroundColor(Color.white.opacity(0.7))
-                    Spacer()
-                } else {
-                    List(documentSearchResults) { result in
-                        Button {
-                            if let pageIndex = result.pageIndex {
-                                currentPage = pageIndex
-                            }
-                            showDocumentSearchSheet = false
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(result.subtitle)
-                                    .font(LectraTypography.bodyEmphasis)
-                                    .foregroundColor(.white)
-                                if let snippet = result.snippet {
-                                    Text(snippet)
-                                        .font(LectraTypography.body)
-                                        .foregroundColor(Color.white.opacity(0.72))
-                                        .multilineTextAlignment(.leading)
-                                }
-                            }
+                VStack(spacing: 16) {
+                    PDFEditorSearchBar(text: $documentSearchQuery)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 18)
+                        .onChange(of: documentSearchQuery) { _, _ in
+                            searchCurrentDocument()
                         }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.clear)
+
+                    if isSearchingDocument {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .tint(LectraColor.accentSoft)
+                            Text("Searching pages")
+                                .font(LectraTypography.captionMedium)
+                                .foregroundColor(LectraColor.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if documentSearchResults.isEmpty {
+                        searchEmptyState
+                    } else {
+                        documentSearchResultsList
                     }
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
                 }
             }
-            .background(LectraColor.surfaceFloating.ignoresSafeArea())
             .navigationTitle("Search PDF")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         showDocumentSearchSheet = false
                     }
-                    .foregroundColor(LectraColor.accent)
+                    .foregroundColor(LectraColor.accentSoft)
                 }
             }
+            .toolbarBackground(LectraColor.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
         .presentationDetents([.medium, .large])
@@ -926,37 +1075,184 @@ struct PDFAnnotationView: View {
 
     private var outlineSheet: some View {
         NavigationStack {
-            List(outlineItems) { item in
-                Button {
-                    currentPage = item.pageIndex
-                    showOutlineSheet = false
-                } label: {
-                    HStack(spacing: 12) {
-                        Text(item.title)
-                            .foregroundColor(.white)
-                            .padding(.leading, CGFloat(item.depth) * 12)
-                        Spacer(minLength: 0)
-                        Text("P\(item.pageIndex + 1)")
-                            .foregroundColor(Color.white.opacity(0.54))
+            ZStack {
+                editorSheetBackdrop
+
+                if outlineItems.isEmpty {
+                    editorSheetEmptyState(
+                        icon: "list.bullet.rectangle",
+                        title: "No outline",
+                        message: "This PDF does not include an outline."
+                    )
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(outlineItems) { item in
+                                outlineResultRow(item)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 18)
+                        .padding(.bottom, 28)
                     }
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(Color.clear)
             }
-            .scrollContentBackground(.hidden)
-            .background(LectraColor.surfaceFloating.ignoresSafeArea())
             .navigationTitle("Outline")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         showOutlineSheet = false
                     }
-                    .foregroundColor(LectraColor.accent)
+                    .foregroundColor(LectraColor.accentSoft)
                 }
             }
+            .toolbarBackground(LectraColor.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
         .presentationDetents([.medium, .large])
+    }
+
+    private var documentSearchResultsList: some View {
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(documentSearchResults) { result in
+                    searchResultRow(result)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 28)
+        }
+    }
+
+    private var searchEmptyState: some View {
+        let query = documentSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return editorSheetEmptyState(
+            icon: query.isEmpty ? "text.magnifyingglass" : "doc.text.magnifyingglass",
+            title: query.isEmpty ? "Search pages" : "No matches",
+            message: query.isEmpty ? "Type a word or phrase to find it in this PDF." : "Nothing in this document matched your search."
+        )
+    }
+
+    private func searchResultRow(_ result: DocumentSearchResult) -> some View {
+        Button {
+            if let pageIndex = result.pageIndex {
+                currentPage = pageIndex
+            }
+            showDocumentSearchSheet = false
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                if let pageIndex = result.pageIndex {
+                    Text("P\(pageIndex + 1)")
+                        .font(LectraTypography.footnoteBold)
+                        .foregroundColor(LectraColor.textPrimary)
+                        .frame(minWidth: 42, minHeight: 32)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(pageIndex == currentPage ? LectraColor.accent.opacity(0.78) : LectraColor.surfaceFloating.opacity(0.9))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(pageIndex == currentPage ? LectraColor.accentSoft.opacity(0.42) : LectraColor.edgeStroke, lineWidth: 1)
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(result.subtitle)
+                        .font(LectraTypography.bodyEmphasis)
+                        .foregroundColor(LectraColor.textPrimary)
+                    if let snippet = result.snippet {
+                        Text(snippet)
+                            .font(LectraTypography.body)
+                            .foregroundColor(LectraColor.textSecondary)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(3)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "arrow.turn.down.right")
+                    .font(LectraTypography.caption)
+                    .foregroundColor(LectraColor.textTertiary)
+                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+            }
+            .padding(14)
+            .background(editorSheetCardBackground(isSelected: result.pageIndex == currentPage))
+            .contentShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Jumps to this search result.")
+    }
+
+    private func outlineResultRow(_ item: DocumentOutlineDestination) -> some View {
+        Button {
+            currentPage = item.pageIndex
+            showOutlineSheet = false
+        } label: {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(item.pageIndex == currentPage ? LectraColor.accent : LectraColor.paperMuted.opacity(0.45))
+                    .frame(width: 4, height: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(item.pageIndex == currentPage ? LectraTypography.bodyEmphasis : LectraTypography.body)
+                        .foregroundColor(LectraColor.textPrimary)
+                        .lineLimit(2)
+                        .padding(.leading, CGFloat(item.depth) * 12)
+
+                    Text("Page \(item.pageIndex + 1)")
+                        .font(LectraTypography.footnote)
+                        .foregroundColor(LectraColor.textTertiary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(editorSheetCardBackground(isSelected: item.pageIndex == currentPage))
+            .contentShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Jumps to this outline destination.")
+    }
+
+    private var editorSheetBackdrop: some View {
+        ZStack {
+            LectraColor.background.ignoresSafeArea()
+            LectraGradient.appBackdrop.opacity(0.78).ignoresSafeArea()
+        }
+    }
+
+    private func editorSheetEmptyState(icon: String, title: String, message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(LectraTypography.displaySmall)
+                .foregroundColor(LectraColor.textTertiary)
+            Text(title)
+                .font(LectraTypography.title)
+                .foregroundColor(LectraColor.textPrimary)
+            Text(message)
+                .font(LectraTypography.body)
+                .foregroundColor(LectraColor.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func editorSheetCardBackground(isSelected: Bool = false) -> some View {
+        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+            .fill(isSelected ? LectraColor.sidebarSelection.opacity(0.92) : LectraColor.surfaceElevated.opacity(0.78))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(isSelected ? 0.16 : 0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .stroke(isSelected ? LectraColor.accentSoft.opacity(0.42) : LectraColor.edgeStroke, lineWidth: 1)
+            )
     }
 }
 
@@ -1024,27 +1320,41 @@ private struct PDFEditorSearchBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(Color.white.opacity(0.48))
+                .font(LectraTypography.bodyEmphasis)
+                .foregroundColor(LectraColor.textTertiary)
 
-            TextField("Search pages", text: $text)
+            TextField("", text: $text, prompt: Text("Search pages").foregroundColor(LectraColor.textTertiary.opacity(0.72)))
                 .textInputAutocapitalization(.never)
                 .disableAutocorrection(true)
-                .foregroundColor(.white)
+                .font(LectraTypography.body)
+                .foregroundColor(LectraColor.textPrimary)
 
             if !text.isEmpty {
                 Button {
                     text = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(Color.white.opacity(0.48))
+                        .font(LectraTypography.bodyEmphasis)
+                        .foregroundColor(LectraColor.textTertiary)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .frame(height: 48)
-        .background(LectraColor.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                .fill(LectraColor.surfaceFloating.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                        .fill(LectraGradient.spotlight.opacity(0.10))
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
     }
 }
 
@@ -1703,8 +2013,8 @@ final class VectorInkCanvasView: UIView {
     }
 
     private func configureEraserPreviewLayer() {
-        eraserPreviewLayer.fillColor = UIColor(white: 0.45, alpha: 0.26).cgColor
-        eraserPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.98).cgColor
+        eraserPreviewLayer.fillColor = LectraColor.accentUIColor.withAlphaComponent(0.18).cgColor
+        eraserPreviewLayer.strokeColor = UIColor(hex: 0xF6F1E7, alpha: 0.98).cgColor
         eraserPreviewLayer.lineWidth = eraserPreviewStrokeWidth(for: 8.0)
         eraserPreviewLayer.shadowColor = UIColor.black.withAlphaComponent(0.55).cgColor
         eraserPreviewLayer.shadowOffset = .zero
@@ -1718,7 +2028,7 @@ final class VectorInkCanvasView: UIView {
 
     private func configureLassoLayers() {
         lassoPreviewLayer.fillColor = UIColor.clear.cgColor
-        lassoPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.94).cgColor
+        lassoPreviewLayer.strokeColor = UIColor(hex: 0xF6F1E7, alpha: 0.94).cgColor
         lassoPreviewLayer.lineWidth = 2
         lassoPreviewLayer.lineDashPattern = [8, 6]
         lassoPreviewLayer.isHidden = true
@@ -1737,7 +2047,7 @@ final class VectorInkCanvasView: UIView {
 
         for handle in LassoSelectionHandle.allCases {
             let handleLayer = CAShapeLayer()
-            handleLayer.fillColor = UIColor.white.cgColor
+            handleLayer.fillColor = UIColor(hex: 0xF6F1E7).cgColor
             handleLayer.strokeColor = LectraColor.accentUIColor.cgColor
             handleLayer.lineWidth = 2
             handleLayer.isHidden = true
@@ -1749,9 +2059,9 @@ final class VectorInkCanvasView: UIView {
     }
 
     private func configureSelectionActionsView() {
-        selectionActionsView.backgroundColor = UIColor(white: 0.08, alpha: 0.92)
+        selectionActionsView.backgroundColor = UIColor(hex: 0x17100F, alpha: 0.94)
         selectionActionsView.layer.cornerRadius = 18
-        selectionActionsView.layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
+        selectionActionsView.layer.borderColor = UIColor(hex: 0xDAD2C4, alpha: 0.18).cgColor
         selectionActionsView.layer.borderWidth = 1
         selectionActionsView.clipsToBounds = true
         selectionActionsView.isHidden = true
@@ -1810,8 +2120,8 @@ final class VectorInkCanvasView: UIView {
 
     private func configureEraserPreviewAppearance() {
         guard tool.mode == .eraser else { return }
-        eraserPreviewLayer.fillColor = UIColor(white: 0.45, alpha: 0.26).cgColor
-        eraserPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.98).cgColor
+        eraserPreviewLayer.fillColor = LectraColor.accentUIColor.withAlphaComponent(0.18).cgColor
+        eraserPreviewLayer.strokeColor = UIColor(hex: 0xF6F1E7, alpha: 0.98).cgColor
         let currentRadius = max(tool.eraserRadius, 2.0)
         eraserPreviewLayer.lineWidth = eraserPreviewStrokeWidth(for: currentRadius)
         eraserPreviewLayer.shadowColor = UIColor.black.withAlphaComponent(0.55).cgColor
@@ -2812,6 +3122,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
     private func setupScrollView() {
         scrollView.delegate = self
+        scrollView.backgroundColor = UIColor(hex: 0x0D0A09)
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.bouncesZoom = true
@@ -2830,6 +3141,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         // Rely on auto resizing to allow us to define exact frames manually.
+        containerView.backgroundColor = .clear
         scrollView.addSubview(containerView)
     }
 

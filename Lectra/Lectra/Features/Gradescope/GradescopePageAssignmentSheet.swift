@@ -60,12 +60,12 @@ struct GradescopePageAssignmentSheet: View {
             VStack(alignment: .leading, spacing: LectraSpacing.md) {
                 Text("Map PDF pages to questions. Use comma-separated page numbers with 1-based indexing, like 1,2,3.")
                     .font(LectraTypography.body)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                    .foregroundColor(LectraColor.textSecondary)
 
                 if let pageCount {
                     LectraStatusBadge(
                         title: "Detected pages: \(pageCount)",
-                        color: LectraColor.info,
+                        color: LectraColor.accentSoft,
                         size: .large
                     )
                 }
@@ -76,24 +76,24 @@ struct GradescopePageAssignmentSheet: View {
                             VStack(alignment: .leading, spacing: LectraSpacing.sm) {
                                 Text(row.questionTitle)
                                     .font(LectraTypography.caption)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(LectraColor.textPrimary)
 
                                 TextField("Pages", text: $row.pagesText)
                                     .textInputAutocapitalization(.never)
                                     .disableAutocorrection(true)
                                     .font(LectraTypography.body)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(LectraColor.textPrimary)
                                     .padding(.horizontal, LectraSpacing.md)
                                     .frame(minHeight: LectraSizing.minHitTarget)
-                                    .background(Color.white.opacity(LectraOpacity.subtle))
+                                    .background(LectraColor.surfaceFloating.opacity(0.88))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
-                                            .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                                            .stroke(LectraColor.edgeStroke, lineWidth: 1)
                                     )
                                     .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
                             }
                             .padding(LectraSpacing.md)
-                            .lectraCard(cornerRadius: LectraRadius.card, shadow: false)
+                            .background(pageCardBackground)
                         }
                     }
                 }
@@ -117,7 +117,12 @@ struct GradescopePageAssignmentSheet: View {
                 .buttonStyle(LectraPrimaryButtonStyle())
             }
             .padding(LectraSpacing.lg)
-            .background(LectraColor.surfaceElevated.ignoresSafeArea())
+            .background(
+                ZStack {
+                    LectraColor.background.ignoresSafeArea()
+                    LectraGradient.appBackdrop.opacity(0.68).ignoresSafeArea()
+                }
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
@@ -139,5 +144,14 @@ struct GradescopePageAssignmentSheet: View {
         for index in rows.indices {
             rows[index].pagesText = "\(index + 1)"
         }
+    }
+
+    private var pageCardBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.74))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
     }
 }

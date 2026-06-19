@@ -26,49 +26,41 @@ struct CloudBackupSettingsTabView: View {
                 controlsCard
                 recoveryCard
 
-                Text("Cloud sync stays off until you turn it on. Manual backup always creates a local snapshot and uses iCloud Drive when it is available.")
+                Text("On-device snapshots stay local; iCloud sync runs when enabled and available.")
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                    .foregroundColor(LectraColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(LectraSpacing.xl)
         }
-        .background(LectraGradient.appBackdrop.ignoresSafeArea())
+        .background {
+            LectraColor.background.ignoresSafeArea()
+            LectraGradient.appBackdrop.opacity(0.72).ignoresSafeArea()
+        }
     }
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: LectraSpacing.md) {
             LectraStatusBadge(
                 title: isCloudSyncEnabled ? "Sync Enabled" : "Sync Off",
-                color: isCloudSyncEnabled ? LectraColor.info : LectraColor.canvasTint,
+                color: isCloudSyncEnabled ? LectraColor.accentSoft : LectraColor.warningSubtle,
                 size: .large
             )
 
             Text("Cloud & Backup")
                 .font(LectraTypography.displaySmall)
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
-            Text("Control Lectra's explicit iCloud sync and the local recovery snapshots that protect your documents when a save or upload needs a second chance.")
+            Text("Canvascope workspace sync, local recovery snapshots, and iCloud availability.")
                 .font(LectraTypography.body)
-                .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                .foregroundColor(LectraColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(LectraSpacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
-                .fill(LectraColor.surfaceElevated.opacity(0.94))
-                .overlay(
-                    RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
-                        .fill(LectraGradient.spotlight.opacity(0.18))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
-                        .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
-                )
-        )
+        .background(cloudHeroBackground)
         .lectraShadow(LectraElevation.medium())
     }
 
@@ -78,11 +70,11 @@ struct CloudBackupSettingsTabView: View {
                 VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                     Text("Status")
                         .font(LectraTypography.title)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
 
-                    Text("Check iCloud availability, recent sync activity, and your latest local protection point.")
+                    Text("iCloud availability, recent sync activity, and latest local protection point.")
                         .font(LectraTypography.captionMedium)
-                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .foregroundColor(LectraColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -90,7 +82,7 @@ struct CloudBackupSettingsTabView: View {
 
                 LectraStatusBadge(
                     title: isCloudSyncEnabled ? "Sync Enabled" : "Sync Off",
-                    color: isCloudSyncEnabled ? LectraColor.success : LectraColor.canvasTint
+                    color: isCloudSyncEnabled ? LectraColor.accentSoft : LectraColor.warningSubtle
                 )
             }
 
@@ -155,7 +147,7 @@ struct CloudBackupSettingsTabView: View {
             }
         }
         .padding(LectraSpacing.lg)
-        .lectraCard(cornerRadius: LectraRadius.panel)
+        .background(settingsPanelBackground)
     }
 
     private var recoveryCard: some View {
@@ -164,11 +156,11 @@ struct CloudBackupSettingsTabView: View {
                 VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                     Text("Recovery Center")
                         .font(LectraTypography.title)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
 
-                    Text("Restore a snapshot as a safe copy, or replace the current local version when you need a full rollback.")
+                    Text("Snapshots can return as a copy or replace the current local version.")
                         .font(LectraTypography.captionMedium)
-                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .foregroundColor(LectraColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -186,25 +178,20 @@ struct CloudBackupSettingsTabView: View {
                 VStack(alignment: .leading, spacing: LectraSpacing.sm) {
                     Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
                         .font(LectraTypography.title)
-                        .foregroundColor(LectraColor.info)
+                        .foregroundColor(LectraColor.accentCool)
 
                     Text("No recovery snapshots yet.")
                         .font(LectraTypography.headlineMedium)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
 
-                    Text("Run a manual backup or complete an iCloud sync to start building recovery points.")
+                    Text("Manual backups and cloud sync create recovery points.")
                         .font(LectraTypography.body)
-                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .foregroundColor(LectraColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(LectraSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white.opacity(LectraOpacity.faint))
-                .overlay(
-                    RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
-                        .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
+                .background(settingsRowBackground)
             } else {
                 VStack(spacing: LectraSpacing.sm) {
                     ForEach(recoverySnapshots.prefix(6)) { snapshot in
@@ -216,7 +203,7 @@ struct CloudBackupSettingsTabView: View {
             }
         }
         .padding(LectraSpacing.lg)
-        .lectraCard(cornerRadius: LectraRadius.panel)
+        .background(settingsPanelBackground)
     }
 
     private var controlsCard: some View {
@@ -234,7 +221,7 @@ struct CloudBackupSettingsTabView: View {
 
             settingsToggleRow(
                 title: "Automatic Backup",
-                subtitle: "Create a backup snapshot after successful sync work",
+                subtitle: "Create a snapshot after successful sync work",
                 isOn: isAutoBackupEnabled
             ) { newValue in
                 LectraHaptics.selection()
@@ -242,7 +229,7 @@ struct CloudBackupSettingsTabView: View {
             }
         }
         .padding(.horizontal, LectraSpacing.lg)
-        .lectraCard(cornerRadius: LectraRadius.panel)
+        .background(settingsPanelBackground)
     }
 
     private func snapshotRow(_ snapshot: RecoverySnapshot) -> some View {
@@ -251,25 +238,25 @@ struct CloudBackupSettingsTabView: View {
                 VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                     Text(snapshot.createdAt.formatted(date: .abbreviated, time: .shortened))
                         .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
 
                     Text("\(snapshot.itemCount) document\(snapshot.itemCount == 1 ? "" : "s") in \(snapshot.source)")
                         .font(LectraTypography.captionMedium)
-                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .foregroundColor(LectraColor.textSecondary)
                 }
 
                 Spacer(minLength: 0)
 
                 LectraStatusBadge(
                     title: snapshot.location == .iCloudDrive ? "iCloud Drive" : "On Device",
-                    color: snapshot.location == .iCloudDrive ? LectraColor.info : LectraColor.success
+                    color: snapshot.location == .iCloudDrive ? LectraColor.accentSoft : LectraColor.paperMuted
                 )
             }
 
             if !snapshot.items.isEmpty {
                 Text(snapshot.items.prefix(3).map(\.title).joined(separator: " • "))
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.primary))
+                    .foregroundColor(LectraColor.textSecondary)
                     .lineLimit(2)
             }
 
@@ -305,33 +292,23 @@ struct CloudBackupSettingsTabView: View {
         }
         .padding(LectraSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(LectraOpacity.faint))
-        .overlay(
-            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
-                .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
+        .background(settingsRowBackground)
     }
 
     private func metric(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: LectraSpacing.xs) {
             Text(title)
                 .font(LectraTypography.footnoteBold)
-                .foregroundColor(Color.white.opacity(LectraOpacity.strong))
+                .foregroundColor(LectraColor.textTertiary)
 
             Text(value)
                 .font(LectraTypography.bodyEmphasis)
-                .foregroundColor(Color.white.opacity(LectraOpacity.primary))
+                .foregroundColor(LectraColor.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(LectraSpacing.md)
-        .background(Color.white.opacity(LectraOpacity.faint))
-        .overlay(
-            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
-                .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
+        .background(settingsRowBackground)
     }
 
     @ViewBuilder
@@ -369,18 +346,18 @@ struct CloudBackupSettingsTabView: View {
             VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                 Text(title)
                     .font(LectraTypography.headlineMedium)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
 
                 Text(subtitle)
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                    .foregroundColor(LectraColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
                 .labelsHidden()
-                .tint(LectraColor.surfaceCard)
+                .tint(LectraColor.accentSoft)
                 .accessibilityLabel(title)
                 .accessibilityValue(isOn ? "On" : "Off")
         }
@@ -390,8 +367,44 @@ struct CloudBackupSettingsTabView: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(Color.white.opacity(LectraOpacity.subtle))
+            .fill(LectraColor.edgeStroke)
             .frame(height: 1)
+    }
+
+    private var cloudHeroBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.92))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(0.16))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
+    }
+
+    private var settingsPanelBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.88))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
+            .lectraShadow(LectraElevation.low())
+    }
+
+    private var settingsRowBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+            .fill(LectraColor.surfaceFloating.opacity(0.86))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
     }
 
     private enum ActionButtonStyle {

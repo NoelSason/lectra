@@ -2,7 +2,7 @@
 //  DocumentBrowserView.swift
 //  Lectra
 //
-//  Goodnotes-inspired library shell for browsing folders and PDF documents.
+//  Canvascope workspace shell for browsing folders and PDF documents.
 //  PDF editing remains in PDFAnnotationView.
 //
 
@@ -233,7 +233,9 @@ struct DocumentBrowserView: View {
     private let importedCanvasSystemTag = "imported_canvas"
     private let importedGradescopeFolderName = "Imported From Gradescope"
     private let importedGradescopeSystemTag = "imported_gradescope"
-    private let importedFolderPollingIntervalNanoseconds: UInt64 = 5_000_000_000
+    // Safety-net poll behind the realtime wake + prefetch. Kept short so a
+    // missed broadcast still surfaces new drops quickly while the folder is open.
+    private let importedFolderPollingIntervalNanoseconds: UInt64 = 1_500_000_000
 
     private var sidebarWidth: CGFloat {
         isSidebarCollapsed ? 86 : 292
@@ -285,7 +287,7 @@ struct DocumentBrowserView: View {
     }
 
     private var documentsInScope: [LocalDocument] {
-        if currentFolderId == importedRootFolderId {
+        if let importedRootFolderId, currentFolderId == importedRootFolderId {
             return []
         }
         return documents.filter { folderId(for: $0) == currentFolderId }
@@ -293,7 +295,7 @@ struct DocumentBrowserView: View {
 
     private var filteredFolders: [LocalFolder] {
         let scopedFolders: [LocalFolder]
-        if currentFolderId == importedRootFolderId {
+        if let importedRootFolderId, currentFolderId == importedRootFolderId {
             scopedFolders = folders.filter {
                 $0.systemTag == importedCanvascopeSystemTag
                 || $0.systemTag == importedCanvasSystemTag
@@ -371,6 +373,25 @@ struct DocumentBrowserView: View {
         }
     }
 
+    private var libraryHeaderTitle: String {
+        currentFolder?.name ?? "Lectra"
+    }
+
+    private var activeSyncCount: Int {
+        documents.filter {
+            switch $0.syncState {
+            case .idle, .synced:
+                return false
+            case .savingLocal, .flattening, .queuedUpload, .uploading, .failed:
+                return true
+            }
+        }.count
+    }
+
+    private var canvascopeDocumentCount: Int {
+        documents.filter { $0.status != .local || isDocumentInProtectedImportedFolder($0) }.count
+    }
+
     private var activeSelectedFolderIDs: Set<UUID> {
         let valid = Set(folders.map(\.id))
         return selectedFolderIDs.intersection(valid)
@@ -444,9 +465,9 @@ struct DocumentBrowserView: View {
 
                 mainPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(Color.black)
+                    .background(LectraColor.background)
             }
-            .background(Color.black.ignoresSafeArea())
+            .background(LectraGradient.appBackdrop.ignoresSafeArea())
         )
     }
     
@@ -458,16 +479,16 @@ struct DocumentBrowserView: View {
                         Spacer()
                         Text(message)
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(LectraColor.textPrimary)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .background(
                                 Capsule(style: .continuous)
-                                    .fill(LectraColor.success.opacity(0.92))
+                                    .fill(LectraColor.accent.opacity(0.92))
                             )
                             .overlay(
                                 Capsule(style: .continuous)
-                                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
                             )
                             .padding(.bottom, 26)
                     }
@@ -494,11 +515,13 @@ struct DocumentBrowserView: View {
         let syncPublisher = NotificationCenter.default.publisher(for: .lectraDocumentSyncStateDidChange)
         let iCloudPublisher = NotificationCenter.default.publisher(for: .lectraICloudSyncDidChange)
         let remoteDocumentsPublisher = NotificationCenter.default.publisher(for: .lectraRemoteDocumentsDidChange)
+        let openDocumentPublisher = NotificationCenter.default.publisher(for: .lectraOpenDocumentRequest)
 
         return presentedContent
             .onReceive(syncPublisher, perform: handleDocumentSyncNotification)
             .onReceive(iCloudPublisher, perform: handleICloudSyncNotification)
             .onReceive(remoteDocumentsPublisher, perform: handleRemoteDocumentsNotification)
+            .onReceive(openDocumentPublisher, perform: handleOpenDocumentRequest)
             .onChange(of: backgroundSyncToast) { _, newValue in
                 guard let newValue else { return }
                 postAccessibilityAnnouncement(newValue)
@@ -843,7 +866,7 @@ struct DocumentBrowserView: View {
            !userEmail.isEmpty {
             return userEmail
         }
-        return "Lectra Account"
+        return "Canvascope Account"
     }
 
     private func openAccountSettings(at tab: AccountSettingsView.SettingsTab = .account) {
@@ -881,42 +904,39 @@ struct DocumentBrowserView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: isSidebarCollapsed ? .center : .leading, spacing: isSidebarCollapsed ? 12 : 10) {
-            Button {
-                withAnimation(LectraMotion.toolbarDock) {
-                    isSidebarCollapsed.toggle()
-                }
-            } label: {
-                Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Color(hex: 0xE84D4D))
-                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                    .background {
-                        Circle()
-                            .fill(LectraColor.sidebarControl)
-                            .overlay(
-                                Circle()
-                                    .stroke(LectraColor.sidebarDivider, lineWidth: 1)
-                            )
-                            .shadow(color: Color.black.opacity(0.22), radius: 8, x: 0, y: 4)
+        VStack(alignment: isSidebarCollapsed ? .center : .leading, spacing: isSidebarCollapsed ? 14 : 12) {
+            Group {
+                if isSidebarCollapsed {
+                    VStack(spacing: 8) {
+                        brandMark
+                        collapseSidebarButton
                     }
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 8)
-            .contentShape(Circle())
-            .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
-            .accessibilityLabel(isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
-            .accessibilityIdentifier("library.sidebarToggle")
+                } else {
+                    HStack(spacing: 10) {
+                        brandMark
 
-            if !isSidebarCollapsed {
-                Text("Lectra")
-                    .font(.largeTitle.weight(.bold))
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
-                    .foregroundStyle(Color.white.opacity(0.95))
-                    .padding(.top, 8)
-                    .padding(.bottom, 10)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Lectra")
+                                .font(LectraTypography.title)
+                                .foregroundStyle(LectraColor.textPrimary)
+                                .lineLimit(1)
+
+                            Text("Canvascope workspace")
+                                .font(LectraTypography.footnote)
+                                .foregroundStyle(LectraColor.textTertiary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        collapseSidebarButton
+                            .layoutPriority(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
+            .padding(.top, 8)
+            .padding(.bottom, isSidebarCollapsed ? 4 : 14)
 
             ForEach(visibleSidebarSections) { section in
                 sidebarRow(for: section)
@@ -932,8 +952,8 @@ struct DocumentBrowserView: View {
                 .overlay {
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.05),
-                            Color(hex: 0x6B7689, opacity: 0.08),
+                            LectraColor.paper.opacity(0.05),
+                            LectraColor.accent.opacity(0.08),
                             Color.clear
                         ],
                         startPoint: .topLeading,
@@ -947,6 +967,60 @@ struct DocumentBrowserView: View {
                 }
                 .ignoresSafeArea()
         )
+    }
+
+    private var brandMark: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            LectraColor.paper.opacity(0.94),
+                            LectraColor.paperMuted.opacity(0.82)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+
+            Image("LaunchMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+                .accessibilityHidden(true)
+        }
+        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+        .lectraShadow(LectraElevation.low())
+        .accessibilityHidden(true)
+    }
+
+    private var collapseSidebarButton: some View {
+        Button {
+            withAnimation(LectraMotion.toolbarDock) {
+                isSidebarCollapsed.toggle()
+            }
+        } label: {
+            Image(systemName: isSidebarCollapsed ? "sidebar.right" : "sidebar.left")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(LectraColor.textSecondary)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background {
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .fill(LectraColor.sidebarControl)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                                .stroke(LectraColor.sidebarDivider, lineWidth: 1)
+                        )
+                }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel(isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+        .accessibilityIdentifier("library.sidebarToggle")
     }
 
     @ViewBuilder
@@ -975,19 +1049,27 @@ struct DocumentBrowserView: View {
                 .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
 
             }
-            .foregroundColor(activeSection == section ? Color.white.opacity(0.96) : Color.white.opacity(0.82))
-            .padding(.horizontal, isSidebarCollapsed ? 0 : 10)
+            .foregroundColor(activeSection == section ? LectraColor.textPrimary : LectraColor.textSecondary)
+            .padding(.horizontal, isSidebarCollapsed ? 0 : 12)
             .padding(.vertical, isSidebarCollapsed ? 12 : 12)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: isSidebarCollapsed ? .center : .leading)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: isSidebarCollapsed ? .center : .leading)
             .contentShape(Rectangle())
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(activeSection == section ? LectraColor.sidebarSelection : Color.clear)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(activeSection == section ? Color.white.opacity(0.08) : Color.clear, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(activeSection == section ? LectraColor.accent.opacity(0.32) : Color.clear, lineWidth: 1)
                     }
             )
+            .overlay(alignment: .leading) {
+                if activeSection == section && !isSidebarCollapsed {
+                    Capsule()
+                        .fill(LectraColor.accent)
+                        .frame(width: 3, height: 20)
+                        .offset(x: 2)
+                }
+            }
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: isSidebarCollapsed ? .center : .leading)
@@ -1060,7 +1142,11 @@ struct DocumentBrowserView: View {
                         .padding(.bottom, 12)
                         .background(
                             LinearGradient(
-                                colors: [Color.black.opacity(0.02), Color.black.opacity(0.86), Color.black.opacity(0.98)],
+                                colors: [
+                                    LectraColor.background.opacity(0.02),
+                                    LectraColor.background.opacity(0.86),
+                                    LectraColor.background.opacity(0.98)
+                                ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -1071,52 +1157,111 @@ struct DocumentBrowserView: View {
     }
 
     private var documentsTopBar: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ZStack {
-                HStack(spacing: 14) {
-                    if currentFolderId != nil {
-                        Button {
-                            returnToVaultRoot()
-                        } label: {
-                            HStack(spacing: 7) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 14, weight: .semibold))
-                                Text(backNavigationLabel)
-                                    .font(.system(size: 16, weight: .regular))
-                            }
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                            .frame(minHeight: 44)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Text("Documents")
-                            .font(.system(size: 42, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.96))
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                documentTitleCluster
 
-                    Spacer(minLength: 0)
+                Spacer(minLength: 8)
 
-                    utilityButtons(showSearch: true)
-                }
-
-                if let folderName = currentFolder?.name {
-                    Text(folderName)
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.95))
-                        .lineLimit(1)
-                }
-            }
-
-            HStack(spacing: 12) {
                 filterMenu
-
-                Spacer(minLength: 0)
-
                 selectButton
                 newButton
                 viewModeButton
+                cloudButton
+                utilityButtons(showSearch: true)
             }
         }
+        .padding(.vertical, 6)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(LectraColor.edgeStroke)
+                .frame(height: 1)
+        }
+    }
+
+    private var documentTitleCluster: some View {
+        HStack(spacing: 10) {
+            if currentFolderId != nil {
+                Button {
+                    returnToVaultRoot()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(backNavigationLabel)
+                            .font(LectraTypography.caption)
+                    }
+                    .foregroundColor(LectraColor.accentSoft)
+                    .padding(.horizontal, 10)
+                    .frame(height: 34)
+                    .background(controlSurface)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(libraryHeaderTitle)
+                .font(.system(size: currentFolderId == nil ? 28 : 24, weight: .bold, design: .rounded))
+                .foregroundStyle(LectraColor.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.74)
+        }
+        .frame(minHeight: 38, alignment: .leading)
+    }
+
+    private var workspaceStatusStrip: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                workspaceMetricPill(symbol: "doc.text", value: "\(documents.count)", label: "Docs")
+                workspaceMetricPill(symbol: "folder", value: "\(folders.count)", label: "Folders")
+                workspaceMetricPill(symbol: "arrow.triangle.2.circlepath", value: "\(activeSyncCount)", label: "Sync")
+                workspaceMetricPill(symbol: "arrow.up.forward.app", value: "\(canvascopeDocumentCount)", label: "Canvascope")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    workspaceMetricPill(symbol: "doc.text", value: "\(documents.count)", label: "Docs")
+                    workspaceMetricPill(symbol: "folder", value: "\(folders.count)", label: "Folders")
+                }
+                HStack(spacing: 8) {
+                    workspaceMetricPill(symbol: "arrow.triangle.2.circlepath", value: "\(activeSyncCount)", label: "Sync")
+                    workspaceMetricPill(symbol: "arrow.up.forward.app", value: "\(canvascopeDocumentCount)", label: "Canvascope")
+                }
+            }
+        }
+    }
+
+    private func workspaceMetricPill(symbol: String, value: String, label: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(LectraColor.accentSoft)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous)
+                        .fill(LectraColor.accent.opacity(0.14))
+                )
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(value)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(LectraColor.textPrimary)
+
+                Text(label)
+                    .font(LectraTypography.footnote)
+                    .foregroundColor(LectraColor.textTertiary)
+            }
+        }
+        .padding(.leading, 7)
+        .padding(.trailing, 13)
+        .frame(height: 44)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                .fill(LectraColor.paper.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                .stroke(LectraColor.edgeStroke.opacity(0.6), lineWidth: 1)
+        )
     }
 
     private var favoritesPane: some View {
@@ -1225,7 +1370,7 @@ struct DocumentBrowserView: View {
     }
 
     /// Downloads a PDF from a Canvas URL using an in-app WKWebView
-    /// (which shares Safari's session cookies) and imports it into Lectra.
+    /// (which shares Safari's session cookies) and imports it into Canvascope.
     private func downloadAndImportCourseBrainPDF(from url: URL, suggestedTitle: String) {
         if let existingDocumentID = existingLectraDocumentID(forSourceURL: url) {
             openEditor(documentId: existingDocumentID)
@@ -1244,7 +1389,7 @@ struct DocumentBrowserView: View {
             switch result {
             case .success(let fileURL):
                 importLocalPDF(from: fileURL, sourceURL: url)
-                featureNotice = "Imported \"\(suggestedTitle)\" into Lectra."
+                featureNotice = "Imported \"\(suggestedTitle)\" into Canvascope."
             case .failure(let error):
                 featureNotice = "Download failed: \(error.localizedDescription)"
             }
@@ -1258,11 +1403,13 @@ struct DocumentBrowserView: View {
     }
 
     private func genericTopBar(title: String, filterTitle: String, includeSearch: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
                 Text(title)
-                    .font(.system(size: 42, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.96))
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .foregroundColor(LectraColor.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
 
                 Spacer(minLength: 0)
 
@@ -1274,15 +1421,24 @@ struct DocumentBrowserView: View {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 14, weight: .bold))
                     Text(filterTitle)
-                        .font(.system(size: 16, weight: .regular))
+                        .font(LectraTypography.bodyEmphasis)
                 }
-                .foregroundColor(Color(hex: 0xE84D4D))
+                .foregroundColor(LectraColor.textPrimary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: LectraSizing.minHitTarget)
+                .background(controlSurface)
 
                 Spacer(minLength: 0)
 
                 viewModeButton
                 cloudButton
             }
+        }
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(LectraColor.edgeStroke)
+                .frame(height: 1)
         }
     }
 
@@ -1324,16 +1480,16 @@ struct DocumentBrowserView: View {
 
                             Image(systemName: "folder.fill")
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(Color(hex: 0xD97A7A))
+                                .foregroundColor(LectraColor.accentSoft)
                                 .frame(width: 30)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(folder.name)
-                                    .font(.system(size: 18, weight: .medium))
-                                    .foregroundColor(.white)
+                                    .font(LectraTypography.headlineMedium)
+                                    .foregroundColor(LectraColor.textPrimary)
                                 Text(folder.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.system(size: 13, weight: .regular))
-                                    .foregroundColor(Color.white.opacity(0.55))
+                                    .font(LectraTypography.captionMedium)
+                                    .foregroundColor(LectraColor.textTertiary)
                             }
 
                             Spacer(minLength: 0)
@@ -1341,13 +1497,19 @@ struct DocumentBrowserView: View {
                             if !isSelectionMode {
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(Color.white.opacity(0.4))
+                                    .foregroundColor(LectraColor.textTertiary)
                             }
                         }
                         .padding(.horizontal, 14)
                         .frame(minHeight: 58)
-                        .background(Color.white.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(
+                            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                                .fill(LectraColor.surfaceElevated.opacity(0.58))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -1369,7 +1531,7 @@ struct DocumentBrowserView: View {
         let protectedFolderManagerName = importedFolderManagerName(for: folder.id)
         let isProtectedFolder = protectedFolderManagerName != nil
         let allowsFolderDeletion = canDeleteFolder(folder.id)
-        GoodnotesFolderCardView(
+        VaultFolderCardView(
             folderName: folder.name,
             subtitle: folder.createdAt.formatted(date: .abbreviated, time: .shortened),
             metrics: metrics,
@@ -1480,6 +1642,7 @@ struct DocumentBrowserView: View {
         .onTapGesture {
             handleDocumentTap(doc)
         }
+        .accessibilityIdentifier("library.document.card.\(doc.id.uuidString)")
 
         if isSelectionMode {
             baseCard
@@ -1504,8 +1667,8 @@ struct DocumentBrowserView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
                         Text(doc.title)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white)
+                            .font(LectraTypography.bodyEmphasis)
+                            .foregroundColor(LectraColor.textPrimary)
                             .lineLimit(1)
 
                         if doc.syncState != .idle {
@@ -1523,7 +1686,7 @@ struct DocumentBrowserView: View {
                             } label: {
                                 Image(systemName: doc.isFavorite ? "star.fill" : "star")
                                     .font(.system(size: 15, weight: .bold))
-                                    .foregroundColor(doc.isFavorite ? .yellow : Color.gray.opacity(0.8))
+                                    .foregroundColor(doc.isFavorite ? LectraColor.warning : LectraColor.textTertiary)
                                     .frame(width: 24, height: 24)
                             }
                             .buttonStyle(.plain)
@@ -1533,7 +1696,7 @@ struct DocumentBrowserView: View {
                             } label: {
                                 Image(systemName: "chevron.down")
                                     .font(.system(size: 15, weight: .bold))
-                                    .foregroundColor(Color(hex: 0xE84D4D))
+                                    .foregroundColor(LectraColor.accentSoft)
                                     .frame(width: 24, height: 24)
                             }
                             .buttonStyle(.plain)
@@ -1541,23 +1704,29 @@ struct DocumentBrowserView: View {
                     }
 
                     Text(formattedDocumentDate(for: doc))
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.55))
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(LectraColor.textTertiary)
                 }
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 72)
-            .background(Color.white.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .fill(LectraColor.surfaceElevated.opacity(0.58))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private func utilityButtons(showSearch: Bool) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 10) {
             if showSearch {
                 Button {
                     withAnimation(LectraMotion.quick) {
@@ -1566,9 +1735,10 @@ struct DocumentBrowserView: View {
                     }
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(hex: 0xE84D4D))
-                        .frame(width: 44, height: 44)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(LectraColor.textPrimary)
+                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                        .background(controlSurface)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Search library")
@@ -1584,12 +1754,23 @@ struct DocumentBrowserView: View {
                     fallbackName: authManager.userName ?? authManager.userEmail,
                     size: 18
                 )
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background(controlSurface)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open account settings")
             .accessibilityHint("Shows account, integration, and backup settings.")
             .accessibilityIdentifier("library.account")
         }
+    }
+
+    private var controlSurface: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+            .fill(LectraColor.surfaceFloating.opacity(0.84))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
     }
 
     private var filterMenu: some View {
@@ -1618,10 +1799,12 @@ struct DocumentBrowserView: View {
                 Image(systemName: "line.3.horizontal.decrease")
                     .font(.system(size: 14, weight: .bold))
                 Text(filterTitle)
-                    .font(.system(size: 16, weight: .regular))
+                    .font(LectraTypography.bodyEmphasis)
             }
-            .foregroundColor(Color(hex: 0xE84D4D))
-            .frame(minHeight: 44)
+            .foregroundColor(LectraColor.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(minHeight: LectraSizing.minHitTarget)
+            .background(controlSurface)
         }
         .disabled(isSelectionMode)
         .opacity(isSelectionMode ? 0.5 : 1)
@@ -1643,12 +1826,11 @@ struct DocumentBrowserView: View {
             }
         } label: {
             Text(isSelectionMode ? "Cancel" : "Select")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(Color(hex: 0xE84D4D))
+                .font(LectraTypography.bodyEmphasis)
+                .foregroundColor(LectraColor.textPrimary)
                 .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(height: LectraSizing.minHitTarget)
+                .background(controlSurface)
         }
         .buttonStyle(.plain)
     }
@@ -1661,13 +1843,25 @@ struct DocumentBrowserView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .medium))
                 Text("New")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(LectraTypography.bodyEmphasis)
             }
-            .foregroundColor(.white)
-            .padding(.horizontal, 18)
-            .frame(height: 56)
-            .background(Color(hex: 0xD94141))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .foregroundColor(LectraColor.textPrimary)
+            .padding(.horizontal, 14)
+            .frame(height: LectraSizing.minHitTarget)
+            .background(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [LectraColor.accentSoft, LectraColor.accentDark],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(isSelectionMode)
@@ -1736,9 +1930,10 @@ struct DocumentBrowserView: View {
             showViewMenu = true
         } label: {
             Image(systemName: viewMode == .grid ? "square.grid.2x2" : "list.bullet")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(Color(hex: 0xE84D4D))
-                .frame(width: 44, height: 44)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(LectraColor.textPrimary)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background(controlSurface)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showViewMenu, arrowEdge: .top) {
@@ -1767,9 +1962,10 @@ struct DocumentBrowserView: View {
             showCloudStatus = true
         } label: {
             Image(systemName: "icloud.and.arrow.up")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(Color(hex: 0xE84D4D))
-                .frame(width: 44, height: 44)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(LectraColor.textPrimary)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background(controlSurface)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showCloudStatus, arrowEdge: .top) {
@@ -1801,12 +1997,12 @@ struct DocumentBrowserView: View {
     private var selectionActionBar: some View {
         VStack(spacing: 10) {
             Divider()
-                .background(Color.white.opacity(0.08))
+                .background(LectraColor.edgeStroke)
 
             HStack(spacing: 12) {
                 Text("\(selectedItemCount) selected")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
+                    .font(LectraTypography.bodyEmphasis)
+                    .foregroundColor(LectraColor.textPrimary)
 
                 Spacer(minLength: 0)
 
@@ -1855,11 +2051,17 @@ struct DocumentBrowserView: View {
                 Text(title)
                     .font(.system(size: 14, weight: .medium))
             }
-            .foregroundColor(isDestructive ? Color(hex: 0xF26A6A) : .white)
+            .foregroundColor(isDestructive ? LectraColor.accentDestructive : LectraColor.textPrimary)
             .padding(.horizontal, 12)
             .frame(height: 36)
-            .background(Color.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                    .fill(LectraColor.surfaceFloating.opacity(0.84))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
             .opacity(isEnabled ? 1 : 0.45)
         }
         .buttonStyle(.plain)
@@ -1869,30 +2071,39 @@ struct DocumentBrowserView: View {
     private var loadingView: some View {
         VStack(spacing: 10) {
             ProgressView()
-                .tint(Color(hex: 0xE84D4D))
+                .tint(LectraColor.accentSoft)
             Text("Loading documents")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.65))
+                .font(LectraTypography.body)
+                .foregroundColor(LectraColor.textSecondary)
         }
     }
 
     private var emptyDocumentsView: some View {
         VStack(spacing: 14) {
             Image(systemName: "folder")
-                .font(.system(size: 32, weight: .thin))
-                .foregroundColor(Color.white.opacity(0.75))
+                .font(.system(size: 32, weight: .regular))
+                .foregroundColor(LectraColor.accentCool)
             Text("No items yet")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .font(LectraTypography.headline)
+                .foregroundColor(LectraColor.textPrimary)
             Text("Tap New to create a notebook or import a document.")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.65))
+                .font(LectraTypography.body)
+                .foregroundColor(LectraColor.textSecondary)
         }
+        .padding(28)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
     }
 
     private var searchOverlay: some View {
         ZStack {
-            Color.black.opacity(0.98)
+            LectraGradient.appBackdrop
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 16) {
@@ -1906,21 +2117,21 @@ struct DocumentBrowserView: View {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 14, weight: .semibold))
                             Text(currentFolder?.name ?? "Documents")
-                                .font(.system(size: 16, weight: .regular))
+                                .font(LectraTypography.bodyEmphasis)
                         }
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .foregroundColor(LectraColor.accentSoft)
                     }
                     .buttonStyle(.plain)
 
                     Spacer(minLength: 0)
                 }
 
-                GoodnotesSearchBar(text: $searchText, placeholder: "Search", isEditable: true)
+                WorkspaceSearchBar(text: $searchText, placeholder: "Search documents and page text", isEditable: true)
 
                 HStack {
                     Text(trimmedSearchText.isEmpty ? "Recently Opened Documents" : "Search Results")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
+                        .font(LectraTypography.titleSmall)
+                        .foregroundColor(LectraColor.textPrimary)
 
                     Spacer(minLength: 0)
 
@@ -1929,8 +2140,8 @@ struct DocumentBrowserView: View {
                         Button("Clear") {
                             clearRecentDocuments()
                         }
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .font(LectraTypography.bodyEmphasis)
+                        .foregroundColor(LectraColor.accentSoft)
                     }
                 }
 
@@ -1938,12 +2149,16 @@ struct DocumentBrowserView: View {
                     if recentlyOpenedDocuments.isEmpty {
                         Spacer(minLength: 0)
                         Text("No recent documents yet")
-                            .font(.system(size: 16, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.65))
+                            .font(LectraTypography.body)
+                            .foregroundColor(LectraColor.textSecondary)
                         Spacer(minLength: 0)
                     } else {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 14) {
+                        ScrollView {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 148, maximum: 148), spacing: 14, alignment: .top)],
+                                alignment: .leading,
+                                spacing: 18
+                            ) {
                                 ForEach(recentlyOpenedDocuments) { doc in
                                     Button {
                                         showSearchOverlay = false
@@ -1952,9 +2167,10 @@ struct DocumentBrowserView: View {
                                         VStack(alignment: .leading, spacing: 7) {
                                             MiniDocumentPreview(document: doc)
                                                 .frame(width: 148, height: 192)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                             Text(doc.title)
-                                                .font(.system(size: 14, weight: .regular))
-                                                .foregroundColor(.white)
+                                                .font(LectraTypography.body)
+                                                .foregroundColor(LectraColor.textPrimary)
                                                 .lineLimit(2)
                                                 .frame(width: 148, alignment: .leading)
                                         }
@@ -1969,13 +2185,13 @@ struct DocumentBrowserView: View {
                 } else if isSearchingDocuments && globalSearchResults.isEmpty {
                     Spacer(minLength: 0)
                     ProgressView()
-                        .tint(Color(hex: 0xE84D4D))
+                        .tint(LectraColor.accentSoft)
                     Spacer(minLength: 0)
                 } else if globalSearchResults.isEmpty {
                     Spacer(minLength: 0)
                     Text("No documents or page text matched \"\(trimmedSearchText)\"")
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.65))
+                        .font(LectraTypography.body)
+                        .foregroundColor(LectraColor.textSecondary)
                         .multilineTextAlignment(.center)
                     Spacer(minLength: 0)
                 } else {
@@ -1994,35 +2210,41 @@ struct DocumentBrowserView: View {
                                             VStack(alignment: .leading, spacing: 6) {
                                                 HStack(spacing: 8) {
                                                     Text(result.title)
-                                                        .font(.system(size: 15, weight: .semibold))
-                                                        .foregroundColor(.white)
+                                                        .font(LectraTypography.bodyEmphasis)
+                                                        .foregroundColor(LectraColor.textPrimary)
                                                         .lineLimit(2)
 
                                                     Text(result.kind == .pageText ? "Page Text" : "Metadata")
                                                         .font(.system(size: 11, weight: .bold))
-                                                        .foregroundColor(result.kind == .pageText ? Color(hex: 0x2E8DFF) : LectraColor.success)
+                                                        .foregroundColor(result.kind == .pageText ? LectraColor.accentCool : LectraColor.accentSoft)
                                                         .padding(.horizontal, 8)
                                                         .frame(height: 22)
-                                                        .background((result.kind == .pageText ? Color(hex: 0x2E8DFF) : LectraColor.success).opacity(0.14))
+                                                        .background((result.kind == .pageText ? LectraColor.accentCool : LectraColor.accentSoft).opacity(0.14))
                                                         .clipShape(Capsule())
                                                 }
 
                                                 Text(result.subtitle)
-                                                    .font(.system(size: 13, weight: .medium))
-                                                    .foregroundColor(Color.white.opacity(0.6))
+                                                    .font(LectraTypography.captionMedium)
+                                                    .foregroundColor(LectraColor.textTertiary)
 
                                                 if let snippet = result.snippet, !snippet.isEmpty {
                                                     Text(snippet)
-                                                        .font(.system(size: 13, weight: .regular))
-                                                        .foregroundColor(Color.white.opacity(0.76))
+                                                        .font(LectraTypography.captionMedium)
+                                                        .foregroundColor(LectraColor.textSecondary)
                                                         .lineLimit(3)
                                                 }
                                             }
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                         }
                                         .padding(14)
-                                        .background(Color.white.opacity(0.04))
-                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                        .background(
+                                            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                                                .fill(LectraColor.surfaceElevated.opacity(0.72))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                                        )
                                     }
                                     .buttonStyle(.plain)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2213,8 +2435,10 @@ struct DocumentBrowserView: View {
     }
 
     private func isDocumentInProtectedImportedFolder(_ document: LocalDocument) -> Bool {
-        guard let mappedFolderId = folderId(for: document) else { return false }
-        return isProtectedImportedFolder(mappedFolderId)
+        // Product rule: only the four managed folders themselves are locked.
+        // Documents living inside them (including the synced Canvascope imports)
+        // are user content and can be deleted.
+        return false
     }
 
     private func isImportedCanvascopeFolder(_ folderId: UUID) -> Bool {
@@ -2232,7 +2456,7 @@ struct DocumentBrowserView: View {
         if let systemTag = folders.first(where: { $0.id == folderId })?.systemTag {
             switch systemTag {
             case importedRootSystemTag:
-                return "Lectra"
+                return "Canvascope"
             case importedCanvascopeSystemTag:
                 return "Canvascope"
             case importedCanvasSystemTag:
@@ -2259,14 +2483,18 @@ struct DocumentBrowserView: View {
     }
 
     private func canDeleteFolder(_ folderId: UUID) -> Bool {
-        if isImportedCanvasDescendantFolder(folderId) { return true }
+        // Anything nested inside the three managed import folders is user content
+        // and can be deleted; only the four managed folders themselves are locked.
+        if isImportedManagedDescendantFolder(folderId) { return true }
         return !isProtectedImportedFolder(folderId)
     }
 
-    private func isImportedCanvasDescendantFolder(_ folderId: UUID) -> Bool {
+    /// True for a user-created folder nested under "Imported From Canvas/Canvascope/Gradescope".
+    /// The three system folders themselves (and the "Imported" root) return false.
+    private func isImportedManagedDescendantFolder(_ folderId: UUID) -> Bool {
         guard let folder = folders.first(where: { $0.id == folderId }) else { return false }
         guard folder.systemTag == nil else { return false }
-        return ancestorImportedSystemTag(for: folderId) == importedCanvasSystemTag
+        return ancestorImportedSystemTag(for: folderId) != nil
     }
 
     private func ancestorImportedSystemTag(for folderId: UUID) -> String? {
@@ -2647,7 +2875,7 @@ struct DocumentBrowserView: View {
             guard isICloudAvailable else {
                 isCloudSyncEnabled = false
                 UserDefaults.standard.set(false, forKey: cloudSyncEnabledDefaultsKey)
-                featureNotice = "Sign in to iCloud and enable iCloud Drive to sync Lectra documents."
+                featureNotice = "Sign in to iCloud and enable iCloud Drive to sync Canvascope documents."
                 return
             }
         }
@@ -3189,11 +3417,6 @@ struct DocumentBrowserView: View {
             return
         }
 
-        if directDocsToDelete.contains(where: { $0.status != .local }) {
-            featureNotice = "Imported/synced documents can’t be deleted in bulk from this screen."
-            return
-        }
-
         for doc in directDocsToDelete {
             removeDocument(doc)
         }
@@ -3345,6 +3568,23 @@ struct DocumentBrowserView: View {
         editorRoute = EditorRoute(documentId: documentId, initialPage: initialPage)
     }
 
+    /// Routes an OpenDocumentIntent (Siri / Shortcuts) to the editor.
+    private func handleOpenDocumentRequest(_ notification: Notification) {
+        guard let idString = notification.userInfo?["documentId"] as? String,
+              let documentId = UUID(uuidString: idString) else { return }
+
+        if activeSection != .documents {
+            activeSection = .documents
+        }
+
+        if let doc = document(for: documentId) {
+            handleDocumentTap(doc)
+        } else {
+            // Document may not be merged into memory yet — open by id directly.
+            openEditor(documentId: documentId)
+        }
+    }
+
     private func existingLectraDocumentID(forSourceURL url: URL) -> UUID? {
         let normalizedSourceURL = normalizedImportedSourceURL(url.absoluteString)
         guard !normalizedSourceURL.isEmpty else { return nil }
@@ -3466,6 +3706,21 @@ struct DocumentBrowserView: View {
         }
 
         guard doc.localPDFURL != nil else {
+            // Fast path: the wake-time prefetch usually already wrote this PDF to
+            // disk. Open immediately instead of re-downloading or waiting.
+            if repository.isPDFCachedLocally(documentId: doc.id) {
+                let url = repository.localPDFURL(for: doc.id)
+                doc.localPDFURL = url
+                if doc.status == .downloading { doc.status = .pendingAnnotation }
+                ThumbnailCache.shared.warmThumbnail(
+                    documentId: doc.id,
+                    pdfURL: url,
+                    revision: doc.thumbnailRevision
+                )
+                openEditor(documentId: doc.id, initialPage: initialPage)
+                return
+            }
+
             Task {
                 await MainActor.run {
                     doc.status = .downloading
@@ -3482,21 +3737,19 @@ struct DocumentBrowserView: View {
                         doc.localPDFURL = url
                         doc.status = .pendingAnnotation
                         doc.updatedAt = Date()
+                        documents = Array(documents)
+                        // Open the editor right away; thumbnail/index work is
+                        // non-blocking and the PDF is already on disk.
+                        openEditor(documentId: doc.id, initialPage: initialPage)
                         ThumbnailCache.shared.warmThumbnail(
                             documentId: doc.id,
                             pdfURL: url,
                             revision: doc.thumbnailRevision
                         )
-                        documents = Array(documents)
                         DocumentSearchIndex.shared.refresh(
                             documents: [doc],
                             folderNameByDocumentID: folderNameByDocumentID()
                         )
-                    }
-
-                    try? await Task.sleep(nanoseconds: 80_000_000)
-                    await MainActor.run {
-                        openEditor(documentId: doc.id, initialPage: initialPage)
                     }
                 } catch {
                     await MainActor.run {
@@ -3574,11 +3827,7 @@ struct DocumentBrowserView: View {
 
             documents = [doc] + documents
             refreshLibraryDerivatives()
-
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                openEditor(documentId: doc.id)
-            }
+            openEditor(documentId: doc.id)
         } catch {
             featureNotice = "Could not import PDF: \(error.localizedDescription)"
         }
@@ -3680,11 +3929,7 @@ struct DocumentBrowserView: View {
             documents = [doc] + documents
             refreshLibraryDerivatives()
             featureNotice = "Imported Gradescope template into \"\(importedGradescopeFolderName)\"."
-
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                openEditor(documentId: doc.id)
-            }
+            openEditor(documentId: doc.id)
         } catch {
             featureNotice = "Could not import Gradescope template: \(error.localizedDescription)"
         }
@@ -3734,10 +3979,7 @@ struct DocumentBrowserView: View {
                 updatedAt: doc.updatedAt
             )
 
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                openEditor(documentId: doc.id)
-            }
+            openEditor(documentId: doc.id)
         } catch {
             featureNotice = "Could not convert image to PDF: \(error.localizedDescription)"
         }
@@ -3787,10 +4029,7 @@ struct DocumentBrowserView: View {
                 updatedAt: doc.updatedAt
             )
 
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                openEditor(documentId: doc.id)
-            }
+            openEditor(documentId: doc.id)
         } catch {
             featureNotice = "Could not create a new file: \(error.localizedDescription)"
         }
@@ -3943,8 +4182,8 @@ struct DocumentBrowserView: View {
     }
 
     private func deleteFolder(folderId: UUID) {
-        if isImportedCanvasDescendantFolder(folderId) {
-            deleteImportedCanvasFolderTree(folderId: folderId)
+        if isImportedManagedDescendantFolder(folderId) {
+            deleteImportedManagedFolderTree(folderId: folderId)
             return
         }
 
@@ -3965,7 +4204,8 @@ struct DocumentBrowserView: View {
         }
     }
 
-    private func deleteImportedCanvasFolderTree(folderId rootFolderId: UUID) {
+    private func deleteImportedManagedFolderTree(folderId rootFolderId: UUID) {
+        let parentFolderId = folders.first(where: { $0.id == rootFolderId })?.parentFolderId
         let folderIDs = descendantFolderIDs(including: rootFolderId)
         let docsToDelete = documents.filter { doc in
             guard let mappedFolderID = folderId(for: doc) else { return false }
@@ -3986,7 +4226,8 @@ struct DocumentBrowserView: View {
         saveFolders()
 
         if let currentFolderId, folderIDs.contains(currentFolderId) {
-            self.currentFolderId = importedCanvasFolderId
+            // Return to the deleted folder's parent (the managed import folder).
+            self.currentFolderId = parentFolderId
         }
         refreshLibraryDerivatives()
         runGlobalSearch()
@@ -4183,6 +4424,13 @@ struct DocumentBrowserView: View {
         removeSavedLocalDocument(documentId: doc.id)
         removeTitleOverride(documentId: doc.id)
         ThumbnailCache.shared.invalidate(documentId: doc.id)
+        
+        if doc.isRemoteBacked {
+            Task {
+                try? await repository.deleteRemoteDocument(rowId: doc.id)
+            }
+        }
+
         Task {
             await ICloudDocumentStore.shared.deleteMirroredDocument(documentId: doc.id)
         }
@@ -4287,7 +4535,7 @@ struct DocumentBrowserView: View {
     }
 }
 
-private struct GoodnotesFolderCardView: View {
+private struct VaultFolderCardView: View {
     let folderName: String
     let subtitle: String
     let metrics: LibraryGridMetrics
@@ -4301,60 +4549,57 @@ private struct GoodnotesFolderCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .fill(accent)
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(0.92),
+                                accent.opacity(0.52),
+                                LectraColor.surfaceBG.opacity(0.92)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .frame(height: metrics.folderArtworkHeight)
-                    .overlay(alignment: .topLeading) {
-                        RoundedRectangle(cornerRadius: 15, style: .continuous)
-                            .fill(accent.opacity(0.9))
-                            .frame(width: 62, height: 16)
-                            .offset(x: 12, y: -7)
-                    }
-                    .overlay(alignment: .top) {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.08))
-                            .frame(height: 34)
-                            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                    }
                     .overlay {
-                        if let iconSystemName {
-                            Image(systemName: iconSystemName)
-                                .font(.system(size: 26, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.58))
-                        }
+                        Image(systemName: iconSystemName ?? "folder.fill")
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundColor(LectraColor.paper.opacity(0.92))
+                            .shadow(color: LectraColor.background.opacity(0.25), radius: 6, y: 2)
                     }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                            .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                    )
 
-                Image(systemName: "star")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.8))
-                    .padding(10)
+                if showsOptionsButton {
+                    Button(action: onOptionsTap) {
+                        Image(systemName: isOptionsVisible ? "chevron.up.circle.fill" : "ellipsis.circle.fill")
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(LectraColor.textPrimary)
+                            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Folder options")
+                }
             }
-            .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
             .onTapGesture(perform: onOpen)
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 4) {
-                    Text(folderName)
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                        .onTapGesture(perform: onOpen)
-
-                    if showsOptionsButton {
-                        Button(action: onOptionsTap) {
-                            Image(systemName: isOptionsVisible ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(Color(hex: 0xE84D4D))
-                                .frame(width: 22, height: 22)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                Text(folderName)
+                    .font(LectraTypography.bodyEmphasis)
+                    .foregroundColor(LectraColor.textPrimary)
+                    .lineLimit(1)
+                    .onTapGesture(perform: onOpen)
                 .frame(height: 24, alignment: .topLeading)
 
                 Text(subtitle)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.58))
+                    .font(LectraTypography.captionMedium)
+                    .foregroundColor(LectraColor.textTertiary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
@@ -4426,10 +4671,10 @@ private struct FolderOptionsPopoverView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(folderName)
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text("Managed by \(protectedFolderManagerName ?? "Lectra")")
+                            .foregroundColor(LectraColor.textPrimary)
+                        Text("Managed by \(protectedFolderManagerName ?? "Canvascope")")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.55))
+                            .foregroundColor(LectraColor.textTertiary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
@@ -4437,19 +4682,23 @@ private struct FolderOptionsPopoverView: View {
                         .textInputAutocapitalization(.words)
                         .disableAutocorrection(true)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                 }
 
                 Button(action: onClose) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .foregroundColor(LectraColor.textTertiary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 12)
             .frame(height: 48)
-            .background(Color.white.opacity(0.08))
+            .background(LectraColor.surfaceFloating.opacity(0.88))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             if !isProtectedFolder {
@@ -4473,7 +4722,7 @@ private struct FolderOptionsPopoverView: View {
                                     if option.hex == selectedColorHex {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 10, weight: .bold))
-                                            .foregroundColor(.white)
+                                            .foregroundColor(LectraColor.textPrimary)
                                     }
                                 }
                             }
@@ -4489,11 +4738,11 @@ private struct FolderOptionsPopoverView: View {
                             } label: {
                                 ZStack {
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.white.opacity(icon == selectedIcon ? 0.2 : 0.08))
+                                        .fill(icon == selectedIcon ? LectraColor.sidebarSelection : LectraColor.surfaceFloating.opacity(0.78))
                                         .frame(width: 38, height: 34)
                                     Image(systemName: icon)
                                         .font(.system(size: 14, weight: .medium))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(LectraColor.textPrimary)
                                 }
                             }
                             .buttonStyle(.plain)
@@ -4518,12 +4767,23 @@ private struct FolderOptionsPopoverView: View {
                     FolderMenuActionRow(title: "Move to Trash", icon: "trash", isDestructive: true, showDivider: false, action: onMoveToTrash)
                 }
             }
-            .background(Color.white.opacity(0.07))
+            .background(LectraColor.surfaceFloating.opacity(0.82))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .padding(12)
         .frame(width: 320)
-        .background(Color(hex: 0x1F2024, opacity: 0.97))
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
         .onAppear {
             draftName = folderName
         }
@@ -4560,7 +4820,7 @@ private struct FolderMenuActionRow: View {
                     .font(.system(size: 15, weight: .regular))
                 Spacer(minLength: 0)
             }
-            .foregroundColor(isDestructive ? Color(hex: 0xE84D4D) : .white)
+            .foregroundColor(isDestructive ? LectraColor.accentDestructive : LectraColor.textPrimary)
             .padding(.horizontal, 12)
             .frame(height: 44)
         }
@@ -4568,7 +4828,7 @@ private struct FolderMenuActionRow: View {
 
         if showDivider {
             Divider()
-                .background(Color.white.opacity(0.12))
+                .background(LectraColor.edgeStroke)
                 .padding(.leading, 12)
         }
     }
@@ -4579,20 +4839,20 @@ private struct LibrarySelectionIndicatorView: View {
 
     var body: some View {
         Circle()
-            .fill(Color.white)
+            .fill(LectraColor.paper)
             .frame(width: 22, height: 22)
             .overlay {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .foregroundColor(LectraColor.accent)
                 }
             }
             .overlay(
                 Circle()
-                    .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.22), radius: 2, x: 0, y: 1)
+            .shadow(color: LectraColor.background.opacity(0.32), radius: 2, x: 0, y: 1)
     }
 }
 
@@ -4601,7 +4861,7 @@ private struct MiniDocumentPreview: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.white)
+            .fill(LectraColor.paper)
             .overlay(
                 Group {
                     if document.localPDFURL != nil {
@@ -4614,22 +4874,22 @@ private struct MiniDocumentPreview: View {
                         VStack(spacing: 3) {
                             Image(systemName: "doc.text")
                                 .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(Color.gray.opacity(0.7))
+                                .foregroundColor(LectraColor.textTertiary)
                             Text("PDF")
                                 .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(Color.gray.opacity(0.7))
+                                .foregroundColor(LectraColor.textTertiary)
                         }
                     }
                 }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
     }
 }
 
-private struct GoodnotesSearchBar: View {
+private struct WorkspaceSearchBar: View {
     @Binding var text: String
     let placeholder: String
     let isEditable: Bool
@@ -4637,27 +4897,33 @@ private struct GoodnotesSearchBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.48))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(LectraColor.accentCool)
 
             if isEditable {
                 TextField(placeholder, text: $text)
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(.white)
+                    .font(LectraTypography.bodyEmphasis)
+                    .foregroundColor(LectraColor.textPrimary)
             } else {
                 Text(placeholder)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.48))
+                    .font(LectraTypography.body)
+                    .foregroundColor(LectraColor.textTertiary)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 50)
-        .background(Color(hex: 0x171A22))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 14)
+        .frame(height: 52)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.88))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+        )
     }
 }
 
@@ -4670,21 +4936,25 @@ private struct GenericEmptyStateView: View {
         VStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color(hex: 0x321A33).opacity(0.65))
+                    .fill(LectraColor.surfaceElevated.opacity(0.86))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(LectraGradient.spotlight.opacity(0.14))
+                    )
                     .frame(width: 146, height: 146)
 
                 Image(systemName: symbol)
                     .font(.system(size: 32, weight: .regular))
-                    .foregroundColor(Color(hex: 0xE3D58E))
+                    .foregroundColor(LectraColor.accentCool)
             }
 
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
             Text(subtitle)
                 .font(.system(size: 18, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.6))
+                .foregroundColor(LectraColor.textSecondary)
         }
     }
 }
@@ -4707,7 +4977,7 @@ private struct CreateMenuPopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Create")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "Notebook", icon: "book.closed", action: onNotebook)
@@ -4715,12 +4985,12 @@ private struct CreateMenuPopoverView: View {
                 PopoverActionRow(title: "Whiteboard", icon: "square.grid.3x3", action: onWhiteboard)
                 PopoverActionRow(title: "Folder", icon: "folder", showDivider: false, action: onFolder)
             }
-            .background(Color.white.opacity(0.07))
+            .background(LectraColor.surfaceFloating.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text("Import")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.58))
+                .foregroundColor(LectraColor.textTertiary)
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "Import PDF", icon: "square.and.arrow.down", action: onImport)
@@ -4729,24 +4999,31 @@ private struct CreateMenuPopoverView: View {
                 PopoverActionRow(title: "Image", icon: "photo", action: onImage)
                 PopoverActionRow(title: "Take Photo", icon: "camera", showDivider: false, action: onTakePhoto)
             }
-            .background(Color.white.opacity(0.07))
+            .background(LectraColor.surfaceFloating.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text("Quick Actions")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.58))
+                .foregroundColor(LectraColor.textTertiary)
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "QuickNote", icon: "square.and.pencil", action: onQuickNote)
                 PopoverActionRow(title: "Quick Record", icon: "mic.badge.plus", action: onQuickRecord)
                 PopoverActionRow(title: "Study Set", icon: "rectangle.stack.badge.play", showDivider: false, action: onStudySet)
             }
-            .background(Color.white.opacity(0.07))
+            .background(LectraColor.surfaceFloating.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .padding(14)
         .frame(width: 322)
-        .background(Color(hex: 0x1E1F23, opacity: 0.97))
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -4761,7 +5038,7 @@ private struct ViewAndSortPopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Layout")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.58))
+                .foregroundColor(LectraColor.textTertiary)
 
             HStack(spacing: 8) {
                 layoutPill(
@@ -4780,7 +5057,7 @@ private struct ViewAndSortPopoverView: View {
 
             Text("Sort By")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.58))
+                .foregroundColor(LectraColor.textTertiary)
 
             VStack(spacing: 0) {
                 ForEach(LibrarySortMode.allCases, id: \.self) { mode in
@@ -4792,12 +5069,19 @@ private struct ViewAndSortPopoverView: View {
                     )
                 }
             }
-            .background(Color.white.opacity(0.07))
+            .background(LectraColor.surfaceFloating.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .padding(14)
         .frame(width: 286)
-        .background(Color(hex: 0x1E1F23, opacity: 0.97))
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
     }
 
     private func layoutPill(title: String, icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -4808,11 +5092,11 @@ private struct ViewAndSortPopoverView: View {
                 Text(title)
                     .font(.system(size: 14, weight: .medium))
             }
-            .foregroundColor(isSelected ? .white : Color.white.opacity(0.72))
+            .foregroundColor(isSelected ? LectraColor.textPrimary : LectraColor.textSecondary)
             .padding(.horizontal, 12)
             .frame(height: 38)
             .frame(maxWidth: .infinity)
-            .background(isSelected ? Color(hex: 0xE84D4D) : Color.white.opacity(0.08))
+            .background(isSelected ? LectraColor.accentSoft : LectraColor.surfaceFloating.opacity(0.88))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -4833,7 +5117,7 @@ private struct CloudStatusPopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Cloud")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
             HStack(spacing: 8) {
                 Image(systemName: isCloudSyncEnabled ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -4844,7 +5128,7 @@ private struct CloudStatusPopoverView: View {
                     : "Disabled"
                 )
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -4852,7 +5136,7 @@ private struct CloudStatusPopoverView: View {
                 Text("Last backup: \(lastBackupDate.formatted(date: .omitted, time: .shortened))")
             }
             .font(.system(size: 12, weight: .regular))
-            .foregroundColor(Color.white.opacity(0.62))
+            .foregroundColor(LectraColor.textSecondary)
 
             HStack(spacing: 8) {
                 actionPill(
@@ -4878,17 +5162,28 @@ private struct CloudStatusPopoverView: View {
                     Image(systemName: "chevron.right")
                 }
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
                 .padding(.horizontal, 12)
                 .frame(height: 42)
-                .background(Color.white.opacity(0.08))
+                .background(LectraColor.surfaceFloating.opacity(0.88))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
         }
         .padding(14)
         .frame(width: 320)
-        .background(Color(hex: 0x1E1F23, opacity: 0.97))
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
     }
 
     private func actionPill(
@@ -4904,11 +5199,11 @@ private struct CloudStatusPopoverView: View {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
             }
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
             .padding(.horizontal, 12)
             .frame(height: 36)
             .frame(maxWidth: .infinity)
-            .background(isDisabled ? Color.white.opacity(0.06) : Color(hex: 0xE84D4D))
+            .background(isDisabled ? LectraColor.surfaceFloating.opacity(0.68) : LectraColor.accentSoft)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -4931,14 +5226,14 @@ struct DocumentOptionsSheetView: View {
                     Text(documentTitle)
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(2)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                     Spacer(minLength: 0)
                     Button {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 18, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.5))
+                            .foregroundColor(LectraColor.textTertiary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -4961,13 +5256,20 @@ struct DocumentOptionsSheetView: View {
                         onDelete()
                     }
                 }
-                .background(Color(hex: 0x1A1B1F))
+                .background(LectraColor.surfaceFloating.opacity(0.84))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 Spacer(minLength: 0)
             }
             .padding(16)
-            .background(Color.black.ignoresSafeArea())
+            .background {
+                LectraColor.background.ignoresSafeArea()
+                LectraGradient.appBackdrop.opacity(0.64).ignoresSafeArea()
+            }
             .navigationBarHidden(true)
         }
         .presentationDetents([.fraction(0.48)])
@@ -4984,7 +5286,7 @@ struct DocumentOptionsSheetView: View {
                 Spacer(minLength: 0)
             }
             .font(.system(size: 14, weight: .regular))
-            .foregroundColor(isDestructive ? Color(hex: 0xEA5454) : .white)
+            .foregroundColor(isDestructive ? LectraColor.accentDestructive : LectraColor.textPrimary)
             .padding(.horizontal, 14)
             .frame(height: 54)
         }
@@ -4992,7 +5294,7 @@ struct DocumentOptionsSheetView: View {
 
         if !isDestructive {
             Divider()
-                .background(Color.white.opacity(0.08))
+                .background(LectraColor.edgeStroke)
                 .padding(.leading, 14)
         }
     }
@@ -5009,73 +5311,84 @@ struct MoveDocumentSheetView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if isLockedToImportedFolder {
-                    HStack {
-                        Image(systemName: "lock.fill")
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                        Text(importedFolderName)
-                            .foregroundColor(.white)
-                        Spacer(minLength: 0)
-                        Image(systemName: "checkmark")
-                            .foregroundColor(Color(hex: 0xE84D4D))
-                    }
-                    .padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: LectraSpacing.md) {
+                Text(isLockedToImportedFolder
+                     ? "This document is managed by its import source."
+                     : "Choose where this document should live.")
+                    .font(LectraTypography.body)
+                    .foregroundColor(LectraColor.textSecondary)
 
-                    Text("Imported documents stay in this protected folder.")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.65))
-                } else {
-                    Button {
-                        onMove(nil)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Image(systemName: "tray.full")
-                            Text("Documents")
-                            Spacer(minLength: 0)
-                            if currentFolderId == nil && !isLockedToImportedFolder {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(Color(hex: 0xE84D4D))
-                            }
-                        }
+                ScrollView {
+                    VStack(spacing: LectraSpacing.sm) {
+                        destinationRows
                     }
-                    .foregroundColor(.white)
-
-                    ForEach(folders) { folder in
-                        Button {
-                            onMove(folder.id)
-                            dismiss()
-                        } label: {
-                            HStack {
-                                Image(systemName: "folder.fill")
-                                    .foregroundColor(Color(hex: 0xD44A4A))
-                                Text(folder.name)
-                                    .foregroundColor(.white)
-                                Spacer(minLength: 0)
-                                if currentFolderId == folder.id && !isLockedToImportedFolder {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(Color(hex: 0xE84D4D))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    .padding(.vertical, 2)
                 }
+                .scrollIndicators(.hidden)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.black.ignoresSafeArea())
+            .padding(LectraSpacing.lg)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background {
+                LectraColor.background.ignoresSafeArea()
+                LectraGradient.appBackdrop.opacity(0.70).ignoresSafeArea()
+            }
             .navigationTitle(isLockedToImportedFolder ? "Locked Document" : "Move \"\(documentTitle)\"")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private var destinationRows: some View {
+        if isLockedToImportedFolder {
+            CanvascopeMoveDestinationRow(
+                title: importedFolderName,
+                subtitle: "Imported documents stay in this protected folder.",
+                icon: "lock.fill",
+                tint: LectraColor.accentSoft,
+                isSelected: true,
+                isLocked: true
+            )
+        } else {
+            Button {
+                onMove(nil)
+                dismiss()
+            } label: {
+                CanvascopeMoveDestinationRow(
+                    title: "Documents",
+                    subtitle: nil,
+                    icon: "tray.full",
+                    tint: LectraColor.accentCool,
+                    isSelected: currentFolderId == nil,
+                    isLocked: false
+                )
+            }
+            .buttonStyle(.plain)
+
+            ForEach(folders) { folder in
+                Button {
+                    onMove(folder.id)
+                    dismiss()
+                } label: {
+                    CanvascopeMoveDestinationRow(
+                        title: folder.name,
+                        subtitle: nil,
+                        icon: folder.iconSystemName ?? "folder.fill",
+                        tint: LectraColor.accent,
+                        isSelected: currentFolderId == folder.id,
+                        isLocked: false
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 
@@ -5088,48 +5401,123 @@ private struct BulkMoveDocumentsSheetView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Button {
-                    onMove(nil)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Image(systemName: "tray.full")
-                        Text("Documents")
-                        Spacer(minLength: 0)
-                    }
-                }
-                .foregroundColor(.white)
+            VStack(alignment: .leading, spacing: LectraSpacing.md) {
+                Text("Choose a destination for the selected documents.")
+                    .font(LectraTypography.body)
+                    .foregroundColor(LectraColor.textSecondary)
 
-                ForEach(folders) { folder in
-                    Button {
-                        onMove(folder.id)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Image(systemName: "folder.fill")
-                                .foregroundColor(Color(hex: 0xD44A4A))
-                            Text(folder.name)
-                                .foregroundColor(.white)
-                            Spacer(minLength: 0)
+                ScrollView {
+                    VStack(spacing: LectraSpacing.sm) {
+                        Button {
+                            onMove(nil)
+                            dismiss()
+                        } label: {
+                            CanvascopeMoveDestinationRow(
+                                title: "Documents",
+                                subtitle: nil,
+                                icon: "tray.full",
+                                tint: LectraColor.accentCool,
+                                isSelected: false,
+                                isLocked: false
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        ForEach(folders) { folder in
+                            Button {
+                                onMove(folder.id)
+                                dismiss()
+                            } label: {
+                                CanvascopeMoveDestinationRow(
+                                    title: folder.name,
+                                    subtitle: nil,
+                                    icon: folder.iconSystemName ?? "folder.fill",
+                                    tint: LectraColor.accent,
+                                    isSelected: false,
+                                    isLocked: false
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.vertical, 2)
                 }
+                .scrollIndicators(.hidden)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.black.ignoresSafeArea())
+            .padding(LectraSpacing.lg)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background {
+                LectraColor.background.ignoresSafeArea()
+                LectraGradient.appBackdrop.opacity(0.70).ignoresSafeArea()
+            }
             .navigationTitle("Move \(selectedCount) Document\(selectedCount == 1 ? "" : "s")")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
-                        .foregroundColor(Color(hex: 0xE84D4D))
+                        .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+}
+
+private struct CanvascopeMoveDestinationRow: View {
+    let title: String
+    let subtitle: String?
+    let icon: String
+    let tint: Color
+    let isSelected: Bool
+    let isLocked: Bool
+
+    var body: some View {
+        HStack(spacing: LectraSpacing.md) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(LectraTypography.bodyEmphasis)
+                    .foregroundColor(LectraColor.textPrimary)
+                    .lineLimit(1)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(LectraTypography.captionMedium)
+                        .foregroundColor(LectraColor.textSecondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if isLocked {
+                Image(systemName: "lock.circle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(LectraColor.textTertiary)
+            }
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(LectraColor.accentSoft)
+            }
+        }
+        .padding(.horizontal, LectraSpacing.md)
+        .frame(minHeight: subtitle == nil ? 58 : 72)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                .fill(isSelected ? LectraColor.sidebarSelection.opacity(0.88) : LectraColor.surfaceFloating.opacity(0.82))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                .stroke(isSelected ? LectraColor.accentSoft.opacity(0.34) : LectraColor.edgeStroke, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
     }
 }
 

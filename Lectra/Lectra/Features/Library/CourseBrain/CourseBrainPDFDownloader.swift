@@ -357,7 +357,7 @@ final class CourseBrainPDFDownloader: NSObject {
         // response. Those URLs are already authorized by their token. Sending
         // every Canvas/CalNet cookie to them can blow past CDN header limits
         // and produce HTTP 494 responses instead of PDFs.
-        if host.contains("inst-fs") || host.contains("inscloudgate.net") {
+        if host.contains("inst-fs") || host.contains("inscloudgate.net") || host.contains("canvas-user-content") {
             return false
         }
 
@@ -395,6 +395,10 @@ final class CourseBrainPDFDownloader: NSObject {
 
     /// Transforms a Canvas file page URL to its direct download variant.
     private static func canvasDownloadURL(from url: URL) -> URL {
+        if let forced = CanvasFileURLResolver.forcedDownloadURL(from: url) {
+            return forced
+        }
+
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         
         // Canvas uses ?download_frd=1 to force bypass the HTML viewer
@@ -468,15 +472,32 @@ final class CourseBrainPDFDownloader: NSObject {
         return "hex=\(hex) ascii=\"\(ascii)\""
     }
 
-    private func shouldIgnoreNavigationFailure(_ error: Error) -> Bool {
+    private func shouldIgnoreNavigationFailure(_ error: Error, currentURL: URL?) -> Bool {
         let nsError = error as NSError
         let isFrameInterrupted = nsError.domain == "WebKitErrorDomain" && nsError.code == 102
         let isCancelled = nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        guard isFrameInterrupted || isCancelled else { return false }
+
         let isExpectedPDFInterruption =
             interceptedPDFDownloadID == currentDownloadID
             || isDownloading
             || activeDownloadTask != nil
-        return (isFrameInterrupted || isCancelled) && isExpectedPDFInterruption
+        if isExpectedPDFInterruption { return true }
+
+        if isInteractive { return true }
+
+        let failingURLString =
+            (nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
+            ?? (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+            ?? (nsError.userInfo["NSErrorFailingURLStringKey"] as? String)
+            ?? currentURL?.absoluteString
+
+        let failingHost =
+            (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.host
+            ?? failingURLString.flatMap { URL(string: $0)?.host }
+            ?? currentURL?.host
+
+        return looksLikeAuthFlow(host: failingHost, urlString: failingURLString)
     }
 }
 
@@ -663,8 +684,8 @@ extension CourseBrainPDFDownloader: WKNavigationDelegate {
         withError error: Error
     ) {
         Task { @MainActor in
-            if self.shouldIgnoreNavigationFailure(error) {
-                print("[Downloader] webview didFail ignored → \(error.localizedDescription)")
+            if self.shouldIgnoreNavigationFailure(error, currentURL: webView.url) {
+                print("[Downloader] webview didFail ignored during auth/download → \(error.localizedDescription)")
                 return
             }
             print("[Downloader] webview didFail → \(error.localizedDescription)")
@@ -678,8 +699,8 @@ extension CourseBrainPDFDownloader: WKNavigationDelegate {
         withError error: Error
     ) {
         Task { @MainActor in
-            if self.shouldIgnoreNavigationFailure(error) {
-                print("[Downloader] webview didFailProvisional ignored → \(error.localizedDescription)")
+            if self.shouldIgnoreNavigationFailure(error, currentURL: webView.url) {
+                print("[Downloader] webview didFailProvisional ignored during auth/download → \(error.localizedDescription)")
                 return
             }
             print("[Downloader] webview didFailProvisional → \(error.localizedDescription)")

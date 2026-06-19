@@ -16,7 +16,7 @@ struct CourseBrainSpriteView: UIViewRepresentable {
         let skView = SKView()
         skView.ignoresSiblingOrder = true
         skView.allowsTransparency = true
-        skView.backgroundColor = UIColor(red: 0.027, green: 0.027, blue: 0.031, alpha: 1)
+        skView.backgroundColor = UIColor(hex: 0x0D0A09)
 
         // Create the scene sized to the view's bounds (will resize via update)
         let scene = CourseBrainSpriteScene(size: CGSize(width: 1200, height: 900))

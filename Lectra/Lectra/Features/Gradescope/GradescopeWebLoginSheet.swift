@@ -25,11 +25,11 @@ struct GradescopeWebLoginSheet: View {
             VStack(alignment: .leading, spacing: LectraSpacing.md) {
                 Text("Gradescope Web Sign-In")
                     .font(LectraTypography.displaySmall)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
 
                 Text(statusMessage)
                     .font(LectraTypography.body)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                    .foregroundColor(LectraColor.textSecondary)
 
                 GradescopeWebSessionView(
                     onPageLoaded: { url in
@@ -42,7 +42,7 @@ struct GradescopeWebLoginSheet: View {
                         lastHTML = html
                         guard !isImporting else { return }
                         isImporting = true
-                        statusMessage = "Authenticated session detected. Importing into Lectra…"
+                        statusMessage = "Authenticated session detected. Importing into Canvascope..."
                         debugReport = nil
 
                         LectraHaptics.selection()
@@ -63,17 +63,18 @@ struct GradescopeWebLoginSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
-                        .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
                 )
+                .background(gradescopeWebPanelBackground)
                 .lectraShadow(LectraElevation.low())
 
                 if isImporting {
                     HStack(spacing: LectraSpacing.sm) {
                         ProgressView()
-                            .tint(.white)
+                            .tint(LectraColor.accentSoft)
                         Text("Importing session…")
                             .font(LectraTypography.caption)
-                            .foregroundColor(.white.opacity(LectraOpacity.primary))
+                            .foregroundColor(LectraColor.textSecondary)
                     }
                 }
 
@@ -107,7 +108,10 @@ struct GradescopeWebLoginSheet: View {
                 }
             }
             .padding(LectraSpacing.lg)
-            .background(LectraColor.surfaceElevated.ignoresSafeArea())
+            .background {
+                LectraColor.background.ignoresSafeArea()
+                LectraGradient.appBackdrop.opacity(0.72).ignoresSafeArea()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -121,6 +125,15 @@ struct GradescopeWebLoginSheet: View {
             guard isImporting || newValue.localizedCaseInsensitiveContains("failed") else { return }
             postAccessibilityAnnouncement(newValue)
         }
+    }
+
+    private var gradescopeWebPanelBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.92))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(0.06))
+            )
     }
 }
 

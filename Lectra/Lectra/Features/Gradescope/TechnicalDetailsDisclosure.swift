@@ -44,7 +44,7 @@ struct TechnicalDetailsDisclosure: View {
         VStack(alignment: .leading, spacing: LectraSpacing.sm) {
             Text(presentation.summary)
                 .font(LectraTypography.captionMedium)
-                .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                .foregroundColor(LectraColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             DisclosureGroup(isExpanded: $isExpanded) {
@@ -59,7 +59,7 @@ struct TechnicalDetailsDisclosure: View {
 
                     Text(presentation.details)
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .foregroundColor(LectraColor.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("\(accessibilityID).body")
@@ -68,7 +68,7 @@ struct TechnicalDetailsDisclosure: View {
             } label: {
                 Label("Technical details", systemImage: "wrench.and.screwdriver")
                     .font(LectraTypography.caption)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.primary))
+                    .foregroundColor(LectraColor.textSecondary)
             }
             .tint(LectraColor.accentSoft)
             .animation(reduceMotion ? nil : LectraMotion.quick, value: isExpanded)
@@ -77,7 +77,14 @@ struct TechnicalDetailsDisclosure: View {
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         }
         .padding(LectraSpacing.md)
-        .lectraCard(cornerRadius: LectraRadius.control, shadow: false)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                .fill(LectraColor.surfaceFloating.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityID)
     }

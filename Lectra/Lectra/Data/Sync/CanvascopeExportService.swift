@@ -59,6 +59,14 @@ final class CanvascopeExportService {
         let error: String
     }
 
+    /// Realtime broadcast the backend sends back to this device when the
+    /// receiver finishes downloading. Used for an instant "delivered" signal.
+    private static let uploadStatusEvent = "upload_status"
+
+    /// Stable id for this device, shared with `LectraWakeService` so the backend
+    /// can route delivery confirmations to the channel we subscribe to.
+    private let senderDeviceId = LectraWakeService.resolveDeviceId()
+
     private let maxFileBytes = 25 * 1024 * 1024
     private let uploadEndpoint = SupabaseManager.shared.supabaseURL
         .appendingPathComponent("functions")
@@ -114,11 +122,122 @@ final class CanvascopeExportService {
         }
     }
 
+    /// Waits for the receiver to confirm download. Races an instant realtime
+    /// "delivered" broadcast against polling so confirmation is near-instant when
+    /// realtime is connected, and still resolves via polling if it isn't.
     func awaitTerminalStatus(
         uploadId: String,
         timeoutSeconds: TimeInterval = 120
     ) async throws -> CanvascopeUploadStatusReceipt? {
-        let pollCadenceSeconds: [TimeInterval] = [0.8, 1.2, 1.8, 2.5]
+        let userId = try? await resolveUserId()
+
+        return try await withThrowingTaskGroup(of: CanvascopeUploadStatusReceipt?.self) { group in
+            if let userId {
+                group.addTask {
+                    await self.awaitRealtimeStatus(
+                        uploadId: uploadId,
+                        userId: userId,
+                        timeoutSeconds: timeoutSeconds
+                    )
+                }
+            }
+
+            group.addTask {
+                try await self.awaitPolledStatus(uploadId: uploadId, timeoutSeconds: timeoutSeconds)
+            }
+
+            // First branch to produce a terminal receipt wins; nil results (a
+            // branch giving up) are ignored until every branch has finished.
+            var resolved: CanvascopeUploadStatusReceipt? = nil
+            for try await result in group {
+                if let result {
+                    resolved = result
+                    break
+                }
+            }
+            group.cancelAll()
+            return resolved
+        }
+    }
+
+    /// Subscribes to this device's private channel and resolves the moment the
+    /// backend broadcasts a terminal `upload_status` for this upload.
+    private func awaitRealtimeStatus(
+        uploadId: String,
+        userId: UUID,
+        timeoutSeconds: TimeInterval
+    ) async -> CanvascopeUploadStatusReceipt? {
+        let client = SupabaseManager.shared.client
+        let topic = "dropbridge:user:\(userId.uuidString):device:\(senderDeviceId.uuidString)"
+
+        await client.realtimeV2.connect()
+        let channel = client.channel(topic) { config in
+            config.isPrivate = true
+        }
+        let stream = channel.broadcastStream(event: Self.uploadStatusEvent)
+
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            await client.removeChannel(channel)
+            return nil
+        }
+
+        defer {
+            Task { await client.removeChannel(channel) }
+        }
+
+        return await withTaskGroup(of: CanvascopeUploadStatusReceipt?.self) { group in
+            group.addTask {
+                for await message in stream {
+                    guard let envelope = Self.decodeStatusEnvelope(message) else { continue }
+                    guard (envelope.uploadId ?? envelope.payload?.uploadId) == uploadId else { continue }
+                    let status = envelope.status ?? envelope.payload?.status
+                    if status == "downloaded" || status == "canceled" {
+                        return CanvascopeUploadStatusReceipt(
+                            ok: true,
+                            uploadId: uploadId,
+                            status: status ?? "downloaded",
+                            createdAt: nil,
+                            downloadedAt: status == "downloaded" ? ISO8601DateFormatter().string(from: Date()) : nil,
+                            expiresAt: nil
+                        )
+                    }
+                }
+                return nil
+            }
+
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(timeoutSeconds, 0) * 1_000_000_000))
+                return nil
+            }
+
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private struct StatusEnvelope: Decodable {
+        struct Payload: Decodable {
+            let uploadId: String?
+            let status: String?
+        }
+        let payload: Payload?
+        let uploadId: String?
+        let status: String?
+    }
+
+    private static func decodeStatusEnvelope(_ message: [String: AnyJSON]) -> StatusEnvelope? {
+        guard let data = try? JSONEncoder().encode(message) else { return nil }
+        return try? JSONDecoder().decode(StatusEnvelope.self, from: data)
+    }
+
+    private func awaitPolledStatus(
+        uploadId: String,
+        timeoutSeconds: TimeInterval
+    ) async throws -> CanvascopeUploadStatusReceipt? {
+        let pollCadenceSeconds: [TimeInterval] = [0.4, 1.0, 1.8, 2.5]
         let deadline = Date().addingTimeInterval(max(timeoutSeconds, pollCadenceSeconds[0]))
         var accessToken = try await resolveAccessToken()
         var pollCount = 0
@@ -196,7 +315,8 @@ final class CanvascopeExportService {
         request.httpBody = makeMultipartBody(
             fields: [
                 "receiverKind": "canvascope_extension",
-                "senderKind": "lectra_ipad"
+                "senderKind": "lectra_ipad",
+                "senderDeviceId": senderDeviceId.uuidString
             ],
             fieldName: "file",
             fileName: fileURL.lastPathComponent,
@@ -276,6 +396,15 @@ final class CanvascopeExportService {
         default:
             return .server(serverMessage)
         }
+    }
+
+    private func resolveUserId() async throws -> UUID {
+        let client = SupabaseManager.shared.client
+        if let current = client.auth.currentSession, !current.isExpired {
+            return current.user.id
+        }
+        let session = try await client.auth.session
+        return session.user.id
     }
 
     private func resolveAccessToken() async throws -> String {

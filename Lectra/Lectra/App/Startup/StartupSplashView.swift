@@ -65,7 +65,7 @@ struct StartupSplashView: View {
                         .frame(width: 116, height: 116)
                         .overlay(
                             RoundedRectangle(cornerRadius: LectraRadius.hero, style: .continuous)
-                                .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
                         )
                         .overlay(
                             Image("LaunchMark")
@@ -79,7 +79,7 @@ struct StartupSplashView: View {
                 }
 
                 VStack(spacing: 4) {
-                    Text("Lectra")
+                    Text("Canvascope")
                         .font(LectraTypography.displayLarge)
                         .foregroundStyle(LectraColor.textPrimary)
                 }

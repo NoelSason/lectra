@@ -5,6 +5,49 @@ import XCTest
 final class CourseBrainMissionControlPhase1Tests: XCTestCase {
     private static let sharedRepository = CourseBrainRepository()
 
+    func testCanvasFolderPreviewURLResolvesToFileDownloadURL() throws {
+        let folderPreviewURL = try XCTUnwrap(URL(string: "https://bcourses.berkeley.edu/courses/123/files/folder/Lecture%20Slides?preview=456789"))
+
+        let resolved = try XCTUnwrap(CanvasFileURLResolver.pdfSourceURL(
+            from: folderPreviewURL,
+            title: "Lecture 1.pdf",
+            contentType: nil
+        ))
+
+        XCTAssertEqual(
+            resolved.absoluteString,
+            "https://bcourses.berkeley.edu/courses/123/files/456789/download?download_frd=1"
+        )
+
+        let folderOnlyURL = try XCTUnwrap(URL(string: "https://bcourses.berkeley.edu/courses/123/files/folder/Lecture%20Slides"))
+        XCTAssertNil(CanvasFileURLResolver.pdfSourceURL(
+            from: folderOnlyURL,
+            title: "Lecture 1.pdf",
+            contentType: nil
+        ))
+    }
+
+    func testCanvasAPIFileSynthesizesDownloadURLWhenCandidateIsFolderPage() throws {
+        let json = """
+        {
+          "id": "456789",
+          "display_name": "Lecture 1.pdf",
+          "filename": "Lecture 1.pdf",
+          "url": "https://bcourses.berkeley.edu/courses/123/files/folder/Lecture%20Slides",
+          "content_type": "application/pdf",
+          "mime_class": "pdf"
+        }
+        """.data(using: .utf8)!
+
+        let file = try JSONDecoder().decode(CanvasAPIFile.self, from: json)
+
+        XCTAssertEqual(file.contentType, "application/pdf")
+        XCTAssertEqual(
+            file.bestDownloadURLString(host: "https://bcourses.berkeley.edu", courseId: 123),
+            "https://bcourses.berkeley.edu/courses/123/files/456789/download?download_frd=1"
+        )
+    }
+
     func testFixtureSnapshotBuildsCourseTwinsAndPreservesLegacySourceRecords() throws {
         let snapshot = Self.sharedRepository.snapshot(from: try fixtureRows())
 

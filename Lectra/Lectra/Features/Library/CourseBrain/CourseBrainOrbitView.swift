@@ -19,7 +19,7 @@ struct CourseBrainOrbitView: View {
     let searchText: String
     let onNodeTap: (String) -> Void
     let onNodeOpen: (String) -> Void
-    /// Called when user taps "Import into Lectra" on a file/PDF item. Passes (downloadURL, suggestedTitle).
+    /// Called when user taps the Canvascope import action on a file/PDF item.
     let onImportPDF: (URL, String) -> Void
 
     // MARK: - State
@@ -62,7 +62,10 @@ struct CourseBrainOrbitView: View {
             .padding(.horizontal, 20)
             .padding(.top, 12)
         }
-        .background(LectraColor.surfaceOverlay)
+        .background {
+            LectraColor.background
+            LectraGradient.appBackdrop.opacity(0.58)
+        }
     }
 
     static func dueSoonNodes(from nodes: [CourseBrainNode], now: Date = Date()) -> [CourseBrainNode] {
@@ -103,7 +106,7 @@ struct CourseBrainOrbitView: View {
                     .font(LectraTypography.headline)
                 Text("Due Soon")
                     .font(LectraTypography.titleSmall)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
                 Text("\(urgentItems.count)")
                     .font(LectraTypography.caption)
                     .foregroundColor(LectraColor.accent)
@@ -111,11 +114,10 @@ struct CourseBrainOrbitView: View {
                     .padding(.vertical, 3)
                     .background(
                         Capsule()
-                            .fill(.regularMaterial)
-                            .environment(\.colorScheme, .dark)
+                            .fill(LectraColor.surfaceFloating.opacity(0.88))
                             .overlay {
                                 Capsule()
-                                    .fill(LectraGlass.urgentCardCritical)
+                                    .fill(LectraColor.accent.opacity(0.12))
                             }
                     )
                     .clipShape(Capsule())
@@ -133,7 +135,7 @@ struct CourseBrainOrbitView: View {
             }
 
             Divider()
-                .background(Color.white.opacity(0.06))
+                .background(LectraColor.edgeStroke)
                 .padding(.top, 8)
         }
         .padding(.bottom, 8)
@@ -150,7 +152,7 @@ struct CourseBrainOrbitView: View {
                     if let courseName = node.metadata.courseName {
                         Text(abbreviate(courseName, max: 20))
                             .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(LectraColor.textTertiary)
                             .lineLimit(1)
                     }
                     Spacer()
@@ -158,7 +160,7 @@ struct CourseBrainOrbitView: View {
 
                 Text(node.title)
                     .font(LectraTypography.bodyEmphasis)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
 
@@ -172,26 +174,10 @@ struct CourseBrainOrbitView: View {
             }
             .padding(16)
             .frame(width: 220, alignment: .leading)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(.regularMaterial)
-                        .environment(\.colorScheme, .dark)
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(urgencyGradient(for: node.metadata.dueAt))
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [LectraGlass.innerHighlight, Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-            )
+            .background(orbitCardBackground(accent: urgencyAccent(for: node.metadata.dueAt)))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
             .lectraShadow(LectraElevation.medium())
         }
@@ -228,21 +214,21 @@ struct CourseBrainOrbitView: View {
 
                     Text(group.courseName)
                         .font(LectraTypography.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
 
                     Text("\(group.items.count)")
                         .font(LectraTypography.caption)
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(LectraColor.textTertiary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.06))
+                        .background(LectraColor.surfaceFloating.opacity(0.88))
                         .clipShape(Capsule())
 
                     Spacer()
 
                     Image(systemName: expandedCourseIDs.contains(group.courseId) ? "chevron.up" : "chevron.down")
                         .font(LectraTypography.caption)
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(LectraColor.textTertiary)
                 }
                 .padding(.vertical, 14)
             }
@@ -267,10 +253,10 @@ struct CourseBrainOrbitView: View {
                         if group.items.count > 12 {
                             Text("+\(group.items.count - 12) more")
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.35))
+                                .foregroundColor(LectraColor.textTertiary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(Color.white.opacity(0.04))
+                                .background(LectraColor.surfaceFloating.opacity(0.72))
                                 .clipShape(Capsule())
                         }
                     }
@@ -281,7 +267,7 @@ struct CourseBrainOrbitView: View {
             }
 
             Divider()
-                .background(Color.white.opacity(0.05))
+                .background(LectraColor.edgeStroke.opacity(0.7))
         }
     }
 
@@ -301,14 +287,14 @@ struct CourseBrainOrbitView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(node.title)
                         .font(LectraTypography.body)
-                        .foregroundColor(node.id == selectedNodeID ? .white : .white.opacity(0.88))
+                        .foregroundColor(node.id == selectedNodeID ? LectraColor.textPrimary : LectraColor.textSecondary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
 
                     if let module = node.metadata.moduleName {
                         Text(module)
                             .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.white.opacity(0.35))
+                            .foregroundColor(LectraColor.textTertiary)
                             .lineLimit(1)
                     }
                 }
@@ -327,7 +313,6 @@ struct CourseBrainOrbitView: View {
                 // Action buttons
                 if let url = node.resourceURL {
                     if isPDFLike(node) {
-                        // Import into Lectra button
                         Button {
                             LectraHaptics.tap()
                             onImportPDF(url, node.title)
@@ -338,18 +323,17 @@ struct CourseBrainOrbitView: View {
                                 Text("Open")
                                     .font(LectraTypography.caption)
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(LectraColor.textPrimary)
                             .padding(.horizontal, 12)
                             .frame(minHeight: LectraSizing.minHitTarget)
                             .background(
                                 Capsule()
-                                    .fill(.regularMaterial)
-                                    .environment(\.colorScheme, .dark)
+                                    .fill(LectraColor.surfaceFloating.opacity(0.90))
                                     .overlay {
                                         Capsule()
                                             .fill(
                                                 LinearGradient(
-                                                    colors: [accent.opacity(0.58), accent.opacity(0.22)],
+                                                    colors: [accent.opacity(0.42), LectraColor.accent.opacity(0.18)],
                                                     startPoint: .topLeading,
                                                     endPoint: .bottomTrailing
                                                 )
@@ -357,7 +341,7 @@ struct CourseBrainOrbitView: View {
                                     }
                                     .overlay {
                                         Capsule()
-                                            .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+                                            .stroke(LectraColor.edgeStroke, lineWidth: 1)
                                     }
                             )
                             .clipShape(Capsule())
@@ -371,17 +355,16 @@ struct CourseBrainOrbitView: View {
                         } label: {
                             Image(systemName: "arrow.up.right")
                                 .font(LectraTypography.caption)
-                                .foregroundColor(.white.opacity(0.9))
+                                .foregroundColor(LectraColor.textSecondary)
                                 .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
                                 .background(
                                     Capsule()
-                                        .fill(.regularMaterial)
-                                        .environment(\.colorScheme, .dark)
+                                        .fill(LectraColor.surfaceFloating.opacity(0.90))
                                         .overlay {
                                             Capsule()
                                                 .fill(
                                                     LinearGradient(
-                                                        colors: [accent.opacity(0.16), Color.white.opacity(0.04)],
+                                                        colors: [accent.opacity(0.16), LectraColor.accentCool.opacity(0.06)],
                                                         startPoint: .topLeading,
                                                         endPoint: .bottomTrailing
                                                     )
@@ -389,7 +372,7 @@ struct CourseBrainOrbitView: View {
                                         }
                                         .overlay {
                                             Capsule()
-                                                .stroke(LectraGlass.hairlineStroke, lineWidth: 0.5)
+                                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
                                         }
                                 )
                                 .clipShape(Capsule())
@@ -401,15 +384,10 @@ struct CourseBrainOrbitView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(node.id == selectedNodeID
-                          ? accent.opacity(0.18)
-                          : Color.white.opacity(highlightedNodeIDs.contains(node.id) ? 0.08 : 0.03))
-            )
+            .background(orbitRowBackground(accent: accent, isSelected: node.id == selectedNodeID, isHighlighted: highlightedNodeIDs.contains(node.id)))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(node.id == selectedNodeID ? 0.2 : 0.05), lineWidth: 0.5)
+                    .stroke(node.id == selectedNodeID ? accent.opacity(0.45) : LectraColor.edgeStroke.opacity(0.65), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -426,7 +404,7 @@ struct CourseBrainOrbitView: View {
                     .font(LectraTypography.footnote)
                 Text(abbreviate(node.title, max: 24))
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(LectraColor.textSecondary)
                     .lineLimit(1)
 
                 if let submissionStatus = node.metadata.headlineSubmissionStatus {
@@ -447,11 +425,11 @@ struct CourseBrainOrbitView: View {
             .padding(.vertical, 7)
             .background(
                 Capsule()
-                    .fill(accent.opacity(0.1))
+                    .fill(LectraColor.surfaceFloating.opacity(0.82))
             )
             .overlay(
                 Capsule()
-                    .stroke(accent.opacity(0.15), lineWidth: 0.5)
+                    .stroke(accent.opacity(0.22), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -484,7 +462,7 @@ struct CourseBrainOrbitView: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "MMM d"
             text = formatter.string(from: date)
-            color = Color.white.opacity(0.4)
+            color = LectraColor.textTertiary
         }
 
         return Text(text)
@@ -509,35 +487,67 @@ struct CourseBrainOrbitView: View {
     private func submissionBadgeForegroundColor(for status: CourseBrainSubmissionStatus) -> Color {
         switch status {
         case .submitted:
-            return Color(hex: 0xC4F7D2)
+            return Color(hex: 0xB7E8C5)
         case .late:
-            return Color(hex: 0xFFE2B3)
+            return Color(hex: 0xFFE0A3)
         case .missing:
-            return Color(hex: 0xFFB5BA)
+            return Color(hex: 0xFFC0BA)
         case .excused:
-            return Color(hex: 0xD2D8FF)
+            return Color(hex: 0xF2D2C8)
         case .notSubmitted:
-            return Color.white.opacity(0.82)
+            return LectraColor.textSecondary
         case .unknown:
-            return Color.white.opacity(0.78)
+            return LectraColor.textTertiary
         }
     }
 
     private func submissionBadgeBackgroundColor(for status: CourseBrainSubmissionStatus) -> Color {
         switch status {
         case .submitted:
-            return Color(hex: 0x1D4D2B)
+            return Color(hex: 0x183A28)
         case .late:
             return Color(hex: 0x5A3414)
         case .missing:
-            return Color(hex: 0x5A1F27)
+            return Color(hex: 0x5A211D)
         case .excused:
-            return Color(hex: 0x2E355F)
+            return Color(hex: 0x3A2824)
         case .notSubmitted:
-            return Color.white.opacity(0.08)
+            return LectraColor.surfaceFloating.opacity(0.86)
         case .unknown:
-            return Color.white.opacity(0.06)
+            return LectraColor.surfaceFloating.opacity(0.66)
         }
+    }
+
+    private func orbitCardBackground(accent: Color, cornerRadius: CGFloat = LectraRadius.card) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.88))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [accent.opacity(0.16), LectraColor.accentCool.opacity(0.06), Color.clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+    }
+
+    private func orbitRowBackground(accent: Color, isSelected: Bool, isHighlighted: Bool) -> some View {
+        RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+            .fill(
+                isSelected
+                    ? accent.opacity(0.18)
+                    : LectraColor.surfaceFloating.opacity(isHighlighted ? 0.86 : 0.58)
+            )
+    }
+
+    private func urgencyAccent(for dueDate: Date?) -> Color {
+        guard let dueDate else { return LectraColor.accentCool }
+        let hours = Calendar.current.dateComponents([.hour], from: Date(), to: dueDate).hour ?? 999
+        if hours < 24 { return LectraColor.accentDestructive }
+        if hours < 72 { return LectraColor.warning }
+        return LectraColor.accentCool
     }
 
     // MARK: - Helpers
@@ -545,12 +555,12 @@ struct CourseBrainOrbitView: View {
     private func typeIcon(_ type: CourseBrainNodeType) -> some View {
         let (icon, color): (String, Color) = {
             switch type {
-            case .topic:     return ("folder.fill", Color(hex: 0xD5648A))
-            case .assignment: return ("doc.text.fill", Color(hex: 0xFF9F45))
-            case .lecture:   return ("book.fill", Color(hex: 0x4C8DFF))
-            case .note:      return ("note.text", Color(hex: 0x46C97A))
-            case .file:      return ("doc.fill", Color(hex: 0x9AA0AA))
-            case .concept:   return ("lightbulb.fill", Color(hex: 0xA06DFF))
+            case .topic:     return ("folder.fill", Color(hex: 0xD95E53))
+            case .assignment: return ("doc.text.fill", LectraColor.warning)
+            case .lecture:   return ("book.fill", Color(hex: 0xB56A55))
+            case .note:      return ("note.text", Color(hex: 0xAEB878))
+            case .file:      return ("doc.fill", LectraColor.paperMuted)
+            case .concept:   return ("lightbulb.fill", Color(hex: 0xD9A18D))
             }
         }()
 
@@ -590,14 +600,14 @@ struct CourseBrainOrbitView: View {
     // MARK: - Data Building
 
     private let coursePalette: [Color] = [
-        Color(hex: 0xD5648A),
-        Color(hex: 0x4C8DFF),
-        Color(hex: 0xFF9F45),
-        Color(hex: 0x46C97A),
-        Color(hex: 0xA06DFF),
-        Color(hex: 0x33C4CC),
-        Color(hex: 0xF27A33),
-        Color(hex: 0xB35CE6),
+        LectraColor.accent,
+        LectraColor.accentSoft,
+        LectraColor.warning,
+        Color(hex: 0xD9A18D),
+        Color(hex: 0xB56A55),
+        Color(hex: 0xAEB878),
+        LectraColor.paperMuted,
+        Color(hex: 0x8E5750),
     ]
 
     private func buildCourseGroups() -> [OrbitCourseGroup] {

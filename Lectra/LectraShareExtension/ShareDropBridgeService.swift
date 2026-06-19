@@ -23,7 +23,7 @@ enum ShareDropBridgeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notAuthenticated:
-            return "Sign in to Lectra first, then try sharing again."
+            return "Sign in to Canvascope first, then try sharing again."
         case .fileTooLarge:
             return "This file is too large to send (25 MB max)."
         case .fileEmpty:

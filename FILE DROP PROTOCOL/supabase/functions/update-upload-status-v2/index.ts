@@ -1,6 +1,9 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, requireUuid } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
+import { broadcastWakeHint } from "../_shared/dropbridge-v2.ts";
+
+const UPLOAD_STATUS_EVENT = "upload_status";
 
 type StatusV2Payload = {
   deviceId?: string;
@@ -70,7 +73,7 @@ Deno.serve(async (request) => {
       .eq("id", uploadId)
       .eq("device_id", deviceId)
       .eq("user_id", user.id)
-      .select("id, object_path")
+      .select("id, object_path, sender_device_id")
       .maybeSingle();
 
     if (error) {
@@ -83,6 +86,20 @@ Deno.serve(async (request) => {
 
     if ((status === "downloaded" || status === "canceled") && data.object_path) {
       await admin.storage.from("drops").remove([data.object_path]);
+    }
+
+    // Notify the original sender instantly so it can show "delivered" without
+    // polling. Best effort — the sender's poll fallback still resolves status.
+    if (
+      (status === "downloaded" || status === "canceled") &&
+      data.sender_device_id
+    ) {
+      await broadcastWakeHint({
+        userId: user.id,
+        deviceId: data.sender_device_id,
+        event: UPLOAD_STATUS_EVENT,
+        payload: { uploadId, status },
+      });
     }
 
     return json({ ok: true, uploadId, status });

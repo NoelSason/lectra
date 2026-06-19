@@ -21,14 +21,18 @@ struct IntegrationsSettingsView: View {
                         }
                     }
 
-                    Text("New providers will show up here as Lectra adds them.")
+                    Text("Canvas and Gradescope connections appear here.")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.58))
+                        .foregroundColor(LectraColor.textTertiary)
                 }
                 .frame(maxWidth: 700, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(28)
             }
+        }
+        .background {
+            LectraColor.background.ignoresSafeArea()
+            LectraGradient.appBackdrop.opacity(0.55).ignoresSafeArea()
         }
         .task {
             await refreshStatuses()
@@ -66,11 +70,11 @@ struct IntegrationsSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Integrations")
                 .font(LectraTypography.displaySmall)
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
-            Text("Track which external services are connected, how long those sessions should last, and when Lectra will need you to sign in again.")
+            Text("Canvas and Gradescope sessions, cached access, and renewal timing.")
                 .font(LectraTypography.body)
-                .foregroundColor(Color.white.opacity(0.66))
+                .foregroundColor(LectraColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -116,10 +120,10 @@ struct IntegrationsSettingsView: View {
                 title: "Canvas",
                 subtitle: "Imports course files through the in-app downloader",
                 systemImage: "graduationcap.fill",
-                tint: LectraColor.canvasTint,
+                tint: LectraColor.accentSoft,
                 connectionState: .disconnected,
                 expiry: nil,
-                note: "Connect Canvas by opening a course file from Course Brain and completing the web sign-in flow if prompted."
+                note: "Connect Canvas from Course Brain when a course file needs web sign-in."
             )
         }
 
@@ -140,10 +144,10 @@ struct IntegrationsSettingsView: View {
             note = "Canvas exposed a cookie expiration for the current session."
         } else if let localCacheExpiry {
             expiry = .fixed(date: localCacheExpiry, source: .localCache)
-            note = "Lectra locally keeps Canvas session cookies for up to 30 days. Canvas can still require sign-in earlier."
+            note = "Canvascope keeps Canvas session cookies locally for up to 30 days. Canvas can still require sign-in earlier."
         } else {
             expiry = .noFixedExpiration
-            note = "Canvas is signed in through Lectra's embedded browser session, but the provider did not expose a fixed sign-out time."
+            note = "Canvas is signed in through the embedded browser session, but the provider did not expose a fixed sign-out time."
         }
 
         return IntegrationStatusSnapshot(
@@ -151,7 +155,7 @@ struct IntegrationsSettingsView: View {
             title: "Canvas",
             subtitle: "Imports course files through the in-app downloader",
             systemImage: "graduationcap.fill",
-            tint: LectraColor.canvasTint,
+            tint: LectraColor.accentSoft,
             connectionState: .connected,
             expiry: expiry,
             note: note
@@ -165,10 +169,10 @@ struct IntegrationsSettingsView: View {
                 title: "Gradescope",
                 subtitle: "Syncs assignments and imports templates",
                 systemImage: "checkmark.seal.fill",
-                tint: LectraColor.gradescopeTint,
+                tint: LectraColor.accentCool,
                 connectionState: .disconnected,
                 expiry: nil,
-                note: "Connect Gradescope from Lectra's Gradescope workspace."
+                note: "Connect Gradescope from the Gradescope workspace."
             )
         }
 
@@ -189,7 +193,7 @@ struct IntegrationsSettingsView: View {
             title: "Gradescope",
             subtitle: "Syncs assignments and imports templates",
             systemImage: "checkmark.seal.fill",
-            tint: LectraColor.gradescopeTint,
+            tint: LectraColor.accentCool,
             connectionState: .connected,
             expiry: expiry,
             note: note
@@ -244,12 +248,12 @@ private struct IntegrationStatusCard: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(integration.title)
                         .font(LectraTypography.title)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                         .lineLimit(2)
 
                     Text(integration.subtitle)
                         .font(LectraTypography.body)
-                        .foregroundColor(Color.white.opacity(0.62))
+                        .foregroundColor(LectraColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .layoutPriority(1)
@@ -270,7 +274,7 @@ private struct IntegrationStatusCard: View {
                     LabeledStatusRow(
                         label: "Access",
                         value: expirySummary,
-                        emphasisColor: Color.white.opacity(0.86)
+                        emphasisColor: LectraColor.textPrimary
                     )
                 }
 
@@ -278,21 +282,35 @@ private struct IntegrationStatusCard: View {
                     LabeledStatusRow(
                         label: "Ends",
                         value: absoluteExpiry,
-                        emphasisColor: Color.white.opacity(0.68)
+                        emphasisColor: LectraColor.textSecondary
                     )
                 }
 
                 Text(integration.note)
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(Color.white.opacity(0.54))
+                    .foregroundColor(LectraColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(22)
-        .lectraCard(cornerRadius: LectraRadius.panel)
+        .background(integrationCardBackground)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(integration.title). \(displayedState.statusLabel). \(integration.note)")
+    }
+
+    private var integrationCardBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.88))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
+            .lectraShadow(LectraElevation.low())
     }
 }
 
@@ -305,7 +323,7 @@ private struct LabeledStatusRow: View {
         HStack(alignment: .top, spacing: 10) {
             Text(label)
                 .font(LectraTypography.caption)
-                .foregroundColor(Color.white.opacity(0.42))
+                .foregroundColor(LectraColor.textTertiary)
                 .frame(width: 62, alignment: .leading)
 
             Text(value)
@@ -332,17 +350,17 @@ private struct IntegrationStatusSnapshot: Identifiable {
             title: "Canvas",
             subtitle: "Checking connection",
             systemImage: "graduationcap.fill",
-            tint: LectraColor.canvasTint,
+            tint: LectraColor.accentSoft,
             connectionState: .checking,
             expiry: nil,
-            note: "Reading Lectra's live and saved Canvas sessions."
+            note: "Reading Canvascope workspace Canvas sessions."
         ),
         IntegrationStatusSnapshot(
             id: "gradescope",
             title: "Gradescope",
             subtitle: "Checking connection",
             systemImage: "checkmark.seal.fill",
-            tint: LectraColor.gradescopeTint,
+            tint: LectraColor.accentCool,
             connectionState: .checking,
             expiry: nil,
             note: "Reading the current Gradescope session."
@@ -431,9 +449,9 @@ private enum IntegrationDisplayState {
         case .checking:
             return LectraColor.warning
         case .connected:
-            return LectraColor.success
+            return LectraColor.accentSoft
         case .disconnected:
-            return LectraColor.canvasTint
+            return LectraColor.paperMuted
         case .expired:
             return LectraColor.warning
         }

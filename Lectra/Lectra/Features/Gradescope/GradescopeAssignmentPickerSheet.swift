@@ -37,13 +37,18 @@ struct GradescopeAssignmentPickerSheet: View {
             }
             .padding(LectraSpacing.lg)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(LectraColor.surfaceElevated.ignoresSafeArea())
+            .background(
+                ZStack {
+                    LectraColor.background.ignoresSafeArea()
+                    LectraGradient.appBackdrop.opacity(0.7).ignoresSafeArea()
+                }
+            )
             .navigationTitle("Pick Assignment")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.accentSoft)
                 }
             }
         }
@@ -70,15 +75,15 @@ struct GradescopeAssignmentPickerSheet: View {
         VStack(alignment: .leading, spacing: LectraSpacing.xs) {
             Text("Choose the course and assignment that match this PDF.")
                 .font(LectraTypography.body)
-                .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                .foregroundColor(LectraColor.textSecondary)
 
             if gradescopeManager.isBusy && assignments.isEmpty {
                 HStack(spacing: LectraSpacing.sm) {
                     ProgressView()
-                        .tint(.white)
+                        .tint(LectraColor.accentSoft)
                     Text("Loading assignments…")
                         .font(LectraTypography.caption)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                 }
             }
         }
@@ -88,7 +93,7 @@ struct GradescopeAssignmentPickerSheet: View {
         VStack(alignment: .leading, spacing: LectraSpacing.sm) {
             Text("Course")
                 .font(LectraTypography.caption)
-                .foregroundColor(Color.white.opacity(LectraOpacity.strong))
+                .foregroundColor(LectraColor.textTertiary)
 
             Picker("Course", selection: $selectedCourseID) {
                 ForEach(gradescopeManager.courses) { course in
@@ -96,13 +101,13 @@ struct GradescopeAssignmentPickerSheet: View {
                 }
             }
             .pickerStyle(.menu)
-            .tint(.white)
+            .tint(LectraColor.textPrimary)
             .padding(.horizontal, LectraSpacing.md)
             .frame(minHeight: LectraSizing.minHitTarget)
-            .background(Color.white.opacity(LectraOpacity.subtle))
+            .background(LectraColor.surfaceFloating.opacity(0.88))
             .overlay(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
         }
@@ -119,25 +124,25 @@ struct GradescopeAssignmentPickerSheet: View {
                 VStack(alignment: .leading, spacing: LectraSpacing.xs) {
                     Text(assignment.name)
                         .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                         .multilineTextAlignment(.leading)
 
                     if let due = assignment.dueDate {
                         Text("Due \(due.formatted(date: .abbreviated, time: .shortened))")
                             .font(LectraTypography.captionMedium)
-                            .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                            .foregroundColor(LectraColor.textSecondary)
                     }
                 }
                 .padding(.vertical, LectraSpacing.xs)
             }
-            .listRowBackground(LectraColor.surfaceFloating)
+            .listRowBackground(LectraColor.surfaceFloating.opacity(0.82))
         }
         .scrollContentBackground(.hidden)
         .background(Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
-                .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
+                .stroke(LectraColor.edgeStroke, lineWidth: 1)
         )
     }
 
@@ -145,15 +150,15 @@ struct GradescopeAssignmentPickerSheet: View {
         VStack(alignment: .leading, spacing: LectraSpacing.sm) {
             Image(systemName: "tray")
                 .font(LectraTypography.title)
-                .foregroundColor(LectraColor.info)
+                .foregroundColor(LectraColor.accentCool)
 
             Text("No courses available yet.")
                 .font(LectraTypography.headlineMedium)
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
             Text("Refresh your Gradescope session first, then come back to map this PDF to an assignment.")
                 .font(LectraTypography.body)
-                .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                .foregroundColor(LectraColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer()

@@ -29,7 +29,7 @@ struct GradescopeGroupMembersSheet: View {
             VStack(alignment: .leading, spacing: LectraSpacing.md) {
                 Text("Add group members for this submission. Leave role blank if it is not required by the assignment.")
                     .font(LectraTypography.body)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                    .foregroundColor(LectraColor.textSecondary)
 
                 ScrollView {
                     VStack(spacing: LectraSpacing.sm) {
@@ -49,7 +49,7 @@ struct GradescopeGroupMembersSheet: View {
                                 }
                             }
                             .padding(LectraSpacing.md)
-                            .lectraCard(cornerRadius: LectraRadius.card, shadow: false)
+                            .background(memberCardBackground)
                         }
                     }
                 }
@@ -76,7 +76,12 @@ struct GradescopeGroupMembersSheet: View {
                 .buttonStyle(LectraPrimaryButtonStyle())
             }
             .padding(LectraSpacing.lg)
-            .background(LectraColor.surfaceElevated.ignoresSafeArea())
+            .background(
+                ZStack {
+                    LectraColor.background.ignoresSafeArea()
+                    LectraGradient.appBackdrop.opacity(0.68).ignoresSafeArea()
+                }
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
@@ -91,15 +96,24 @@ struct GradescopeGroupMembersSheet: View {
             .textInputAutocapitalization(.never)
             .disableAutocorrection(true)
             .font(LectraTypography.body)
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
             .padding(.horizontal, LectraSpacing.md)
             .frame(minHeight: LectraSizing.minHitTarget)
-            .background(Color.white.opacity(LectraOpacity.subtle))
+            .background(LectraColor.surfaceFloating.opacity(0.88))
             .overlay(
                 RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
-                    .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
+    }
+
+    private var memberCardBackground: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.74))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
     }
 
     private func removeRow(id: UUID) {

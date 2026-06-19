@@ -48,11 +48,11 @@ struct ProfileAvatarView: View {
                 )
             Text(fallbackInitial)
                 .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
         }
         .overlay(
             Circle()
-                .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+                .stroke(LectraColor.edgeStroke, lineWidth: 1)
         )
         .lectraShadow(LectraElevation.low())
     }

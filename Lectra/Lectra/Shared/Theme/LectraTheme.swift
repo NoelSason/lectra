@@ -24,85 +24,91 @@ enum LectraColor {
     )
 
     /// Softer interactive tint for buttons, links, and interactive elements.
-    static let accentSoft   = Color(hex: 0xE84D4D)
+    static let accentSoft   = Color(hex: 0xFF6A5C)
 
     /// Darker accent for gradient endpoints and CTA buttons.
-    static let accentDark   = Color(hex: 0xD83E3A)
+    static let accentDark   = Color(hex: 0xA9181D)
 
     /// Destructive text and error emphasis.
-    static let accentDestructive = Color(hex: 0xFF8E8E)
+    static let accentDestructive = Color(hex: 0xFF7A74)
 
-    /// Secondary accent used for highlights and supporting emphasis.
-    static let accentCool   = Color(hex: 0x60D4FF)
+    /// Warm brand highlight used for focus states and supporting emphasis.
+    static let accentCool   = Color(hex: 0xF2B8AE)
 
     /// Deep desk-ink backdrop.
-    static let background   = Color(hex: 0x070C17)
+    static let background   = Color(hex: 0x0D0A09)
 
     /// Primary card surface.
-    static let cardBG       = Color(hex: 0x141D30)
+    static let cardBG       = Color(hex: 0x181211)
 
     /// Elevated surface (toolbars, sheets).
-    static let surfaceBG    = Color(hex: 0x1D2940)
+    static let surfaceBG    = Color(hex: 0x211716)
 
     /// Elevated sheet/modal background (consolidated from multiple hardcoded values).
-    static let surfaceElevated = Color(hex: 0x15181E)
+    static let surfaceElevated = Color(hex: 0x1B1312)
 
     /// Accent-tinted card background for selected items and CTA surfaces.
-    static let surfaceCard  = Color(hex: 0x4A222A)
+    static let surfaceCard  = Color(hex: 0x2A1B1B)
 
     /// Floating chrome surface for toolbars, rails, and compact control clusters.
-    static let surfaceFloating = Color(hex: 0x10151E)
+    static let surfaceFloating = Color(hex: 0x17100F)
 
     /// Overlay backdrop surface used by inspector sheets and floating editors.
-    static let surfaceOverlay = Color(hex: 0x0C1118)
+    static let surfaceOverlay = Color(hex: 0x100B0B)
 
-    /// Cool gray sidebar surface for the library shell.
-    static let sidebarBackground = Color(hex: 0x0F131A)
+    /// Warm graphite sidebar surface for the library shell.
+    static let sidebarBackground = Color(hex: 0x100C0B)
 
     /// Slightly raised sidebar control background.
-    static let sidebarControl = Color(hex: 0x181D25)
+    static let sidebarControl = Color(hex: 0x211819)
 
     /// Active sidebar row fill.
-    static let sidebarSelection = Color(hex: 0x262C35)
+    static let sidebarSelection = Color(hex: 0x2B1F20)
 
     /// Hairline divider separating the sidebar from main content.
-    static let sidebarDivider = Color.white.opacity(0.12)
+    static let sidebarDivider = Color(hex: 0xF6F1E7).opacity(0.12)
 
     /// Primary text.
-    static let textPrimary  = Color.white
+    static let textPrimary  = Color(hex: 0xF6F1E7)
 
     /// Secondary text.
-    static let textSecondary = Color(hex: 0xA8B7DA)
+    static let textSecondary = Color(hex: 0xD9D0CA)
 
     /// Tertiary or disabled text.
-    static let textTertiary = Color(hex: 0x7786AB)
+    static let textTertiary = Color(hex: 0x968C88)
 
     /// Success green for "Annotated" status.
-    static let success      = Color(hex: 0x2ED89B)
+    static let success      = Color(hex: 0x42D39A)
 
     /// Warning amber for "Downloading" status.
-    static let warning      = Color(hex: 0xFFB44B)
+    static let warning      = Color(hex: 0xF3B75D)
 
     /// Subtle warning for queued states.
-    static let warningSubtle = Color(hex: 0xD0A13A)
+    static let warningSubtle = Color(hex: 0xCFA44B)
 
     /// Info blue for sync-in-progress, iCloud indicators.
-    static let info         = Color(hex: 0x2E8DFF)
+    static let info         = Color(hex: 0x6EA8FF)
 
     /// Gradescope integration tint.
-    static let gradescopeTint = Color(hex: 0x2BA98E)
+    static let gradescopeTint = Color(hex: 0x43C7A4)
 
     /// Canvas integration tint.
-    static let canvasTint   = Color(hex: 0xF36B58)
+    static let canvasTint   = Color(hex: 0xE85D4D)
 
     /// Download placeholder gradient start.
-    static let placeholderStart = Color(hex: 0xD86A6A)
+    static let placeholderStart = Color(hex: 0xE85D4D)
 
     /// Download placeholder gradient end.
-    static let placeholderEnd = Color(hex: 0xB54747)
+    static let placeholderEnd = Color(hex: 0x3B1716)
+
+    /// Paper-like preview surface for document thumbnails and blank pages.
+    static let paper        = Color(hex: 0xF6F1E7)
+
+    /// Muted paper edge for blank preview placeholders.
+    static let paperMuted   = Color(hex: 0xDAD2C4)
 
     /// Subtle panel border.
-    static let edgeStroke   = Color.white.opacity(0.16)
+    static let edgeStroke   = paper.opacity(0.16)
 }
 
 // MARK: - Ink Palette
@@ -187,9 +193,9 @@ enum LectraGradient {
     /// Global app backdrop used by main screens.
     static let appBackdrop = LinearGradient(
         colors: [
-            Color(hex: 0x0A1223),
-            Color(hex: 0x070C17),
-            Color(hex: 0x120D1A)
+            Color(hex: 0x160E0D),
+            LectraColor.background,
+            Color(hex: 0x15100D)
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -198,8 +204,9 @@ enum LectraGradient {
     /// Accent wash used for hero surfaces.
     static let spotlight = LinearGradient(
         colors: [
-            LectraColor.accent.opacity(0.26),
-            LectraColor.accentCool.opacity(0.18),
+            LectraColor.accent.opacity(0.18),
+            LectraColor.accentCool.opacity(0.14),
+            LectraColor.warning.opacity(0.06),
             Color.clear
         ],
         startPoint: .topLeading,
@@ -210,7 +217,7 @@ enum LectraGradient {
     static let panel = LinearGradient(
         colors: [
             LectraColor.cardBG,
-            Color(hex: 0x111A2B)
+            Color(hex: 0x130E0D)
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -222,7 +229,7 @@ enum LectraGradient {
 enum LectraGlass {
     static let sidebarTint = LinearGradient(
         colors: [
-            Color.white.opacity(LectraOpacity.subtle),
+            LectraColor.paper.opacity(LectraOpacity.subtle),
             LectraColor.accentCool.opacity(0.14),
             LectraColor.accent.opacity(LectraOpacity.subtle),
             Color.clear
@@ -233,7 +240,7 @@ enum LectraGlass {
 
     static let floatingToolbarTint = LinearGradient(
         colors: [
-            Color.white.opacity(LectraOpacity.subtle),
+            LectraColor.paper.opacity(LectraOpacity.subtle),
             LectraColor.accentCool.opacity(LectraOpacity.muted),
             LectraColor.accent.opacity(0.10),
             Color.clear
@@ -246,7 +253,7 @@ enum LectraGlass {
         colors: [
             LectraColor.accent.opacity(LectraOpacity.medium),
             LectraColor.warning.opacity(0.10),
-            Color.white.opacity(0.06),
+            LectraColor.paper.opacity(0.06),
             Color.clear
         ],
         startPoint: .topLeading,
@@ -257,7 +264,7 @@ enum LectraGlass {
         colors: [
             LectraColor.warning.opacity(LectraOpacity.medium),
             LectraColor.accentCool.opacity(LectraOpacity.subtle),
-            Color.white.opacity(0.05),
+            LectraColor.paper.opacity(0.05),
             Color.clear
         ],
         startPoint: .topLeading,
@@ -267,15 +274,15 @@ enum LectraGlass {
     static let urgentCardDefault = LinearGradient(
         colors: [
             LectraColor.accentCool.opacity(LectraOpacity.muted),
-            Color.white.opacity(0.05),
+            LectraColor.paper.opacity(0.05),
             Color.clear
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
 
-    static let hairlineStroke = Color.white.opacity(0.18)
-    static let innerHighlight = Color.white.opacity(0.10)
+    static let hairlineStroke = LectraColor.paper.opacity(0.18)
+    static let innerHighlight = LectraColor.paper.opacity(0.10)
 }
 
 enum LectraElevation {
@@ -403,7 +410,7 @@ struct LectraCardModifier: ViewModifier {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(LectraOpacity.subtle), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .shadow(
@@ -433,7 +440,7 @@ struct LectraPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(LectraTypography.headline)
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
             .frame(maxWidth: .infinity, minHeight: 52)
             .background(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
@@ -447,7 +454,7 @@ struct LectraPrimaryButtonStyle: ButtonStyle {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    .stroke(LectraGlass.innerHighlight, lineWidth: 1)
             )
             .lectraShadow((color: LectraColor.accent.opacity(0.35), radius: 14, y: 8))
             .opacity(disabled ? 0.5 : (configuration.isPressed ? 0.85 : 1.0))
@@ -460,16 +467,16 @@ struct LectraSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(LectraTypography.bodyEmphasis)
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
             .padding(.horizontal, LectraSpacing.md)
             .frame(minHeight: LectraSizing.minHitTarget)
             .background(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .fill(Color.white.opacity(LectraOpacity.subtle))
+                    .fill(LectraColor.surfaceFloating.opacity(0.84))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.7 : 1.0)
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
@@ -504,6 +511,17 @@ extension Color {
             green: Double((hex >>  8) & 0xFF) / 255,
             blue:  Double( hex        & 0xFF) / 255,
             opacity: opacity
+        )
+    }
+}
+
+extension UIColor {
+    convenience init(hex: UInt, alpha: CGFloat = 1.0) {
+        self.init(
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: alpha
         )
     }
 }

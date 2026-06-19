@@ -36,6 +36,7 @@ struct EditorTopBar: View {
     let onExportCanvascope: () -> Void
     let onShowGradescope: () -> Void
     let onShare: () -> Void
+    let onShowIntelligence: () -> Void
     var isTitleFocused: FocusState<Bool>.Binding
 
     var body: some View {
@@ -43,9 +44,9 @@ struct EditorTopBar: View {
             expandedLayout
             compactLayout
         }
-        .padding(.horizontal, LectraSpacing.lg)
-        .padding(.top, LectraSpacing.sm)
-        .padding(.bottom, LectraSpacing.sm)
+        .padding(.horizontal, 16)
+        .padding(.top, 9)
+        .padding(.bottom, 9)
         .background(backgroundView)
         .onChange(of: syncStatus?.title) { _, newTitle in
             if let newTitle {
@@ -63,6 +64,7 @@ struct EditorTopBar: View {
             Spacer(minLength: 4)
             statusSection
             settingsMenu
+            intelligenceButton
             canvascopeButton
             gradescopeButton
             shareButton
@@ -86,14 +88,19 @@ struct EditorTopBar: View {
             LectraHaptics.selection()
             onBack()
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Image(systemName: "chevron.left")
                     .font(LectraTypography.headline)
-                Text("Library")
+                Image("LaunchMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 19, height: 19)
+                    .accessibilityHidden(true)
+                Text("Workspace")
                     .font(LectraTypography.bodyEmphasis)
             }
-            .foregroundColor(.white)
-            .padding(.horizontal, 13)
+            .foregroundColor(LectraColor.textPrimary)
+            .padding(.horizontal, 12)
             .frame(height: LectraSizing.minHitTarget)
             .background(buttonBackground)
         }
@@ -127,10 +134,10 @@ struct EditorTopBar: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                            .fill(Color.white.opacity(LectraOpacity.subtle))
+                            .fill(LectraColor.surfaceFloating.opacity(0.92))
                             .overlay(
                                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                                    .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+                                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
                             )
                     )
                     .frame(maxWidth: 380, minHeight: LectraSizing.minHitTarget)
@@ -148,10 +155,10 @@ struct EditorTopBar: View {
                         Text(documentTitle)
                             .font(LectraTypography.headline)
                             .lineLimit(1)
-                            .foregroundColor(.white)
-                        Text(isReadMode ? "Read mode ready for navigation" : "Annotate with Apple Pencil")
+                            .foregroundColor(LectraColor.textPrimary)
+                        Text(isReadMode ? "Touch navigation" : "Pencil markup active")
                             .font(LectraTypography.footnote)
-                            .foregroundColor(.white.opacity(0.74))
+                            .foregroundColor(LectraColor.textTertiary)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, minHeight: LectraSizing.minHitTarget)
@@ -210,6 +217,26 @@ struct EditorTopBar: View {
         .accessibilityIdentifier("editor.more")
     }
 
+    private var intelligenceButton: some View {
+        Button {
+            LectraHaptics.tap()
+            onShowIntelligence()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(LectraTypography.bodyEmphasis)
+                Text("Intelligence")
+                    .font(LectraTypography.caption)
+            }
+            .foregroundColor(LectraColor.textPrimary)
+            .padding(.horizontal, 10)
+            .frame(height: LectraSizing.minHitTarget)
+            .background(integrationBackground(tint: LectraColor.accent))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("editor.intelligence")
+    }
+
     private var canvascopeButton: some View {
         Button {
             LectraHaptics.tap()
@@ -221,10 +248,10 @@ struct EditorTopBar: View {
                 Text("Canvascope")
                     .font(LectraTypography.caption)
             }
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
             .padding(.horizontal, 10)
             .frame(height: LectraSizing.minHitTarget)
-            .background(integrationBackground(tint: LectraColor.canvasTint))
+            .background(integrationBackground(tint: LectraColor.accentSoft))
         }
         .buttonStyle(.plain)
         .disabled(isSaving || isExportingToCanvascope)
@@ -242,10 +269,10 @@ struct EditorTopBar: View {
                 Text("Gradescope")
                     .font(LectraTypography.caption)
             }
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
             .padding(.horizontal, 10)
             .frame(height: LectraSizing.minHitTarget)
-            .background(integrationBackground(tint: LectraColor.gradescopeTint))
+            .background(integrationBackground(tint: LectraColor.accentCool))
         }
         .buttonStyle(.plain)
         .disabled(isSaving || isExportingToCanvascope)
@@ -295,6 +322,7 @@ struct EditorTopBar: View {
 
     @ViewBuilder
     private var exportActions: some View {
+        Button("Document Intelligence", systemImage: "sparkles", action: onShowIntelligence)
         Button("Send to Canvascope", systemImage: "arrow.up.forward.app", action: onExportCanvascope)
             .disabled(isSaving || isExportingToCanvascope)
         Button("Submit to Gradescope", systemImage: "graduationcap", action: onShowGradescope)
@@ -317,7 +345,7 @@ struct EditorTopBar: View {
     private func iconButtonLabel(symbol: String) -> some View {
         Image(systemName: symbol)
             .font(LectraTypography.headline)
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textSecondary)
             .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
             .background(buttonBackground)
             .clipShape(RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous))
@@ -356,10 +384,15 @@ struct EditorTopBar: View {
 
     private var buttonBackground: some View {
         RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-            .fill(Color.white.opacity(LectraOpacity.subtle))
+            .fill(LectraColor.surfaceFloating.opacity(0.88))
+            .background(
+                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .stroke(Color.white.opacity(LectraOpacity.medium), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
     }
 
@@ -368,17 +401,38 @@ struct EditorTopBar: View {
             .fill(tint.opacity(0.18))
             .overlay(
                 RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
-                    .stroke(tint.opacity(0.35), lineWidth: 1)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                LectraColor.paper.opacity(0.06),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.element, style: .continuous)
+                    .stroke(tint.opacity(0.50), lineWidth: 1)
             )
     }
 
     private var backgroundView: some View {
         ZStack {
             Rectangle()
-                .fill(LectraColor.surfaceElevated.opacity(0.96))
-            LectraGradient.spotlight.opacity(0.18)
+                .fill(LectraColor.surfaceOverlay.opacity(0.96))
+            LinearGradient(
+                colors: [
+                    LectraColor.paper.opacity(0.05),
+                    LectraColor.accent.opacity(0.10),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
             Rectangle()
-                .fill(Color.white.opacity(LectraOpacity.medium))
+                .fill(LectraColor.edgeStroke)
                 .frame(height: 1)
                 .frame(maxHeight: .infinity, alignment: .bottom)
         }

@@ -2,7 +2,7 @@
 //  AuthView.swift
 //  Lectra
 //
-//  Full-screen sign-in entry with a distinctive drafting-studio style.
+//  Full-screen sign-in entry for the Canvascope document workspace.
 //
 
 import SwiftUI
@@ -16,8 +16,6 @@ struct AuthView: View {
         ZStack {
             LectraGradient.appBackdrop
                 .ignoresSafeArea()
-
-            ambientBlobs
 
             VStack(spacing: LectraSpacing.lg) {
                 Spacer(minLength: LectraSpacing.xl)
@@ -39,23 +37,6 @@ struct AuthView: View {
         }
     }
 
-    private var ambientBlobs: some View {
-        ZStack {
-            Circle()
-                .fill(LectraColor.accentSoft.opacity(0.14))
-                .frame(width: 520, height: 520)
-                .blur(radius: 60)
-                .offset(x: -210, y: -260)
-
-            Circle()
-                .fill(LectraColor.accentCool.opacity(0.12))
-                .frame(width: 460, height: 460)
-                .blur(radius: 72)
-                .offset(x: 230, y: 240)
-        }
-        .allowsHitTesting(false)
-    }
-
     private var authPanel: some View {
         VStack(spacing: LectraSpacing.lg) {
             VStack(spacing: LectraSpacing.md) {
@@ -68,25 +49,21 @@ struct AuthView: View {
                         )
                         .frame(width: 86, height: 86)
 
-                    Image(systemName: "pencil.and.scribble")
-                        .font(.system(size: 38, weight: .semibold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [LectraColor.accentCool, LectraColor.accentSoft],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    Image("LaunchMark")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 58, height: 58)
+                        .accessibilityHidden(true)
                 }
 
                 VStack(spacing: 4) {
-                    Text("Lectra")
+                    Text("Canvascope")
                         .font(LectraTypography.displayLarge)
                         .foregroundColor(LectraColor.textPrimary)
                         .multilineTextAlignment(.center)
                 }
 
-                Text("Precision annotation for lecture PDFs.\nBuilt for Apple Pencil, tuned for long sessions.")
+                Text("Canvascope's iPad workspace for PDFs, notes, and Apple Pencil markup.")
                     .font(LectraTypography.headlineMedium)
                     .foregroundColor(LectraColor.textSecondary)
                     .multilineTextAlignment(.center)
@@ -95,15 +72,15 @@ struct AuthView: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: LectraSpacing.sm) {
-                    AuthFeatureChip(title: "Pencil-first")
-                    AuthFeatureChip(title: "Fast Sync")
-                    AuthFeatureChip(title: "Offline Ready")
+                    AuthFeatureChip(title: "Local-first")
+                    AuthFeatureChip(title: "Pencil-ready")
+                    AuthFeatureChip(title: "Return flows")
                 }
 
                 VStack(spacing: LectraSpacing.sm) {
-                    AuthFeatureChip(title: "Pencil-first")
-                    AuthFeatureChip(title: "Fast Sync")
-                    AuthFeatureChip(title: "Offline Ready")
+                    AuthFeatureChip(title: "Local-first")
+                    AuthFeatureChip(title: "Pencil-ready")
+                    AuthFeatureChip(title: "Return flows")
                 }
             }
 
@@ -124,7 +101,7 @@ struct AuthView: View {
                 HStack(spacing: LectraSpacing.sm) {
                     if authManager.isLoading {
                         ProgressView()
-                            .tint(.white)
+                            .tint(LectraColor.textPrimary)
                     } else {
                         Image(systemName: "globe")
                             .font(LectraTypography.headline)
@@ -133,7 +110,7 @@ struct AuthView: View {
                     Text(authManager.isLoading ? "Connecting…" : "Continue with Google")
                         .font(LectraTypography.headline)
                 }
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(LectraPrimaryButtonStyle(disabled: authManager.isLoading))
@@ -175,10 +152,10 @@ private struct AuthFeatureChip: View {
             .foregroundColor(LectraColor.textSecondary)
             .padding(.horizontal, LectraSpacing.sm)
             .padding(.vertical, LectraSpacing.sm)
-            .background(Color.white.opacity(LectraOpacity.subtle))
+            .background(LectraColor.surfaceFloating.opacity(0.82))
             .overlay(
                 Capsule()
-                    .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
             )
             .clipShape(Capsule())
             .lineLimit(1)

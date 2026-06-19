@@ -11,27 +11,31 @@ struct GradescopeSubmissionWebSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: LectraSpacing.md) {
-                Text("Use this page to add group partners and assign pages before final submission.")
+                Text("Add group partners and assign pages before final submission.")
                     .font(LectraTypography.body)
-                    .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                    .foregroundColor(LectraColor.textSecondary)
 
                 GradescopeSubmissionWebView(url: url, onNavigation: { currentURL = $0 })
                     .clipShape(RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
-                            .stroke(Color.white.opacity(LectraOpacity.muted), lineWidth: 1)
+                            .stroke(LectraColor.edgeStroke, lineWidth: 1)
                     )
+                    .background(GradescopeWebChromeBackground())
 
                 if let currentURL {
                     Text(currentURL.absoluteString)
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(LectraOpacity.prominent))
+                        .foregroundColor(LectraColor.textTertiary)
                         .textSelection(.enabled)
                         .lineLimit(2)
                 }
             }
             .padding(LectraSpacing.lg)
-            .background(LectraColor.surfaceElevated.ignoresSafeArea())
+            .background {
+                LectraColor.background.ignoresSafeArea()
+                LectraGradient.appBackdrop.opacity(0.72).ignoresSafeArea()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -42,6 +46,17 @@ struct GradescopeSubmissionWebSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct GradescopeWebChromeBackground: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.92))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                    .fill(LectraGradient.spotlight.opacity(0.06))
+            )
     }
 }
 

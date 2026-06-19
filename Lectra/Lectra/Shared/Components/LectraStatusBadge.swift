@@ -60,7 +60,7 @@ struct LectraStatusBadge: View {
             .background(color.opacity(LectraOpacity.muted))
             .overlay(
                 Capsule()
-                    .stroke(Color.white.opacity(size.strokeOpacity), lineWidth: 1)
+                    .stroke(LectraColor.paper.opacity(size.strokeOpacity), lineWidth: 1)
             )
             .clipShape(Capsule())
             .lineLimit(1)

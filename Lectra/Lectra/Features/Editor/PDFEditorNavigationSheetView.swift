@@ -57,6 +57,7 @@ struct PDFEditorNavigationSheetView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .tint(LectraColor.accentSoft)
                     .padding(.horizontal, 20)
                     .padding(.top, 18)
                 }
@@ -73,10 +74,10 @@ struct PDFEditorNavigationSheetView: View {
             .background(
                 ZStack {
                     LectraColor.background.ignoresSafeArea()
-                    LectraGradient.appBackdrop.opacity(0.9).ignoresSafeArea()
+                    LectraGradient.appBackdrop.opacity(0.82).ignoresSafeArea()
                 }
             )
-            .navigationTitle("Navigate PDF")
+            .navigationTitle("Document Map")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
@@ -117,10 +118,10 @@ struct PDFEditorNavigationSheetView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "doc.richtext")
                         .font(LectraTypography.displaySmall)
-                        .foregroundColor(.white.opacity(0.7))
-                    Text("Page thumbnails aren’t available right now.")
+                        .foregroundColor(LectraColor.textTertiary)
+                    Text("Page thumbnails are not available right now.")
                         .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(.white.opacity(0.78))
+                        .foregroundColor(LectraColor.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.top, 60)
@@ -138,16 +139,27 @@ struct PDFEditorNavigationSheetView: View {
                 HStack(spacing: 12) {
                     Text(item.title)
                         .font(item.pageIndex == currentPageIndex ? LectraTypography.bodyEmphasis : LectraTypography.body)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                         .padding(.leading, CGFloat(item.depth) * 12)
                     Spacer(minLength: 0)
                     Text("P\(item.pageIndex + 1)")
                         .font(LectraTypography.footnote)
-                        .foregroundColor(Color.white.opacity(0.56))
+                        .foregroundColor(LectraColor.textTertiary)
                 }
+                .padding(.horizontal, 12)
+                .frame(minHeight: LectraSizing.minHitTarget)
+                .background(
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .fill(item.pageIndex == currentPageIndex ? LectraColor.sidebarSelection.opacity(0.88) : LectraColor.surfaceElevated.opacity(0.58))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .stroke(item.pageIndex == currentPageIndex ? LectraColor.accentSoft.opacity(0.34) : LectraColor.edgeStroke, lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
             .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -172,7 +184,7 @@ private struct PDFPageThumbnailButton: View {
             VStack(alignment: .leading, spacing: 10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
-                        .fill(Color.white.opacity(LectraOpacity.subtle))
+                        .fill(LectraColor.paper.opacity(0.96))
 
                     if let thumbnail {
                         Image(uiImage: thumbnail)
@@ -182,14 +194,14 @@ private struct PDFPageThumbnailButton: View {
                             .padding(10)
                     } else {
                         ProgressView()
-                            .tint(.white)
+                            .tint(LectraColor.accentSoft)
                     }
                 }
                 .aspectRatio(0.72, contentMode: .fit)
                 .overlay(
                     RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
                         .stroke(
-                            isSelected ? LectraColor.accentCool : Color.white.opacity(LectraOpacity.medium),
+                            isSelected ? LectraColor.accentCool : LectraColor.edgeStroke,
                             lineWidth: isSelected ? 2 : 1
                         )
                 )
@@ -197,7 +209,7 @@ private struct PDFPageThumbnailButton: View {
                 HStack {
                     Text("Page \(pageIndex + 1)")
                         .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                     Spacer(minLength: 0)
                     if isSelected {
                         LectraStatusBadge(title: "Current", color: LectraColor.accentCool)

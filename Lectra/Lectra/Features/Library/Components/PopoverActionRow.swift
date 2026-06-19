@@ -24,15 +24,16 @@ struct PopoverActionRow: View {
                     .font(LectraTypography.body)
                 Spacer(minLength: 0)
             }
-            .foregroundColor(isDestructive ? LectraColor.accentDestructive : .white)
+            .foregroundColor(isDestructive ? LectraColor.accentDestructive : LectraColor.textPrimary)
             .padding(.horizontal, 12)
             .frame(height: LectraSizing.minHitTarget)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
 
         if showDivider {
             Divider()
-                .background(Color.white.opacity(LectraOpacity.muted))
+                .background(LectraColor.edgeStroke)
                 .padding(.leading, 12)
         }
     }

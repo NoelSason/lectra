@@ -15,6 +15,12 @@ struct CourseBrainPane: View {
     @Environment(\.openURL) private var openURL
     @State private var showsCompactDetail = false
     @State private var showsCanvasImportSheet = false
+    @State private var importSheetMode: ImportSheetMode = .selection
+
+    enum ImportSheetMode {
+        case selection
+        case progress
+    }
 
     private let compactBreakpoint: CGFloat = 1_040
 
@@ -29,8 +35,10 @@ struct CourseBrainPane: View {
                     .padding(.top, 14)
                     .padding(.bottom, 14)
 
+                importingBanner
+
                 Rectangle()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(LectraColor.edgeStroke)
                     .frame(height: 1)
 
                 if isCompact {
@@ -43,7 +51,7 @@ struct CourseBrainPane: View {
                             .frame(maxHeight: .infinity)
 
                         Rectangle()
-                            .fill(Color.white.opacity(0.05))
+                            .fill(LectraColor.edgeStroke)
                             .frame(width: 1)
 
                         detailPane
@@ -51,7 +59,7 @@ struct CourseBrainPane: View {
                     }
                 }
             }
-            .background(LectraColor.surfaceOverlay)
+            .background(LectraColor.background)
         }
         .onAppear {
             viewModel.load(documents: documents)
@@ -80,8 +88,10 @@ struct CourseBrainPane: View {
                 CanvasImportSheet(
                     availableCourses: viewModel.importableCourses,
                     service: service,
+                    showSelectionOverride: importSheetMode == .selection,
                     onImport: { selectedCourses in
                         onStartCanvasImport?(selectedCourses)
+                        importSheetMode = .progress
                     },
                     onDismiss: {
                         showsCanvasImportSheet = false
@@ -91,20 +101,76 @@ struct CourseBrainPane: View {
         }
     }
 
+    @ViewBuilder
+    private var importingBanner: some View {
+        if let service = canvasImportService, service.isRunning {
+            Button {
+                LectraHaptics.tap()
+                importSheetMode = .progress
+                showsCanvasImportSheet = true
+            } label: {
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .tint(LectraColor.accentSoft)
+                        .scaleEffect(0.9)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Importing Canvas Courses...")
+                            .font(LectraTypography.bodyEmphasis)
+                            .foregroundColor(LectraColor.textPrimary)
+                        
+                        if service.progress.total > 0 {
+                            Text("\(service.progress.completed) of \(service.progress.total) PDFs imported")
+                                .font(LectraTypography.captionMedium)
+                                .foregroundColor(LectraColor.textSecondary)
+                        } else {
+                            Text("Scanning files...")
+                                .font(LectraTypography.captionMedium)
+                                .foregroundColor(LectraColor.textSecondary)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(LectraColor.textTertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(LectraColor.surfaceFloating.opacity(0.85))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(LectraColor.accentSoft.opacity(0.3), lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
                 Text("Course Brain")
-                    .font(LectraTypography.displayLarge)
-                    .foregroundColor(.white)
+                    .font(.system(size: 34, weight: .semibold, design: .rounded))
+                    .foregroundColor(LectraColor.textPrimary)
 
                 if let syncedAt = viewModel.headerLastSyncedAt() {
                     Text("Last synced \(syncedAt.formatted(date: .abbreviated, time: .shortened))")
                         .font(LectraTypography.captionMedium)
-                        .foregroundColor(Color.white.opacity(0.74))
+                        .foregroundColor(LectraColor.textSecondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.08))
+                        .background(LectraColor.surfaceFloating.opacity(0.88))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                        )
                         .clipShape(Capsule())
                 }
 
@@ -148,6 +214,7 @@ struct CourseBrainPane: View {
         if onStartCanvasImport != nil, canvasImportService != nil {
             Button {
                 LectraHaptics.tap()
+                importSheetMode = .selection
                 showsCanvasImportSheet = true
             } label: {
                 HStack(spacing: 8) {
@@ -156,12 +223,16 @@ struct CourseBrainPane: View {
                     Text("Import Courses")
                         .font(LectraTypography.bodyEmphasis)
                 }
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background(
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(LectraColor.canvasTint)
+                        .fill(LectraColor.accent)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(LectraGlass.innerHighlight, lineWidth: 1)
+                        )
                 )
             }
             .buttonStyle(.plain)
@@ -174,7 +245,7 @@ struct CourseBrainPane: View {
             if viewModel.isLoading {
                 ProgressView("Loading Course Brain")
                     .tint(LectraColor.accentSoft)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.sections.isEmpty {
                 emptyQueueState
@@ -183,9 +254,9 @@ struct CourseBrainPane: View {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         ForEach(viewModel.sections) { section in
                             VStack(alignment: .leading, spacing: 10) {
-                                Text(section.bucket.rawValue)
-                                    .font(LectraTypography.headlineMedium)
-                                    .foregroundColor(.white)
+                Text(section.bucket.rawValue)
+                    .font(LectraTypography.headlineMedium)
+                    .foregroundColor(LectraColor.textPrimary)
 
                                 VStack(spacing: 8) {
                                     ForEach(section.items) { assignment in
@@ -202,16 +273,20 @@ struct CourseBrainPane: View {
             if let message = viewModel.bannerMessage {
                 Text(message)
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(LectraColor.surfaceCard.opacity(0.96))
+                    .background(LectraColor.surfaceFloating.opacity(0.96))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                    )
                     .clipShape(Capsule())
                     .padding(.leading, 16)
                     .padding(.top, 14)
             }
         }
-        .background(LectraColor.surfaceOverlay)
+        .background(LectraColor.background)
     }
 
     private func assignmentRow(_ assignment: CourseBrainAssignmentSummary, isCompact: Bool) -> some View {
@@ -222,7 +297,7 @@ struct CourseBrainPane: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(assignment.title)
                         .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(.white)
+                        .foregroundColor(LectraColor.textPrimary)
                         .lineLimit(2)
 
                     Spacer(minLength: 0)
@@ -244,18 +319,18 @@ struct CourseBrainPane: View {
 
                 Text(assignment.courseName)
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(Color.white.opacity(0.72))
+                    .foregroundColor(LectraColor.textSecondary)
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
                     Text(assignment.anchorDate.formatted(date: .abbreviated, time: .shortened))
                         .font(LectraTypography.captionMedium)
-                        .foregroundColor(Color.white.opacity(0.78))
+                        .foregroundColor(LectraColor.textSecondary)
 
                     if let moduleName = assignment.moduleName {
                         Text(moduleName)
                             .font(LectraTypography.captionMedium)
-                            .foregroundColor(Color.white.opacity(0.56))
+                            .foregroundColor(LectraColor.textTertiary)
                             .lineLimit(1)
                     }
                 }
@@ -267,11 +342,15 @@ struct CourseBrainPane: View {
                     openResourceURL(url, preferCanvasApp: true)
                 } label: {
                     Image(systemName: "arrow.up.right.square")
-                        .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(.white.opacity(0.9))
-                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .font(LectraTypography.bodyEmphasis)
+                            .foregroundColor(LectraColor.textSecondary)
+                            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                            .background(LectraColor.surfaceFloating.opacity(0.88))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -279,11 +358,11 @@ struct CourseBrainPane: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(isSelected ? LectraColor.surfaceCard.opacity(0.52) : Color.white.opacity(0.05))
+                .fill(isSelected ? LectraColor.sidebarSelection.opacity(0.82) : LectraColor.surfaceElevated.opacity(0.72))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(isSelected ? LectraColor.accentSoft.opacity(0.45) : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? LectraColor.accentSoft.opacity(0.52) : LectraColor.edgeStroke, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -310,20 +389,20 @@ struct CourseBrainPane: View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "checklist.checked")
                 .font(LectraTypography.displayLarge)
-                .foregroundColor(Color.white.opacity(0.84))
+                .foregroundColor(LectraColor.textTertiary)
 
             Text("No recent assignments")
                 .font(LectraTypography.title)
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
             Text("Course Brain now only shows assignments with dates between the past 7 days and the next 30 days. Undated assignments stay hidden.")
                 .font(LectraTypography.body)
-                .foregroundColor(Color.white.opacity(0.68))
+                .foregroundColor(LectraColor.textSecondary)
 
             if let syncedAt = viewModel.headerLastSyncedAt() {
                 Text("Latest snapshot: \(syncedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(LectraTypography.captionMedium)
-                    .foregroundColor(Color.white.opacity(0.62))
+                    .foregroundColor(LectraColor.textTertiary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -351,39 +430,43 @@ struct CourseBrainPane: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Assignment Details")
                             .font(LectraTypography.title)
-                            .foregroundColor(.white)
+                            .foregroundColor(LectraColor.textPrimary)
 
                         Text("Select a recent assignment to inspect instructions, supporting resources, related PDFs, and sync freshness.")
                             .font(LectraTypography.body)
-                            .foregroundColor(Color.white.opacity(0.68))
+                            .foregroundColor(LectraColor.textSecondary)
                     }
                     .padding(.top, 8)
                 }
             }
             .padding(18)
         }
-        .background(LectraColor.surfaceElevated)
+        .background(LectraColor.background)
     }
 
     private func detailHeader(_ detail: CourseBrainAssignmentDetail) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(detail.assignment.title)
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
 
             HStack(spacing: 8) {
                 Text(detail.assignment.courseName)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color(hex: 0x4A222A))
+                    .background(LectraColor.accentDark.opacity(0.72))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(LectraColor.accentSoft.opacity(0.28), lineWidth: 1)
+                    )
                     .clipShape(Capsule())
 
                 if let moduleName = detail.assignment.moduleName {
                     Text(moduleName)
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.76))
+                        .foregroundColor(LectraColor.textSecondary)
                         .lineLimit(1)
                 }
 
@@ -395,7 +478,7 @@ struct CourseBrainPane: View {
             if let syncedAt = detail.lastSyncedAt {
                 Text("Last synced \(syncedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.64))
+                    .foregroundColor(LectraColor.textTertiary)
             }
         }
     }
@@ -411,10 +494,14 @@ struct CourseBrainPane: View {
                     } label: {
                         Label(isCanvasURL(url) ? "Open in Canvas App" : "Open Assignment", systemImage: "arrow.up.right.square")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(LectraColor.textPrimary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(Color(hex: 0x4A222A))
+                            .background(LectraColor.accentSoft.opacity(0.82))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(LectraGlass.innerHighlight, lineWidth: 1)
+                            )
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -425,10 +512,14 @@ struct CourseBrainPane: View {
                     } label: {
                         Label("Open Web Link", systemImage: "link")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.88))
+                            .foregroundColor(LectraColor.textSecondary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(Color.white.opacity(0.08))
+                            .background(LectraColor.surfaceFloating.opacity(0.88))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                            )
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -437,11 +528,11 @@ struct CourseBrainPane: View {
             } else {
                 Text("No direct assignment URL is available in the current snapshot.")
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.62))
+                    .foregroundColor(LectraColor.textTertiary)
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.05)))
+        .background(detailPanelBackground)
     }
 
     private func dateSummary(_ detail: CourseBrainAssignmentDetail) -> some View {
@@ -471,7 +562,7 @@ struct CourseBrainPane: View {
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.05)))
+        .background(detailPanelBackground)
     }
 
     private func instructionsSection(_ detail: CourseBrainAssignmentDetail) -> some View {
@@ -482,16 +573,16 @@ struct CourseBrainPane: View {
                !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(instructions)
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.82))
+                    .foregroundColor(LectraColor.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("No assignment instructions were found in the current snapshot.")
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.62))
+                    .foregroundColor(LectraColor.textTertiary)
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.05)))
+        .background(detailPanelBackground)
     }
 
     private func resourcesSection(_ detail: CourseBrainAssignmentDetail) -> some View {
@@ -501,7 +592,7 @@ struct CourseBrainPane: View {
             if detail.relatedResources.isEmpty {
                 Text("No related pages, lectures, quizzes, files, or discussions matched this assignment strongly enough.")
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.62))
+                    .foregroundColor(LectraColor.textTertiary)
             } else {
                 ForEach(detail.relatedResources) { resource in
                     VStack(alignment: .leading, spacing: 8) {
@@ -509,13 +600,13 @@ struct CourseBrainPane: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(resource.title)
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(LectraColor.textPrimary)
                                     .lineLimit(2)
 
                                 if let subtitle = resource.subtitle {
                                     Text(subtitle)
                                         .font(.system(size: 12, weight: .regular))
-                                        .foregroundColor(Color.white.opacity(0.64))
+                                        .foregroundColor(LectraColor.textTertiary)
                                 }
 
                                 if resource.headlineSubmissionStatus != nil || resource.date != nil {
@@ -527,7 +618,7 @@ struct CourseBrainPane: View {
                                         if let date = resource.date {
                                             Text(date.formatted(date: .abbreviated, time: .shortened))
                                                 .font(.system(size: 11, weight: .regular))
-                                                .foregroundColor(Color.white.opacity(0.5))
+                                                .foregroundColor(LectraColor.textTertiary)
                                         }
                                     }
                                 }
@@ -541,10 +632,14 @@ struct CourseBrainPane: View {
                                 } label: {
                                     Text("Open")
                                         .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(LectraColor.textSecondary)
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 8)
-                                        .background(Color.white.opacity(0.08))
+                                        .background(LectraColor.surfaceFloating.opacity(0.88))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                                        )
                                         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
@@ -559,32 +654,32 @@ struct CourseBrainPane: View {
                                 Button {
                                     onOpenDocument(documentID)
                                 } label: {
-                                    Label("View PDF in Lectra", systemImage: "book.pages")
+                                    Label("View PDF in Canvascope", systemImage: "book.pages")
                                         .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(LectraColor.success)
+                                        .foregroundColor(LectraColor.accentSoft)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("View \(resource.title) in Lectra")
+                                .accessibilityLabel("View \(resource.title) in Canvascope")
                             } else if let onImportPDF {
                                 Button {
                                     onImportPDF(url, resource.title)
                                 } label: {
-                                    Label("Import PDF into Lectra", systemImage: "square.and.arrow.down")
+                                    Label("Import PDF into Canvascope", systemImage: "square.and.arrow.down")
                                         .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(Color(hex: 0xFFCA8A))
+                                        .foregroundColor(LectraColor.warning)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Import \(resource.title) into Lectra")
+                                .accessibilityLabel("Import \(resource.title) into Canvascope")
                             }
                         }
                     }
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.04)))
+                    .background(rowPanelBackground)
                 }
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.05)))
+        .background(detailPanelBackground)
     }
 
     private func documentsSection(_ detail: CourseBrainAssignmentDetail) -> some View {
@@ -594,19 +689,19 @@ struct CourseBrainPane: View {
             if detail.relatedDocuments.isEmpty {
                 Text("No synced PDFs are attached to this course yet.")
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.62))
+                    .foregroundColor(LectraColor.textTertiary)
             } else {
                 ForEach(detail.relatedDocuments) { document in
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(document.title)
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(LectraColor.textPrimary)
                                 .lineLimit(2)
 
                             Text("Updated \(document.updatedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.system(size: 12, weight: .regular))
-                                .foregroundColor(Color.white.opacity(0.62))
+                                .foregroundColor(LectraColor.textTertiary)
                         }
 
                         Spacer(minLength: 0)
@@ -616,10 +711,14 @@ struct CourseBrainPane: View {
                         } label: {
                             Text("Open")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(LectraColor.textSecondary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.08))
+                                .background(LectraColor.surfaceFloating.opacity(0.88))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                                )
                                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                         }
                         .buttonStyle(.plain)
@@ -627,12 +726,12 @@ struct CourseBrainPane: View {
                         .accessibilityLabel("Open \(document.title)")
                     }
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.04)))
+                    .background(rowPanelBackground)
                 }
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.05)))
+        .background(detailPanelBackground)
     }
 
     private func evidenceSection(_ detail: CourseBrainAssignmentDetail) -> some View {
@@ -644,14 +743,14 @@ struct CourseBrainPane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(evidence.title)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(LectraColor.textPrimary)
                             .lineLimit(2)
 
                         if let excerpt = evidence.excerpt {
                             Text(excerpt)
-                                .font(.system(size: 13, weight: .regular))
-                                .foregroundColor(Color.white.opacity(0.72))
-                                .lineLimit(4)
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundColor(LectraColor.textSecondary)
+                            .lineLimit(4)
                         }
                     }
 
@@ -663,10 +762,14 @@ struct CourseBrainPane: View {
                         } label: {
                             Text("Open")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(LectraColor.textSecondary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
-                                .background(Color.white.opacity(0.08))
+                                .background(LectraColor.surfaceFloating.opacity(0.88))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                                )
                                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                         }
                         .buttonStyle(.plain)
@@ -675,30 +778,48 @@ struct CourseBrainPane: View {
                     }
                 }
                 .padding(12)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.04)))
+                .background(rowPanelBackground)
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.05)))
+        .background(detailPanelBackground)
+    }
+
+    private var detailPanelBackground: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(LectraColor.surfaceElevated.opacity(0.72))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
+    }
+
+    private var rowPanelBackground: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(LectraColor.surfaceFloating.opacity(0.64))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(LectraColor.edgeStroke.opacity(0.72), lineWidth: 1)
+            )
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundColor(.white)
+            .foregroundColor(LectraColor.textPrimary)
     }
 
     private func detailRow(label: String, value: String) -> some View {
         HStack {
             Text(label)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.68))
+                .foregroundColor(LectraColor.textTertiary)
 
             Spacer(minLength: 0)
 
             Text(value)
                 .font(.system(size: 12, weight: .regular))
-                .foregroundColor(.white)
+                .foregroundColor(LectraColor.textPrimary)
         }
     }
 
@@ -715,34 +836,34 @@ struct CourseBrainPane: View {
     private func submissionBadgeForegroundColor(for status: CourseBrainSubmissionStatus) -> Color {
         switch status {
         case .submitted:
-            return Color(hex: 0xC4F7D2)
+            return Color(hex: 0xB7E8C5)
         case .late:
-            return Color(hex: 0xFFE2B3)
+            return Color(hex: 0xFFE0A3)
         case .missing:
-            return Color(hex: 0xFFB5BA)
+            return Color(hex: 0xFFC0BA)
         case .excused:
-            return Color(hex: 0xD2D8FF)
+            return Color(hex: 0xF2D2C8)
         case .notSubmitted:
-            return Color.white.opacity(0.82)
+            return LectraColor.textSecondary
         case .unknown:
-            return Color.white.opacity(0.78)
+            return LectraColor.textTertiary
         }
     }
 
     private func submissionBadgeBackgroundColor(for status: CourseBrainSubmissionStatus) -> Color {
         switch status {
         case .submitted:
-            return Color(hex: 0x1D4D2B)
+            return Color(hex: 0x183A28)
         case .late:
             return Color(hex: 0x5A3414)
         case .missing:
-            return Color(hex: 0x5A1F27)
+            return Color(hex: 0x5A211D)
         case .excused:
-            return Color(hex: 0x2E355F)
+            return Color(hex: 0x3A2824)
         case .notSubmitted:
-            return Color.white.opacity(0.08)
+            return LectraColor.surfaceFloating.opacity(0.86)
         case .unknown:
-            return Color.white.opacity(0.06)
+            return LectraColor.surfaceFloating.opacity(0.66)
         }
     }
 
@@ -763,16 +884,20 @@ struct CourseBrainPane: View {
                         .font(LectraTypography.footnoteBold)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.white.opacity(isSelected ? 0.16 : 0.08))
+                        .background(LectraColor.surfaceFloating.opacity(isSelected ? 0.72 : 0.5))
                         .clipShape(Capsule())
                 }
             }
-            .foregroundColor(isSelected ? .white : Color.white.opacity(0.78))
+            .foregroundColor(isSelected ? LectraColor.textPrimary : LectraColor.textSecondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(
                 Capsule(style: .continuous)
-                    .fill(isSelected ? LectraColor.surfaceCard : Color.white.opacity(0.08))
+                    .fill(isSelected ? LectraColor.sidebarSelection : LectraColor.surfaceFloating.opacity(0.82))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(isSelected ? LectraColor.accentSoft.opacity(0.32) : LectraColor.edgeStroke, lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -897,18 +1022,18 @@ private struct CourseBrainSearchBar: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(LectraTypography.bodyEmphasis)
-                .foregroundColor(Color.white.opacity(0.58))
+                .foregroundColor(LectraColor.textTertiary)
 
             if isEditable {
-                TextField("", text: $text, prompt: Text(placeholder).foregroundColor(Color.white.opacity(0.42)))
+                TextField("", text: $text, prompt: Text(placeholder).foregroundColor(LectraColor.textTertiary.opacity(0.72)))
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
                     .font(LectraTypography.body)
-                    .foregroundColor(.white)
+                    .foregroundColor(LectraColor.textPrimary)
             } else {
                 Text(text.isEmpty ? placeholder : text)
                     .font(LectraTypography.body)
-                    .foregroundColor(text.isEmpty ? Color.white.opacity(0.42) : .white)
+                    .foregroundColor(text.isEmpty ? LectraColor.textTertiary : LectraColor.textPrimary)
             }
 
             if !text.isEmpty {
@@ -917,7 +1042,7 @@ private struct CourseBrainSearchBar: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(LectraTypography.bodyEmphasis)
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .foregroundColor(LectraColor.textTertiary)
                 }
                 .buttonStyle(.plain)
             }
@@ -926,7 +1051,11 @@ private struct CourseBrainSearchBar: View {
         .frame(height: 44)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.08))
+                .fill(LectraColor.surfaceFloating.opacity(0.9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
         )
     }
 }

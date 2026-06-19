@@ -229,6 +229,7 @@ private struct CompactEditorTopBarScenarioView: View {
                     onExportCanvascope: {},
                     onShowGradescope: {},
                     onShare: {},
+                    onShowIntelligence: {},
                     isTitleFocused: $isTitleFocused
                 )
                 .frame(maxWidth: 720)

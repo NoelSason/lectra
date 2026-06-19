@@ -785,6 +785,7 @@ final class DocumentSyncCoordinator {
 
         let annotatedURL = URL(fileURLWithPath: job.annotatedFilePath)
         guard let data = try? Data(contentsOf: annotatedURL) else {
+            print("[DocumentSyncCoordinator] Sync process failed: annotated file not found at \(job.annotatedFilePath)")
             metadata.syncState = .failed
             metadata.syncErrorMessage = "Saved locally, but the upload file is missing."
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
@@ -815,6 +816,7 @@ final class DocumentSyncCoordinator {
             pendingJobs.removeValue(forKey: job.documentId)
             repository.savePendingSyncJobs(Array(pendingJobs.values))
         } catch {
+            print("[DocumentSyncCoordinator] Sync process failed for document \(job.documentId) with error: \(error)")
             var failedJob = job
             failedJob.retryCount += 1
             let backoffSeconds = min(pow(2, Double(failedJob.retryCount)) * 15.0, 3600)
@@ -824,7 +826,7 @@ final class DocumentSyncCoordinator {
             repository.savePendingSyncJobs(Array(pendingJobs.values))
 
             metadata.syncState = .failed
-            metadata.syncErrorMessage = "Saved locally. We'll retry upload automatically."
+            metadata.syncErrorMessage = error.localizedDescription
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
             publish(documentId: job.documentId, metadata: metadata)
         }

@@ -20,47 +20,120 @@ final class ShareViewController: UIViewController {
     }
 
     private func setupUI() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = ShareCanvascopePalette.background
+
+        let panelView = UIView()
+        panelView.backgroundColor = ShareCanvascopePalette.surfaceElevated
+        panelView.layer.cornerRadius = 28
+        panelView.layer.cornerCurve = .continuous
+        panelView.layer.borderColor = ShareCanvascopePalette.edgeStroke.cgColor
+        panelView.layer.borderWidth = 1
+        panelView.layer.shadowColor = ShareCanvascopePalette.shadow.cgColor
+        panelView.layer.shadowOpacity = 1
+        panelView.layer.shadowRadius = 22
+        panelView.layer.shadowOffset = CGSize(width: 0, height: 14)
+        panelView.translatesAutoresizingMaskIntoConstraints = false
+
+        let markLabel = UILabel()
+        markLabel.text = "C"
+        markLabel.font = .systemFont(ofSize: 24, weight: .bold)
+        markLabel.textAlignment = .center
+        markLabel.textColor = ShareCanvascopePalette.textPrimary
+
+        let markView = UIView()
+        markView.backgroundColor = ShareCanvascopePalette.accent
+        markView.layer.cornerRadius = 16
+        markView.layer.cornerCurve = .continuous
+        markView.layer.borderColor = ShareCanvascopePalette.innerHighlight.cgColor
+        markView.layer.borderWidth = 1
+        markView.translatesAutoresizingMaskIntoConstraints = false
+        markLabel.translatesAutoresizingMaskIntoConstraints = false
+        markView.addSubview(markLabel)
 
         let titleLabel = UILabel()
         titleLabel.text = "Send to Canvascope"
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.font = .preferredFont(forTextStyle: .title3)
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textAlignment = .center
+        titleLabel.textColor = ShareCanvascopePalette.textPrimary
 
-        statusLabel.text = "Preparing…"
+        statusLabel.text = "Preparing..."
         statusLabel.font = .preferredFont(forTextStyle: .subheadline)
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textAlignment = .center
-        statusLabel.textColor = .secondaryLabel
+        statusLabel.textColor = ShareCanvascopePalette.textSecondary
         statusLabel.numberOfLines = 0
 
-        doneButton.setTitle("Done", for: .normal)
+        var doneButtonConfiguration = UIButton.Configuration.plain()
+        doneButtonConfiguration.title = "Done"
+        doneButtonConfiguration.baseForegroundColor = ShareCanvascopePalette.textPrimary
+        doneButtonConfiguration.contentInsets = NSDirectionalEdgeInsets(
+            top: 10,
+            leading: 18,
+            bottom: 10,
+            trailing: 18
+        )
+        doneButtonConfiguration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .preferredFont(forTextStyle: .headline)
+            return outgoing
+        }
+
+        var doneButtonBackground = UIBackgroundConfiguration.clear()
+        doneButtonBackground.backgroundColor = ShareCanvascopePalette.surfaceFloating
+        doneButtonBackground.cornerRadius = 13
+        doneButtonBackground.strokeColor = ShareCanvascopePalette.edgeStroke
+        doneButtonBackground.strokeWidth = 1
+        doneButtonConfiguration.background = doneButtonBackground
+
+        doneButton.configuration = doneButtonConfiguration
+        doneButton.layer.cornerCurve = .continuous
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
         doneButton.isHidden = true
 
         activityIndicator.startAnimating()
+        activityIndicator.color = ShareCanvascopePalette.accentSoft
 
-        let stack = UIStackView(arrangedSubviews: [titleLabel, activityIndicator, statusLabel, doneButton])
+        let statusStack = UIStackView(arrangedSubviews: [activityIndicator, statusLabel])
+        statusStack.axis = .vertical
+        statusStack.spacing = 10
+        statusStack.alignment = .center
+
+        let stack = UIStackView(arrangedSubviews: [markView, titleLabel, statusStack, doneButton])
         stack.axis = .vertical
-        stack.spacing = 12
+        stack.spacing = 14
         stack.alignment = .center
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         statusLabel.setContentCompressionResistancePriority(.required, for: .vertical)
         statusLabel.setContentHuggingPriority(.required, for: .vertical)
 
-        view.addSubview(stack)
+        panelView.addSubview(stack)
+        view.addSubview(panelView)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+            panelView.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            panelView.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            panelView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: panelView.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: panelView.trailingAnchor, constant: -24),
+            stack.topAnchor.constraint(equalTo: panelView.topAnchor, constant: 28),
+            stack.bottomAnchor.constraint(equalTo: panelView.bottomAnchor, constant: -28),
+
+            markView.widthAnchor.constraint(equalToConstant: 54),
+            markView.heightAnchor.constraint(equalToConstant: 54),
+            markLabel.centerXAnchor.constraint(equalTo: markView.centerXAnchor),
+            markLabel.centerYAnchor.constraint(equalTo: markView.centerYAnchor)
         ])
     }
 
     @MainActor
     private func setStatus(_ text: String, isError: Bool = false, isWorking: Bool = true) {
         statusLabel.text = text
-        statusLabel.textColor = isError ? .systemRed : .secondaryLabel
+        statusLabel.textColor = isError
+            ? ShareCanvascopePalette.destructive
+            : ShareCanvascopePalette.textSecondary
         doneButton.isHidden = isWorking
 
         if isWorking {
@@ -73,13 +146,13 @@ final class ShareViewController: UIViewController {
     @MainActor
     private func startShareFlow() async {
         do {
-            setStatus("Checking Lectra account…")
+            setStatus("Checking Canvascope account...")
             try await dropBridgeService.assertAuthenticated()
 
-            setStatus("Reading shared file…")
+            setStatus("Reading shared file...")
             let fileURL = try await resolveSharedFileURL()
 
-            setStatus("Sending to Canvascope…")
+            setStatus("Sending to Canvascope...")
             _ = try await dropBridgeService.uploadSharedFile(fileURL: fileURL)
 
             setStatus("Sent to Canvascope.", isWorking: false)
@@ -94,7 +167,8 @@ final class ShareViewController: UIViewController {
         guard !hasCompleted else { return }
         hasCompleted = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+        // Brief beat so the success state registers, then dismiss promptly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
         }
     }
@@ -270,4 +344,18 @@ final class ShareViewController: UIViewController {
         try data.write(to: targetURL, options: .atomic)
         return targetURL
     }
+}
+
+private enum ShareCanvascopePalette {
+    static let background = UIColor(red: 0.051, green: 0.039, blue: 0.035, alpha: 1.0)
+    static let surfaceElevated = UIColor(red: 0.106, green: 0.075, blue: 0.071, alpha: 0.94)
+    static let surfaceFloating = UIColor(red: 0.090, green: 0.063, blue: 0.059, alpha: 0.96)
+    static let accent = UIColor(red: 0.878, green: 0.145, blue: 0.125, alpha: 1.0)
+    static let accentSoft = UIColor(red: 1.0, green: 0.416, blue: 0.361, alpha: 1.0)
+    static let destructive = UIColor(red: 1.0, green: 0.478, blue: 0.455, alpha: 1.0)
+    static let textPrimary = UIColor(red: 0.965, green: 0.945, blue: 0.906, alpha: 1.0)
+    static let textSecondary = UIColor(red: 0.851, green: 0.824, blue: 0.769, alpha: 1.0)
+    static let edgeStroke = UIColor(red: 0.965, green: 0.945, blue: 0.906, alpha: 0.16)
+    static let innerHighlight = UIColor(red: 0.965, green: 0.945, blue: 0.906, alpha: 0.10)
+    static let shadow = UIColor(red: 0.020, green: 0.014, blue: 0.012, alpha: 0.36)
 }

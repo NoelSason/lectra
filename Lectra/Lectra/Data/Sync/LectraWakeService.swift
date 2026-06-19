@@ -13,7 +13,10 @@ actor LectraWakeService {
         .appendingPathComponent("v1")
         .appendingPathComponent("register-device-v2")
     private static let registrationRefreshInterval: TimeInterval = 5 * 60
-    private static let prefetchLimit = 3
+    /// Max number of PDFs to fetch concurrently per wake. Downloads run in
+    /// parallel so files land on-device before the user opens the library;
+    /// the cap only bounds peak memory, it does not cap how many we fetch.
+    private static let maxConcurrentPrefetches = 6
     private static let deviceIdDefaultsKey = "lectra_wake_device_id"
     private static let pushTokenDefaultsKey = "lectra_wake_push_token"
 
@@ -39,16 +42,20 @@ actor LectraWakeService {
     private var shouldRefreshAgain = false
 
     init() {
-        if let stored = UserDefaults.standard.string(forKey: Self.deviceIdDefaultsKey),
-           let uuid = UUID(uuidString: stored) {
-            self.deviceId = uuid
-        } else {
-            let created = UUID()
-            UserDefaults.standard.set(created.uuidString, forKey: Self.deviceIdDefaultsKey)
-            self.deviceId = created
-        }
-
+        self.deviceId = Self.resolveDeviceId()
         self.pushToken = UserDefaults.standard.string(forKey: Self.pushTokenDefaultsKey)
+    }
+
+    /// Stable per-install device id, shared with the Canvascope export flow so
+    /// delivery confirmations can be routed back to this device over realtime.
+    nonisolated static func resolveDeviceId() -> UUID {
+        if let stored = UserDefaults.standard.string(forKey: deviceIdDefaultsKey),
+           let uuid = UUID(uuidString: stored) {
+            return uuid
+        }
+        let created = UUID()
+        UserDefaults.standard.set(created.uuidString, forKey: deviceIdDefaultsKey)
+        return created
     }
 
     func applicationDidLaunch() async {
@@ -225,15 +232,44 @@ actor LectraWakeService {
                 && !repository.isPDFCachedLocally(documentId: item.id)
         }
 
-        var prefetchedIds: [UUID] = []
+        // Download every pending document concurrently so the file is already
+        // on-device by the time the user looks. A bounded task group keeps peak
+        // memory in check while still saturating the connection.
+        let prefetchedIds = await withTaskGroup(of: UUID?.self, returning: [UUID].self) { group in
+            var collected: [UUID] = []
+            var index = 0
 
-        for item in candidates.prefix(Self.prefetchLimit) {
-            do {
-                _ = try await repository.downloadPDF(storagePath: item.itemData.storagePath, documentId: item.id)
-                prefetchedIds.append(item.id)
-            } catch {
-                // Best effort prefetch. A later foreground refresh can still recover.
+            func addTask(for item: SyncedItem) {
+                group.addTask { [repository] in
+                    do {
+                        _ = try await repository.downloadPDF(
+                            storagePath: item.itemData.storagePath,
+                            documentId: item.id
+                        )
+                        return item.id
+                    } catch {
+                        // Best effort prefetch. A later foreground refresh can still recover.
+                        return nil
+                    }
+                }
             }
+
+            while index < candidates.count && index < Self.maxConcurrentPrefetches {
+                addTask(for: candidates[index])
+                index += 1
+            }
+
+            while let result = await group.next() {
+                if let id = result {
+                    collected.append(id)
+                }
+                if index < candidates.count {
+                    addTask(for: candidates[index])
+                    index += 1
+                }
+            }
+
+            return collected
         }
 
         let notifiedDocumentIds = prefetchedIds
@@ -305,7 +341,7 @@ actor LectraWakeService {
             throw NSError(
                 domain: "LectraWakeService",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Unexpected response from Lectra wake endpoint."]
+                userInfo: [NSLocalizedDescriptionKey: "Unexpected response from Canvascope wake endpoint."]
             )
         }
         return (data, httpResponse)
@@ -360,7 +396,7 @@ actor LectraWakeService {
     private func resolveDeviceName() async -> String {
         await MainActor.run {
             let raw = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return raw.isEmpty ? "Lectra iPad" : raw
+            return raw.isEmpty ? "Canvascope iPad" : raw
         }
     }
 

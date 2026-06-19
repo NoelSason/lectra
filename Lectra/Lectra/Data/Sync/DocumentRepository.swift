@@ -77,15 +77,32 @@ nonisolated final class DocumentRepository {
 
     /// Downloads the raw PDF from Supabase Storage and saves it locally.
     /// Returns the local file URL.
+    ///
+    /// Streams straight to disk via a short-lived signed URL instead of buffering
+    /// the whole file in memory, so many prefetches can run in parallel without a
+    /// memory spike. Falls back to the SDK's buffered download if signing fails.
     @discardableResult
     func downloadPDF(storagePath: String, documentId: UUID) async throws -> URL {
-        let data = try await client.storage
-            .from(bucketName)
-            .download(path: storagePath)
-
         let localURL = localPDFURL(for: documentId)
-        try data.write(to: localURL)
-        return localURL
+
+        do {
+            let signedURL = try await client.storage
+                .from(bucketName)
+                .createSignedURL(path: storagePath, expiresIn: 300)
+
+            let (tempURL, _) = try await URLSession.shared.download(from: signedURL)
+            if FileManager.default.fileExists(atPath: localURL.path) {
+                try? FileManager.default.removeItem(at: localURL)
+            }
+            try FileManager.default.moveItem(at: tempURL, to: localURL)
+            return localURL
+        } catch {
+            let data = try await client.storage
+                .from(bucketName)
+                .download(path: storagePath)
+            try data.write(to: localURL)
+            return localURL
+        }
     }
 
     // MARK: - Upload Annotated PDF
@@ -173,5 +190,16 @@ nonisolated final class DocumentRepository {
 
     func isPDFCachedLocally(documentId: UUID) -> Bool {
         FileManager.default.fileExists(atPath: localPDFURL(for: documentId).path)
+    }
+
+    // MARK: - Delete Remote Document
+
+    /// Deletes the document row from Supabase.
+    func deleteRemoteDocument(rowId: UUID) async throws {
+        try await client
+            .from("synced_items")
+            .delete()
+            .eq("id", value: rowId.uuidString)
+            .execute()
     }
 }
