@@ -1,11 +1,12 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 enum LectraUITestScenario: String {
     case auth
     case library
-    case gradescope
     case editorCompact
+    case editorFull
 }
 
 struct LectraLaunchConfiguration {
@@ -32,7 +33,7 @@ struct LectraLaunchConfiguration {
                 userName: nil,
                 avatarURL: nil
             )
-        case .library, .gradescope, .editorCompact:
+        case .library, .editorCompact, .editorFull:
             return AuthManager.MockState(
                 isAuthenticated: true,
                 userId: UUID(uuidString: "00000000-0000-0000-0000-000000000001"),
@@ -48,44 +49,6 @@ struct LectraLaunchConfiguration {
                 userName: nil,
                 avatarURL: nil
             )
-        }
-    }
-
-    var gradescopeMockState: GradescopeManager.MockState? {
-        guard isUITesting else { return nil }
-
-        switch uiTestScenario {
-        case .gradescope:
-            let course = GSCourse(
-                id: "course-ui-smoke",
-                shortName: "BIO 201",
-                fullName: "Biology 201"
-            )
-            let assignment = GSAssignment(
-                id: "assignment-ui-smoke",
-                courseId: course.id,
-                name: "Lab Report 3",
-                releaseDate: nil,
-                dueDate: Date(timeIntervalSince1970: 1_732_147_200),
-                lateDueDate: nil,
-                submissionsStatus: nil,
-                grade: nil,
-                maxGrade: nil
-            )
-            return GradescopeManager.MockState(
-                isAuthenticated: true,
-                courses: [course],
-                assignmentsByCourse: [course.id: [assignment]],
-                assignmentDebugByCourse: [
-                    course.id: "assignment refresh: loaded 1 assignment"
-                ],
-                webSessionDebugReport: nil,
-                diagnosticsReport: "courses sync: loaded 1 course\nsession: mock",
-                errorMessage: nil,
-                sessionExpirationDate: Date().addingTimeInterval(60 * 60)
-            )
-        case .auth, .library, .editorCompact, nil:
-            return GradescopeManager.MockState(isAuthenticated: false)
         }
     }
 }
@@ -179,16 +142,79 @@ struct LectraUITestRootView: View {
             AuthView()
         case .library:
             DocumentBrowserView(launchConfiguration: .smoke)
-        case .gradescope:
-            ZStack {
-                LectraGradient.appBackdrop.ignoresSafeArea()
-                GradescopeHubView { _, _, _ in }
-            }
-            .preferredColorScheme(.dark)
         case .editorCompact:
             CompactEditorTopBarScenarioView()
                 .preferredColorScheme(.dark)
+        case .editorFull:
+            PDFAnnotationView(
+                document: LectraEditorLaunchConfiguration.makeDocument(),
+                repository: DocumentRepository()
+            )
+            .preferredColorScheme(.dark)
         }
+    }
+}
+
+enum LectraEditorLaunchConfiguration {
+    private static let documentId = UUID(uuidString: "30000000-0000-0000-0000-000000000001")!
+
+    @MainActor
+    static func makeDocument() -> LocalDocument {
+        let url = makeFixturePDF()
+        return LocalDocument(
+            title: "Editor Fixture",
+            localURL: url,
+            id: documentId,
+            createdAt: Date(timeIntervalSince1970: 1_774_160_800),
+            updatedAt: Date(timeIntervalSince1970: 1_774_679_200)
+        )
+    }
+
+    private static func makeFixturePDF() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lectra-ui-editor-fixture.pdf")
+        try? FileManager.default.removeItem(at: url)
+
+        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        try? renderer.writePDF(to: url) { context in
+            for page in 1...2 {
+                context.beginPage()
+                UIColor.white.setFill()
+                UIBezierPath(rect: pageRect).fill()
+
+                let title = "Lectra Editor Fixture"
+                let body = [
+                    "Page \(page)",
+                    "Use this page for pen, highlighter, eraser, lasso, zoom, search, and save checks.",
+                    "Search token: mitochondria"
+                ].joined(separator: "\n\n")
+
+                draw(title, in: CGRect(x: 54, y: 62, width: 504, height: 42), fontSize: 28, weight: .bold)
+                draw(body, in: CGRect(x: 54, y: 124, width: 504, height: 160), fontSize: 18, weight: .regular)
+
+                UIColor.systemBlue.withAlphaComponent(0.14).setFill()
+                UIBezierPath(roundedRect: CGRect(x: 54, y: 318, width: 504, height: 96), cornerRadius: 16).fill()
+                draw("Annotation target box", in: CGRect(x: 78, y: 350, width: 456, height: 42), fontSize: 22, weight: .semibold)
+            }
+        }
+        return url
+    }
+
+    private static func draw(
+        _ text: String,
+        in rect: CGRect,
+        fontSize: CGFloat,
+        weight: UIFont.Weight
+    ) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 5
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: weight),
+            .foregroundColor: UIColor.black,
+            .paragraphStyle: paragraph
+        ]
+        text.draw(in: rect, withAttributes: attributes)
     }
 }
 
@@ -227,7 +253,6 @@ private struct CompactEditorTopBarScenarioView: View {
                     onSetHandedness: { _ in },
                     onSetSqueezeAction: { _ in },
                     onExportCanvascope: {},
-                    onShowGradescope: {},
                     onShare: {},
                     onShowIntelligence: {},
                     isTitleFocused: $isTitleFocused

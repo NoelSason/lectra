@@ -39,6 +39,56 @@ final class EditorSupportTests: XCTestCase {
         XCTAssertEqual(remaining, ["a", "c", "e"])
     }
 
+    func testCanvasStrokeEraserRemovesIntersectingStroke() {
+        let canvas = VectorInkCanvasView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        canvas.setDrawing(
+            InkPageDrawing(
+                strokes: [
+                    makeStroke(from: CGPoint(x: 0.20, y: 0.20), to: CGPoint(x: 0.40, y: 0.40)),
+                    makeStroke(from: CGPoint(x: 0.75, y: 0.75), to: CGPoint(x: 0.90, y: 0.90)),
+                ]
+            )
+        )
+
+        var emittedDrawing: InkPageDrawing?
+        canvas.onDrawingChanged = { emittedDrawing = $0 }
+
+        canvas.testingErase(at: CGPoint(x: 50, y: 50), width: 6)
+
+        XCTAssertEqual(canvas.currentDrawing().strokes.count, 1)
+        XCTAssertEqual(canvas.currentDrawing().strokes.first?.points.first?.x, 0.75)
+        XCTAssertEqual(emittedDrawing?.strokes.count, 1)
+    }
+
+    func testCanvasLassoSelectionCanDuplicateAndDeleteSelectedStroke() {
+        let canvas = VectorInkCanvasView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        canvas.setDrawing(
+            InkPageDrawing(
+                strokes: [
+                    makeStroke(from: CGPoint(x: 0.22, y: 0.22), to: CGPoint(x: 0.40, y: 0.40)),
+                    makeStroke(from: CGPoint(x: 0.75, y: 0.75), to: CGPoint(x: 0.90, y: 0.90)),
+                ]
+            )
+        )
+
+        canvas.testingSelectWithLassoPolygon([
+            CGPoint(x: 35, y: 35),
+            CGPoint(x: 95, y: 35),
+            CGPoint(x: 95, y: 95),
+            CGPoint(x: 35, y: 95),
+        ])
+
+        XCTAssertTrue(canvas.testingHasActiveSelection)
+        XCTAssertTrue(canvas.testingSelectionActionsAreVisible)
+
+        canvas.testingDuplicateSelection()
+        XCTAssertEqual(canvas.currentDrawing().strokes.count, 3)
+        XCTAssertTrue(canvas.testingHasActiveSelection)
+
+        canvas.testingDeleteSelection()
+        XCTAssertEqual(canvas.currentDrawing().strokes.count, 2)
+    }
+
     func testBlankPageUndoGuardRejectsTouchedOrNonTerminalPages() {
         XCTAssertTrue(
             AutoAppendedBlankPageUndoGuard.canUndo(
@@ -98,5 +148,17 @@ final class EditorSupportTests: XCTestCase {
         var alpha: CGFloat = 0
         XCTAssertTrue(color.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
         return (red, green, blue, alpha)
+    }
+
+    private func makeStroke(from start: CGPoint, to end: CGPoint) -> InkStroke {
+        InkStroke(
+            points: [
+                InkPoint(x: start.x, y: start.y, force: 1.0),
+                InkPoint(x: end.x, y: end.y, force: 1.0),
+            ],
+            width: 1.2,
+            color: InkColorComponents(red: 0, green: 0, blue: 0, alpha: 1),
+            blendMode: .normal
+        )
     }
 }

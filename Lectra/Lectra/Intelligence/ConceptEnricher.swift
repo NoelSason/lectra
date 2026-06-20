@@ -2,11 +2,7 @@
 //  ConceptEnricher.swift
 //  Lectra
 //
-//  Layers LLM-generated definitions and takeaways on top of the existing
-//  rule-based Course Brain concept clusters. The rule-based extractor
-//  (`CourseBrainConceptExtractor`) still produces the graph instantly; this
-//  enriches individual concepts on demand, so Course Brain works unchanged
-//  on devices without Apple Intelligence.
+//  Produces short on-device definitions and takeaways from document text.
 //
 
 import Foundation

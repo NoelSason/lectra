@@ -46,7 +46,7 @@ actor LectraWakeService {
         self.pushToken = UserDefaults.standard.string(forKey: Self.pushTokenDefaultsKey)
     }
 
-    /// Stable per-install device id, shared with the Canvascope export flow so
+    /// Stable per-install device id, shared with the Lectra export flow so
     /// delivery confirmations can be routed back to this device over realtime.
     nonisolated static func resolveDeviceId() -> UUID {
         if let stored = UserDefaults.standard.string(forKey: deviceIdDefaultsKey),
@@ -341,7 +341,7 @@ actor LectraWakeService {
             throw NSError(
                 domain: "LectraWakeService",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Unexpected response from Canvascope wake endpoint."]
+                userInfo: [NSLocalizedDescriptionKey: "Unexpected response from Lectra wake endpoint."]
             )
         }
         return (data, httpResponse)
@@ -396,7 +396,7 @@ actor LectraWakeService {
     private func resolveDeviceName() async -> String {
         await MainActor.run {
             let raw = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return raw.isEmpty ? "Canvascope iPad" : raw
+            return raw.isEmpty ? "Lectra iPad" : raw
         }
     }
 

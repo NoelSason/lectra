@@ -52,7 +52,6 @@ final class LectraAppDelegate: NSObject, UIApplicationDelegate {
 struct LectraApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var authManager: AuthManager
-    @StateObject private var gradescopeManager: GradescopeManager
     @UIApplicationDelegateAdaptor(LectraAppDelegate.self) private var appDelegate
     private let launchConfiguration: LectraLaunchConfiguration
 
@@ -62,16 +61,12 @@ struct LectraApp: App {
         _authManager = StateObject(
             wrappedValue: AuthManager(mockState: launchConfiguration.authMockState)
         )
-        _gradescopeManager = StateObject(
-            wrappedValue: GradescopeManager(mockState: launchConfiguration.gradescopeMockState)
-        )
     }
 
     var body: some Scene {
         WindowGroup {
             rootView
                 .environmentObject(authManager)
-                .environmentObject(gradescopeManager)
                 .task {
                     guard !launchConfiguration.isUITesting else { return }
                     await LectraWakeService.shared.scenePhaseDidChange(scenePhase)

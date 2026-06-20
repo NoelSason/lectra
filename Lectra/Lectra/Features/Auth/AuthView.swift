@@ -2,10 +2,18 @@
 //  AuthView.swift
 //  Lectra
 //
-//  Full-screen sign-in entry for the Canvascope document workspace.
+//  Full-screen sign-in entry for the Lectra document workspace.
 //
 
 import SwiftUI
+import AuthenticationServices
+
+/// Canonical external links surfaced inside the app. Required by App Review
+/// Guideline 5.1.1(i) (privacy policy) and 1.5 (developer contact).
+enum LectraLinks {
+    static let privacyPolicy = URL(string: "https://www.canvascope.org/privacy")!
+    static let support = URL(string: "https://www.canvascope.org")!
+}
 
 struct AuthView: View {
     @EnvironmentObject var authManager: AuthManager
@@ -57,13 +65,13 @@ struct AuthView: View {
                 }
 
                 VStack(spacing: 4) {
-                    Text("Canvascope")
+                    Text("Lectra")
                         .font(LectraTypography.displayLarge)
                         .foregroundColor(LectraColor.textPrimary)
                         .multilineTextAlignment(.center)
                 }
 
-                Text("Canvascope's iPad workspace for PDFs, notes, and Apple Pencil markup.")
+                Text("Lectra's iPad workspace for PDFs, notes, and Apple Pencil markup.")
                     .font(LectraTypography.headlineMedium)
                     .foregroundColor(LectraColor.textSecondary)
                     .multilineTextAlignment(.center)
@@ -115,12 +123,33 @@ struct AuthView: View {
             }
             .buttonStyle(LectraPrimaryButtonStyle(disabled: authManager.isLoading))
             .disabled(authManager.isLoading)
-            .accessibilityHint("Starts Google sign-in for your Canvascope account.")
+            .accessibilityHint("Starts Google sign-in for your Lectra account.")
             .accessibilityIdentifier("auth.signIn")
 
-            Text("Sign in with your Canvascope account")
+            SignInWithAppleButton(.continue) { request in
+                authManager.prepareAppleRequest(request)
+            } onCompletion: { result in
+                LectraHaptics.tap()
+                Task { @MainActor in await authManager.handleAppleCompletion(result) }
+            }
+            .signInWithAppleButtonStyle(.white)
+            .frame(height: 52)
+            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.button, style: .continuous))
+            .disabled(authManager.isLoading)
+            .accessibilityHint("Sign in to your Lectra account with your Apple ID.")
+            .accessibilityIdentifier("auth.signInApple")
+
+            Text("Sign in with your Lectra account")
                 .font(LectraTypography.captionMedium)
                 .foregroundColor(LectraColor.textTertiary)
+
+            Link(destination: LectraLinks.privacyPolicy) {
+                Text("Privacy Policy")
+                    .font(LectraTypography.captionMedium)
+                    .foregroundColor(LectraColor.textSecondary)
+                    .underline()
+            }
+            .accessibilityIdentifier("auth.privacyPolicy")
         }
         .padding(.horizontal, LectraSpacing.lg)
         .padding(.vertical, LectraSpacing.xl)

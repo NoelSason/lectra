@@ -79,7 +79,7 @@ struct StartupSplashView: View {
                 }
 
                 VStack(spacing: 4) {
-                    Text("Canvascope")
+                    Text("Lectra")
                         .font(LectraTypography.displayLarge)
                         .foregroundStyle(LectraColor.textPrimary)
                 }

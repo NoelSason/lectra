@@ -34,7 +34,6 @@ struct EditorTopBar: View {
     let onSetHandedness: (EditorHandedness) -> Void
     let onSetSqueezeAction: (PencilSqueezeAction) -> Void
     let onExportCanvascope: () -> Void
-    let onShowGradescope: () -> Void
     let onShare: () -> Void
     let onShowIntelligence: () -> Void
     var isTitleFocused: FocusState<Bool>.Binding
@@ -66,7 +65,6 @@ struct EditorTopBar: View {
             settingsMenu
             intelligenceButton
             canvascopeButton
-            gradescopeButton
             shareButton
         }
     }
@@ -255,28 +253,8 @@ struct EditorTopBar: View {
         }
         .buttonStyle(.plain)
         .disabled(isSaving || isExportingToCanvascope)
+        .accessibilityLabel("Export to Canvascope")
         .accessibilityIdentifier("editor.canvascope")
-    }
-
-    private var gradescopeButton: some View {
-        Button {
-            LectraHaptics.tap()
-            onShowGradescope()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "graduationcap")
-                    .font(LectraTypography.bodyEmphasis)
-                Text("Gradescope")
-                    .font(LectraTypography.caption)
-            }
-            .foregroundColor(LectraColor.textPrimary)
-            .padding(.horizontal, 10)
-            .frame(height: LectraSizing.minHitTarget)
-            .background(integrationBackground(tint: LectraColor.accentCool))
-        }
-        .buttonStyle(.plain)
-        .disabled(isSaving || isExportingToCanvascope)
-        .accessibilityIdentifier("editor.gradescope")
     }
 
     private var shareButton: some View {
@@ -323,9 +301,7 @@ struct EditorTopBar: View {
     @ViewBuilder
     private var exportActions: some View {
         Button("Document Intelligence", systemImage: "sparkles", action: onShowIntelligence)
-        Button("Send to Canvascope", systemImage: "arrow.up.forward.app", action: onExportCanvascope)
-            .disabled(isSaving || isExportingToCanvascope)
-        Button("Submit to Gradescope", systemImage: "graduationcap", action: onShowGradescope)
+        Button("Export to Canvascope", systemImage: "arrow.up.forward.app", action: onExportCanvascope)
             .disabled(isSaving || isExportingToCanvascope)
         Button("Share PDF", systemImage: "square.and.arrow.up", action: onShare)
             .disabled(isSaving || isExportingToCanvascope)

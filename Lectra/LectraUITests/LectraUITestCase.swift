@@ -4,8 +4,8 @@ class LectraUITestCase: XCTestCase {
     enum Scenario: String {
         case auth
         case library
-        case gradescope
         case editorCompact
+        case editorFull
     }
 
     override func setUpWithError() throws {

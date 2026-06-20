@@ -36,42 +36,20 @@ This checklist tracks every UI-facing file and the UI-coupled types reviewed dur
 - [x] `Lectra/Lectra/Features/Library/DocumentCardView.swift` — reviewed for shared tokens and badge migration.
 - [x] `Lectra/Lectra/Features/Library/Components/PopoverActionRow.swift` — migrated to shared typography, semantics, and action haptics.
 
-## Course Brain
+## Removed Course Integrations
 
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainPane.swift` — reviewed for chrome redesign.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainOrbitView.swift` — reviewed for visual/token migration.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainSpriteView.swift` — reviewed for host chrome integration.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainSpriteScene.swift` — retains intentional SpriteKit visualization colors (see Documented Exceptions).
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainGraphBuilder.swift` — no UI colors; pure algorithmic graph building.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainViewModel.swift` — no UI colors; data layer only.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainModels.swift` — no UI colors; data models only.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainMissionModels.swift` — no UI colors; data models only.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainPDFDownloader.swift` — no UI colors; uses only `.systemBackground`.
-- [x] `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainConceptExtractor.swift` — no UI colors; text processing only.
+- [x] Historical Course Brain, Canvas course import, and Gradescope UI/service
+  surfaces were removed before release. They are no longer part of the active
+  UI redesign surface. See `docs/REMOVED_COURSE_INTEGRATIONS.md` for the
+  preserved implementation notes and reimplementation constraints.
 
 ## Settings
 
 - [x] `Lectra/Lectra/Features/Settings/AccountSettingsView.swift` — shell reviewed and redesigned in this pass.
-- [x] `Lectra/Lectra/Features/Settings/IntegrationsSettingsView.swift` — status cards reviewed and redesigned in this pass.
 - [x] `Lectra/Lectra/Features/Settings/CloudBackupSettingsTabView.swift` — rebuilt on shared cards, badges, and haptic-safe controls.
-
-## Gradescope
-
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopeHubView.swift` — reviewed for auth/workspace shell redesign.
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopeSubmitSheet.swift` — major card/token/haptic pass completed without changing workflow behavior.
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopeAssignmentPickerSheet.swift` — migrated to shared sheet language.
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopeWebLoginSheet.swift` — migrated to shared sheet language and retry feedback.
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopeGroupMembersSheet.swift` — rebuilt on shared cards and button styles.
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopePageAssignmentSheet.swift` — rebuilt on shared cards and button styles.
-- [x] `Lectra/Lectra/Features/Gradescope/GradescopeSubmissionWebSheet.swift` — migrated to shared sheet chrome.
-- [x] `Lectra/Lectra/Features/Gradescope/TechnicalDetailsDisclosure.swift` — typography and card cleanup completed.
 
 ## Documented Exceptions
 
-- `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainOrbitView.swift` retains several raw accent colors intentionally for course/type differentiation and graph-adjacent data expression rather than shared chrome.
-- `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainPane.swift` retains some status color mappings where they communicate submission-state semantics tied to Course Brain data.
-- `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainSpriteScene.swift` retains hardcoded UIColors for SpriteKit hub palette, satellite type colors, and scene backgrounds — intentional data visualization colors for the graph rendering engine.
-- `Lectra/Lectra/Features/Library/CourseBrain/CourseBrainSpriteView.swift` retains a dark background UIColor matching the SpriteScene backdrop.
 - `Lectra/Lectra/Shared/Theme/LectraTheme.swift` necessarily keeps `Color(hex:)` definitions because it is the source of the semantic token palette.
 
 ## UI-Coupled Data and Services
@@ -79,9 +57,9 @@ This checklist tracks every UI-facing file and the UI-coupled types reviewed dur
 - [x] `Lectra/Lectra/Data/Sync/DocumentServices.swift` — reviewed as protected sync/recovery work.
 - [x] `Lectra/Lectra/Data/Sync/AuthManager.swift` — reviewed for auth loading/error UI states.
 - [x] `Lectra/Lectra/Data/Sync/DocumentRepository.swift` — reviewed for local metadata/recovery UI state coupling.
-- [x] `Lectra/Lectra/Data/Gradescope/GradescopeManager.swift` — reviewed for auth/busy/error/session UI states.
-- [x] `Lectra/Lectra/Data/Gradescope/GradescopeModels.swift` — reviewed for view-facing labels and selection data.
-- [x] Other `Lectra/Lectra/Data/Gradescope/*.swift` files — no hardcoded UI colors; data/service layer only.
+- [x] Legacy third-party integration caches are represented only by
+  `LegacyThirdPartyIntegrationData` scrub logic and neutral imported-folder
+  migration state.
 
 ## Assets and Resources
 

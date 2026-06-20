@@ -63,14 +63,25 @@ nonisolated final class DocumentRepository {
 
     /// Pulls all `pdf_document` rows for the authenticated user.
     func fetchDocuments() async throws -> [SyncedItem] {
+        let userId = try await resolveUserId()
         let items: [SyncedItem] = try await client
             .from("synced_items")
             .select()
             .eq("item_type", value: "pdf_document")
+            .eq("user_id", value: userId.uuidString)
             .order("created_at", ascending: false)
             .execute()
             .value
         return items
+    }
+
+    private func resolveUserId() async throws -> UUID {
+        if let userId = client.auth.currentSession?.user.id {
+            return userId
+        }
+
+        let session = try await client.auth.session
+        return session.user.id
     }
 
     // MARK: - Download PDF
@@ -109,7 +120,10 @@ nonisolated final class DocumentRepository {
 
     /// Uploads the flattened, annotated PDF back to Supabase Storage.
     func uploadAnnotatedPDF(data: Data, userId: UUID, documentId: UUID) async throws -> String {
-        let path = "\(userId.uuidString)/lectra_documents/annotated-\(documentId.uuidString).pdf"
+        // Storage RLS compares foldername[1] against auth.uid()::text, which Postgres
+        // emits lowercase. Swift's UUID.uuidString is uppercase, so the path must be
+        // lowercased or the INSERT is rejected with a 403 row-level-security error.
+        let path = "\(userId.uuidString.lowercased())/lectra_documents/annotated-\(documentId.uuidString.lowercased()).pdf"
 
         try await client.storage
             .from(bucketName)

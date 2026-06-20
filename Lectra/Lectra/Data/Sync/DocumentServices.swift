@@ -121,6 +121,65 @@ enum RecoverySnapshotLocation: String, Codable {
     case iCloudDrive
 }
 
+nonisolated enum LectraLocalAccountData {
+    static let localOwnerUserIdDefaultsKey = "lectra_local_owner_user_id"
+    static let localPDFsDefaultsKey = "lectra_local_pdfs"
+    static let localFoldersDefaultsKey = "lectra_local_folders"
+    static let documentFolderMapDefaultsKey = "lectra_document_folder_map"
+    static let titleOverridesDefaultsKey = "lectra_document_title_overrides"
+    static let recentDocumentsDefaultsKey = "lectra_recently_opened_documents"
+    static let cloudSyncEnabledDefaultsKey = "lectra_cloud_sync_enabled"
+    static let autoBackupEnabledDefaultsKey = "lectra_auto_backup_enabled"
+    static let lastCloudSyncDefaultsKey = "lectra_last_cloud_sync"
+    static let lastBackupDefaultsKey = "lectra_last_backup"
+
+    static func ownerUserId() -> UUID? {
+        guard let value = UserDefaults.standard.string(forKey: localOwnerUserIdDefaultsKey) else { return nil }
+        return UUID(uuidString: value)
+    }
+
+    static func markOwner(_ userId: UUID) {
+        UserDefaults.standard.set(userId.uuidString, forKey: localOwnerUserIdDefaultsKey)
+    }
+
+    static func hasUnownedLocalDocuments() -> Bool {
+        guard let data = UserDefaults.standard.data(forKey: localPDFsDefaultsKey),
+              let saved = try? JSONDecoder().decode([SavedLocalDocument].self, from: data) else {
+            return false
+        }
+        return saved.contains { $0.ownerUserId == nil }
+    }
+
+    @MainActor
+    static func purgeAccountScopedData() {
+        let defaults = UserDefaults.standard
+        [
+            localOwnerUserIdDefaultsKey,
+            localPDFsDefaultsKey,
+            localFoldersDefaultsKey,
+            documentFolderMapDefaultsKey,
+            titleOverridesDefaultsKey,
+            recentDocumentsDefaultsKey,
+            cloudSyncEnabledDefaultsKey,
+            autoBackupEnabledDefaultsKey,
+            lastCloudSyncDefaultsKey,
+            lastBackupDefaultsKey,
+        ].forEach { defaults.removeObject(forKey: $0) }
+
+        let fileManager = FileManager.default
+        let documentsRoot = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        [
+            documentsRoot.appendingPathComponent("pdfs", isDirectory: true),
+            documentsRoot.appendingPathComponent("sync", isDirectory: true),
+            documentsRoot.appendingPathComponent("LectraBackups", isDirectory: true),
+        ].forEach { try? fileManager.removeItem(at: $0) }
+
+        ThumbnailCache.shared.removeAll()
+        DocumentSearchIndex.shared.removeAll()
+        LegacyThirdPartyIntegrationData.clearFromDevice()
+    }
+}
+
 struct RecoverySnapshotManifestItem: Codable, Hashable {
     let id: UUID
     let title: String
@@ -135,6 +194,7 @@ struct RecoverySnapshotManifestItem: Codable, Hashable {
 struct RecoverySnapshotManifest: Codable {
     let createdAt: Date
     let source: String
+    let ownerUserId: UUID?
     let folders: [SavedLocalFolder]
     let items: [RecoverySnapshotManifestItem]
 }
@@ -147,6 +207,7 @@ struct RecoverySnapshot: Identifiable, Hashable {
     let source: String
     let itemCount: Int
     let location: RecoverySnapshotLocation
+    let ownerUserId: UUID?
     let items: [RecoverySnapshotManifestItem]
 }
 
@@ -333,11 +394,11 @@ struct EditorPreferences: Codable, Equatable {
     func dockEdge(for profile: EditorDockProfile) -> EditorToolbarDockEdge {
         if let rawValue = dockEdgesByProfile[profile.rawValue],
            let edge = EditorToolbarDockEdge(rawValue: rawValue) {
-            return edge
+            return profile.normalizedDockEdge(edge, handedness: handedness)
         }
 
         if let legacyEdge = EditorToolbarDockEdge(rawValue: toolbarDockEdge) {
-            return legacyEdge
+            return profile.normalizedDockEdge(legacyEdge, handedness: handedness)
         }
 
         return EditorToolbarDockEdge.defaultEdge(for: handedness)
@@ -467,6 +528,13 @@ final class ThumbnailCache {
         }
     }
 
+    func removeAll() {
+        memoryCache.removeAllObjects()
+        ioQueue.async {
+            try? FileManager.default.removeItem(at: self.rootDirectory())
+        }
+    }
+
     private func cacheKey(documentId: UUID, revision: Int, size: CGSize) -> String {
         "\(documentId.uuidString)-\(revision)-\(Int(size.width.rounded()))x\(Int(size.height.rounded()))"
     }
@@ -538,7 +606,7 @@ final class DocumentSearchIndex {
             let metadataText = [
                 document.title,
                 folderName,
-                document.isRemoteBacked ? "Canvascope" : "On Device",
+                document.isRemoteBacked ? "Lectra" : "On Device",
                 document.courseId.map { "Course \($0)" },
             ]
             .compactMap { $0 }
@@ -550,7 +618,7 @@ final class DocumentSearchIndex {
                     DocumentSearchResult(
                         documentId: document.id,
                         title: document.title,
-                        subtitle: folderName ?? (document.isRemoteBacked ? "Canvascope" : "On Device"),
+                        subtitle: folderName ?? (document.isRemoteBacked ? "Lectra" : "On Device"),
                         snippet: nil,
                         pageIndex: nil,
                         kind: .metadata
@@ -576,6 +644,17 @@ final class DocumentSearchIndex {
         }
 
         return Array(NSOrderedSet(array: results)) as? [DocumentSearchResult] ?? results
+    }
+
+    func removeAll() {
+        lock.lock()
+        entries = [:]
+        indexingDocuments = []
+        lock.unlock()
+
+        ioQueue.async {
+            try? FileManager.default.removeItem(at: self.indexURL())
+        }
     }
 
     private func scheduleIndex(for document: LocalDocument, pdfURL: URL, folderName: String?) {
@@ -636,7 +715,7 @@ final class DocumentSearchIndex {
             revision: document.searchIndexRevision,
             title: document.title,
             folderName: folderName,
-            source: document.isRemoteBacked ? "Canvascope" : "On Device",
+            source: document.isRemoteBacked ? "Lectra" : "On Device",
             courseLabel: document.courseId.map { "Course \($0)" },
             pages: pages
         )
@@ -744,6 +823,12 @@ final class DocumentSyncCoordinator {
         await processPendingJobs()
     }
 
+    func clearPendingJobsForAccountBoundary() {
+        pendingJobs = [:]
+        needsProcessingPass = false
+        repository.savePendingSyncJobs([])
+    }
+
     private func processPendingJobs() async {
         guard !isProcessing else {
             needsProcessingPass = true
@@ -785,7 +870,7 @@ final class DocumentSyncCoordinator {
 
         let annotatedURL = URL(fileURLWithPath: job.annotatedFilePath)
         guard let data = try? Data(contentsOf: annotatedURL) else {
-            print("[DocumentSyncCoordinator] Sync process failed: annotated file not found at \(job.annotatedFilePath)")
+            LectraDebugLog("[DocumentSyncCoordinator] Sync process failed: annotated file not found at \(job.annotatedFilePath)")
             metadata.syncState = .failed
             metadata.syncErrorMessage = "Saved locally, but the upload file is missing."
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
@@ -816,7 +901,7 @@ final class DocumentSyncCoordinator {
             pendingJobs.removeValue(forKey: job.documentId)
             repository.savePendingSyncJobs(Array(pendingJobs.values))
         } catch {
-            print("[DocumentSyncCoordinator] Sync process failed for document \(job.documentId) with error: \(error)")
+            LectraDebugLog("[DocumentSyncCoordinator] Sync process failed for document \(job.documentId) with error: \(error)")
             var failedJob = job
             failedJob.retryCount += 1
             let backoffSeconds = min(pow(2, Double(failedJob.retryCount)) * 15.0, 3600)

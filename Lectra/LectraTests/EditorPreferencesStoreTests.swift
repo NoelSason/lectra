@@ -48,6 +48,18 @@ final class EditorPreferencesStoreTests: XCTestCase {
         let preferences = EditorPreferences(toolbarDockEdge: EditorToolbarDockEdge.top.rawValue)
 
         XCTAssertEqual(preferences.dockEdge(for: .portraitRegular), .top)
-        XCTAssertEqual(preferences.dockEdge(for: .landscapeCompact), .top)
+        XCTAssertEqual(preferences.dockEdge(for: .landscapeRegular), .top)
+    }
+
+    func testCompactDockProfilesUseReachableSideRailForHorizontalSavedEdges() {
+        var preferences = EditorPreferences(toolbarDockEdge: EditorToolbarDockEdge.bottom.rawValue)
+
+        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .left)
+        XCTAssertEqual(preferences.dockEdge(for: .landscapeCompact), .left)
+
+        preferences.handedness = .left
+        preferences.setDockEdge(.top, for: .portraitCompact)
+
+        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .right)
     }
 }

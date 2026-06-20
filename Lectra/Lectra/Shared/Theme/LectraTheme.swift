@@ -89,12 +89,6 @@ enum LectraColor {
     /// Info blue for sync-in-progress, iCloud indicators.
     static let info         = Color(hex: 0x6EA8FF)
 
-    /// Gradescope integration tint.
-    static let gradescopeTint = Color(hex: 0x43C7A4)
-
-    /// Canvas integration tint.
-    static let canvasTint   = Color(hex: 0xE85D4D)
-
     /// Download placeholder gradient start.
     static let placeholderStart = Color(hex: 0xE85D4D)
 

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Canvascope</string>
+	<string>Lectra</string>
 	<key>CFBundleName</key>
-	<string>Canvascope</string>
+	<string>Lectra</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -16,11 +16,6 @@
 				<string>com.canvascope.lectra</string>
 			</array>
 		</dict>
-	</array>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-		<string>canvas-student</string>
-		<string>canvas-courses</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

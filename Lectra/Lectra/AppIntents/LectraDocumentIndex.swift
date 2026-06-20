@@ -19,12 +19,10 @@ struct LectraIndexedDocument: Identifiable, Hashable, Sendable {
 }
 
 enum LectraDocumentIndex {
-    /// Matches `DocumentBrowserView.localPDFsDefaultsKey`.
-    nonisolated private static let localPDFsDefaultsKey = "lectra_local_pdfs"
-
     /// All locally-available documents, most recently updated first.
     nonisolated static func all() -> [LectraIndexedDocument] {
-        guard let data = UserDefaults.standard.data(forKey: localPDFsDefaultsKey),
+        let ownerUserId = LectraLocalAccountData.ownerUserId()
+        guard let data = UserDefaults.standard.data(forKey: LectraLocalAccountData.localPDFsDefaultsKey),
               let saved = try? JSONDecoder().decode([SavedLocalDocument].self, from: data) else {
             return []
         }
@@ -32,6 +30,7 @@ enum LectraDocumentIndex {
         let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
         let resolved: [(LectraIndexedDocument, Date)] = saved.compactMap { item in
+            guard item.belongs(to: ownerUserId) else { return nil }
             let url = documentsDir.appendingPathComponent(item.localPath)
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -2,7 +2,7 @@
 //  FloatingToolPickerView.swift
 //  Lectra
 //
-//  Canvascope instrument rail for Apple Pencil drawing tools.
+//  Lectra instrument rail for Apple Pencil drawing tools.
 //
 
 import SwiftUI
@@ -187,7 +187,8 @@ struct FloatingToolPickerView: View {
             ToolButton(
                 icon: "hand.raised.fill",
                 title: "Read mode",
-                isSelected: selectedTool == .hand
+                isSelected: selectedTool == .hand,
+                accessibilityIdentifier: "editor.tool.hand"
             ) {
                 withAnimation(LectraMotion.quick) {
                     LectraHaptics.selection()
@@ -198,7 +199,8 @@ struct FloatingToolPickerView: View {
             ToolButton(
                 icon: "pencil.tip",
                 title: "Pen",
-                isSelected: selectedTool == .pen
+                isSelected: selectedTool == .pen,
+                accessibilityIdentifier: "editor.tool.pen"
             ) {
                 withAnimation(LectraMotion.quick) {
                     LectraHaptics.selection()
@@ -209,7 +211,8 @@ struct FloatingToolPickerView: View {
             ToolButton(
                 icon: "highlighter",
                 title: "Highlighter",
-                isSelected: selectedTool == .highlighter
+                isSelected: selectedTool == .highlighter,
+                accessibilityIdentifier: "editor.tool.highlighter"
             ) {
                 withAnimation(LectraMotion.quick) {
                     LectraHaptics.selection()
@@ -223,7 +226,8 @@ struct FloatingToolPickerView: View {
             ToolButton(
                 icon: "eraser",
                 title: "Eraser",
-                isSelected: selectedTool == .eraser
+                isSelected: selectedTool == .eraser,
+                accessibilityIdentifier: "editor.tool.eraser"
             ) {
                 withAnimation(LectraMotion.quick) {
                     LectraHaptics.selection()
@@ -234,7 +238,8 @@ struct FloatingToolPickerView: View {
             ToolButton(
                 icon: "lasso",
                 title: "Lasso",
-                isSelected: selectedTool == .lasso
+                isSelected: selectedTool == .lasso,
+                accessibilityIdentifier: "editor.tool.lasso"
             ) {
                 withAnimation(LectraMotion.quick) {
                     LectraHaptics.selection()
@@ -508,6 +513,7 @@ private struct ToolButton: View {
     let icon: String
     let title: String
     let isSelected: Bool
+    let accessibilityIdentifier: String
     let action: () -> Void
 
     var body: some View {
@@ -549,5 +555,6 @@ private struct ToolButton: View {
         .accessibilityLabel(title)
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }

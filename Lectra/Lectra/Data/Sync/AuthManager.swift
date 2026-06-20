@@ -3,12 +3,13 @@
 //  Lectra
 //
 //  Manages authentication state via Supabase Google OAuth.
-//  Uses the same Google provider as the Canvascope Chrome extension
+//  Uses the same Google provider as the Lectra Chrome extension
 //  so users log into the SAME Supabase account.
 //
 
 import Foundation
 import Combine
+import CryptoKit
 import Supabase
 import AuthenticationServices
 
@@ -34,6 +35,7 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
     // MARK: - Private
     private let client: SupabaseClient
     private var mockState: MockState?
+    private var currentAppleNonce: String?
 
     // MARK: - Init
     init(mockState: MockState? = nil) {
@@ -86,7 +88,7 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         errorMessage = nil
         isLoading = true
         do {
-            // 1. Get the OAuth URL from Supabase (same as Canvascope extension)
+            // 1. Get the OAuth URL from Supabase (same as Lectra extension)
             let oauthURL = try client.auth.getOAuthSignInURL(
                 provider: .google,
                 redirectTo: URL(string: "com.canvascope.lectra://auth/callback")
@@ -126,8 +128,60 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         isLoading = false
     }
 
+    // MARK: - Sign in with Apple
+    /// Configures the Apple ID request with a fresh, hashed nonce. The raw
+    /// nonce is retained so it can be replayed to Supabase for verification.
+    func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        let nonce = Self.randomNonceString()
+        currentAppleNonce = nonce
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = Self.sha256(nonce)
+    }
+
+    /// Handles the result from `SignInWithAppleButton` and exchanges the Apple
+    /// identity token for a Supabase session via OpenID Connect.
+    func handleAppleCompletion(_ result: Result<ASAuthorization, Error>) async {
+        if mockState != nil {
+            await signInWithGoogle()
+            return
+        }
+
+        errorMessage = nil
+
+        switch result {
+        case .failure(let error):
+            if let asError = error as? ASAuthorizationError, asError.code == .canceled {
+                return // User cancelled – not an error.
+            }
+            errorMessage = error.localizedDescription
+        case .success(let authorization):
+            guard
+                let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                let identityTokenData = credential.identityToken,
+                let identityToken = String(data: identityTokenData, encoding: .utf8),
+                let nonce = currentAppleNonce
+            else {
+                errorMessage = "Apple sign-in did not return the expected credentials."
+                return
+            }
+
+            isLoading = true
+            do {
+                let session = try await client.auth.signInWithIdToken(
+                    credentials: .init(provider: .apple, idToken: identityToken, nonce: nonce)
+                )
+                applySession(session)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isLoading = false
+            currentAppleNonce = nil
+        }
+    }
+
     // MARK: - Apply Session
     private func applySession(_ session: Session) {
+        prepareLocalDataForSession(userId: session.user.id)
         userId = session.user.id
         userEmail = session.user.email
         userName = session.user.userMetadata["full_name"]?.stringValue
@@ -135,6 +189,20 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         avatarURL = session.user.userMetadata["avatar_url"]?.stringValue
         isAuthenticated = true
         isLoading = false
+    }
+
+    private func prepareLocalDataForSession(userId newUserId: UUID) {
+        let storedOwnerUserId = LectraLocalAccountData.ownerUserId()
+        let isSwitchingFromActiveUser = userId.map { $0 != newUserId } ?? false
+        let hasDifferentStoredOwner = storedOwnerUserId.map { $0 != newUserId } ?? false
+        let hasLegacyUnownedDocuments = storedOwnerUserId == nil && LectraLocalAccountData.hasUnownedLocalDocuments()
+
+        if isSwitchingFromActiveUser || hasDifferentStoredOwner || hasLegacyUnownedDocuments {
+            LectraLocalAccountData.purgeAccountScopedData()
+            DocumentSyncCoordinator.shared.clearPendingJobsForAccountBoundary()
+        }
+
+        LectraLocalAccountData.markOwner(newUserId)
     }
 
     private func apply(mockState: MockState) {
@@ -178,7 +246,49 @@ final class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         } catch {
             // Best-effort
         }
+        LectraLocalAccountData.purgeAccountScopedData()
+        DocumentSyncCoordinator.shared.clearPendingJobsForAccountBoundary()
         clearSessionState()
+    }
+
+    // MARK: - Account Deletion
+    /// Permanently deletes the signed-in user's Lectra account and all of
+    /// their server-side data. The destructive work runs in the `delete-account`
+    /// Supabase Edge Function (service-role), which the SDK invokes with the
+    /// user's JWT so the function can identify and authorize the caller.
+    func deleteAccount() async throws {
+        if var mockState {
+            mockState.isAuthenticated = false
+            self.mockState = mockState
+            apply(mockState: mockState)
+            return
+        }
+
+        // Ensure we have a valid session before asking the backend to delete it.
+        _ = try await client.auth.session
+
+        try await client.functions.invoke("delete-account", decode: { _, _ in })
+
+        try? await client.auth.signOut()
+        LectraLocalAccountData.purgeAccountScopedData()
+        DocumentSyncCoordinator.shared.clearPendingJobsForAccountBoundary()
+        clearSessionState()
+    }
+
+    // MARK: - Nonce Helpers (Sign in with Apple)
+    private static func randomNonceString(length: Int = 32) -> String {
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+        var bytes = [UInt8](repeating: 0, count: length)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            bytes = (0..<length).map { _ in UInt8.random(in: 0...255) }
+        }
+        return String(bytes.map { charset[Int($0) % charset.count] })
+    }
+
+    private static func sha256(_ input: String) -> String {
+        SHA256.hash(data: Data(input.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     // MARK: - ASWebAuthenticationPresentationContextProviding

@@ -15,7 +15,6 @@ struct ContentView: View {
     }
 
     @EnvironmentObject var authManager: AuthManager
-    @EnvironmentObject private var gradescopeManager: GradescopeManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var startupCoordinator = StartupCoordinator()
 
@@ -46,7 +45,6 @@ struct ContentView: View {
                 .zIndex(10)
             }
         }
-        .environmentObject(gradescopeManager)
         .preferredColorScheme(.dark)
         .animation(reduceMotion ? nil : LectraMotion.screenSwap, value: rootScreen)
         .animation(reduceMotion ? nil : LectraMotion.startupExit, value: startupCoordinator.isCompleted)

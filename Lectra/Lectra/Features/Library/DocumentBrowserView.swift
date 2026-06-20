@@ -2,7 +2,7 @@
 //  DocumentBrowserView.swift
 //  Lectra
 //
-//  Canvascope workspace shell for browsing folders and PDF documents.
+//  Lectra workspace shell for browsing folders and PDF documents.
 //  PDF editing remains in PDFAnnotationView.
 //
 
@@ -22,9 +22,15 @@ struct SavedLocalDocument: Codable {
     let title: String
     let localPath: String
     let sourceURLString: String?
+    let ownerUserId: UUID?
     var createdAt: Date?
     var updatedAt: Date?
     var isFavorite: Bool?
+
+    nonisolated func belongs(to userId: UUID?) -> Bool {
+        guard let ownerUserId, let userId else { return false }
+        return ownerUserId == userId
+    }
 }
 
 struct SavedLocalFolder: Codable {
@@ -62,8 +68,6 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case documents
     case favorites
     case shared
-    case courseBrain
-    case gradescope
 
     var id: String { rawValue }
 
@@ -72,8 +76,6 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .documents: return "Documents"
         case .favorites: return "Favorites"
         case .shared: return "Shared"
-        case .courseBrain: return "Course Brain"
-        case .gradescope: return "Gradescope"
         }
     }
 
@@ -82,8 +84,6 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .documents: return "folder"
         case .favorites: return "bookmark"
         case .shared: return "person.2"
-        case .courseBrain: return "brain.head.profile"
-        case .gradescope: return "graduationcap"
         }
     }
 }
@@ -146,7 +146,6 @@ private enum LibrarySortMode: String, CaseIterable {
 
 struct DocumentBrowserView: View {
     @EnvironmentObject private var authManager: AuthManager
-    @EnvironmentObject private var gradescopeManager: GradescopeManager
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var documents: [LocalDocument] = []
@@ -189,8 +188,6 @@ struct DocumentBrowserView: View {
     @State private var showBulkMoveSheet = false
 
     @State private var featureNotice: String?
-    @State private var activePDFDownloader: CourseBrainPDFDownloader?
-    @StateObject private var canvasImportService = CanvasImportService()
     @State private var backgroundSyncToast: String?
     @State private var backgroundSyncToastTask: Task<Void, Never>? = nil
     @State private var hasPendingBackgroundSyncToast = false
@@ -212,15 +209,15 @@ struct DocumentBrowserView: View {
     private let launchConfiguration: LectraLibraryLaunchConfiguration?
     private let repository = DocumentRepository()
 
-    private let localPDFsDefaultsKey = "lectra_local_pdfs"
-    private let localFoldersDefaultsKey = "lectra_local_folders"
-    private let documentFolderMapDefaultsKey = "lectra_document_folder_map"
-    private let titleOverridesDefaultsKey = "lectra_document_title_overrides"
-    private let recentDocumentsDefaultsKey = "lectra_recently_opened_documents"
-    private let cloudSyncEnabledDefaultsKey = "lectra_cloud_sync_enabled"
-    private let autoBackupEnabledDefaultsKey = "lectra_auto_backup_enabled"
-    private let lastCloudSyncDefaultsKey = "lectra_last_cloud_sync"
-    private let lastBackupDefaultsKey = "lectra_last_backup"
+    private let localPDFsDefaultsKey = LectraLocalAccountData.localPDFsDefaultsKey
+    private let localFoldersDefaultsKey = LectraLocalAccountData.localFoldersDefaultsKey
+    private let documentFolderMapDefaultsKey = LectraLocalAccountData.documentFolderMapDefaultsKey
+    private let titleOverridesDefaultsKey = LectraLocalAccountData.titleOverridesDefaultsKey
+    private let recentDocumentsDefaultsKey = LectraLocalAccountData.recentDocumentsDefaultsKey
+    private let cloudSyncEnabledDefaultsKey = LectraLocalAccountData.cloudSyncEnabledDefaultsKey
+    private let autoBackupEnabledDefaultsKey = LectraLocalAccountData.autoBackupEnabledDefaultsKey
+    private let lastCloudSyncDefaultsKey = LectraLocalAccountData.lastCloudSyncDefaultsKey
+    private let lastBackupDefaultsKey = LectraLocalAccountData.lastBackupDefaultsKey
     private let importedFolderName = "Imported"
     private let importedRootSystemTag = "imported_root"
 
@@ -229,10 +226,8 @@ struct DocumentBrowserView: View {
     }
     private let importedCanvascopeFolderName = "Imported From Canvascope"
     private let importedCanvascopeSystemTag = "imported_canvascope"
-    private let importedCanvasFolderName = "Imported From Canvas"
-    private let importedCanvasSystemTag = "imported_canvas"
-    private let importedGradescopeFolderName = "Imported From Gradescope"
-    private let importedGradescopeSystemTag = "imported_gradescope"
+    private let legacyCanvasImportSystemTag = "imported_canvas"
+    private let legacySubmissionImportSystemTag = "imported_gradescope"
     // Safety-net poll behind the realtime wake + prefetch. Kept short so a
     // missed broadcast still surfaces new drops quickly while the folder is open.
     private let importedFolderPollingIntervalNanoseconds: UInt64 = 1_500_000_000
@@ -242,7 +237,7 @@ struct DocumentBrowserView: View {
     }
 
     private var visibleSidebarSections: [LibrarySection] {
-        [.documents, .courseBrain, .gradescope]
+        [.documents]
     }
 
     private var expandedSidebarContentMaxWidth: CGFloat {
@@ -270,22 +265,6 @@ struct DocumentBrowserView: View {
         importedCanvascopeFolder?.id
     }
 
-    private var importedGradescopeFolder: LocalFolder? {
-        folders.first(where: { $0.systemTag == importedGradescopeSystemTag })
-    }
-
-    private var importedGradescopeFolderId: UUID? {
-        importedGradescopeFolder?.id
-    }
-
-    private var importedCanvasFolder: LocalFolder? {
-        folders.first(where: { $0.systemTag == importedCanvasSystemTag })
-    }
-
-    private var importedCanvasFolderId: UUID? {
-        importedCanvasFolder?.id
-    }
-
     private var documentsInScope: [LocalDocument] {
         if let importedRootFolderId, currentFolderId == importedRootFolderId {
             return []
@@ -298,8 +277,7 @@ struct DocumentBrowserView: View {
         if let importedRootFolderId, currentFolderId == importedRootFolderId {
             scopedFolders = folders.filter {
                 $0.systemTag == importedCanvascopeSystemTag
-                || $0.systemTag == importedCanvasSystemTag
-                || $0.systemTag == importedGradescopeSystemTag
+                    || $0.parentFolderId == importedRootFolderId
             }
         } else if let currentFolderId {
             scopedFolders = folders.filter { $0.parentFolderId == currentFolderId }
@@ -307,8 +285,6 @@ struct DocumentBrowserView: View {
             scopedFolders = folders.filter {
                 $0.parentFolderId == nil
                 && $0.systemTag != importedCanvascopeSystemTag
-                && $0.systemTag != importedCanvasSystemTag
-                && $0.systemTag != importedGradescopeSystemTag
             }
         }
 
@@ -542,6 +518,9 @@ struct DocumentBrowserView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 handleScenePhaseChange(newPhase)
             }
+            .onChange(of: authManager.userId) { oldValue, newValue in
+                handleAuthenticatedUserChange(oldUserId: oldValue, newUserId: newValue)
+            }
             .onChange(of: searchText) { _, _ in
                 runGlobalSearch()
             }
@@ -620,6 +599,19 @@ struct DocumentBrowserView: View {
         }
     }
 
+    private func handleAuthenticatedUserChange(oldUserId: UUID?, newUserId: UUID?) {
+        guard launchConfiguration == nil else { return }
+        guard oldUserId != newUserId else { return }
+
+        clearAccountScopedLibraryState()
+        hasLoaded = false
+
+        guard newUserId != nil else { return }
+        Task {
+            await performInitialLoadIfNeeded()
+        }
+    }
+
     private func performInitialLoadIfNeeded() async {
         guard !hasLoaded else { return }
         hasLoaded = true
@@ -649,6 +641,30 @@ struct DocumentBrowserView: View {
         stopImportedFolderPolling()
     }
 
+    private func clearAccountScopedLibraryState() {
+        backgroundSyncToastTask?.cancel()
+        searchRefreshTask?.cancel()
+        stopImportedFolderPolling()
+
+        documents = []
+        folders = []
+        documentFolderMap = [:]
+        recentlyOpenedDocumentIds = []
+        globalSearchResults = []
+        recoverySnapshots = []
+        selectedFolderIDs = []
+        selectedDocumentIDs = []
+        currentFolderId = nil
+        editorRoute = nil
+        sharePayload = nil
+        isSelectionMode = false
+        isRefreshingRemoteDocuments = false
+        isSyncingCloud = false
+        isLoading = false
+        errorMessage = nil
+        DocumentSearchIndex.shared.removeAll()
+    }
+
     private func applyLaunchConfiguration(_ launchConfiguration: LectraLibraryLaunchConfiguration) {
         documents = launchConfiguration.documents
         folders = launchConfiguration.folders
@@ -662,6 +678,7 @@ struct DocumentBrowserView: View {
         isICloudAvailable = false
         isLoading = false
         errorMessage = nil
+        ensureImportedFolderHierarchyExists()
         refreshLibraryDerivatives(reloadRecoverySnapshots: false)
         pruneFolderMappingForCurrentData()
     }
@@ -725,9 +742,13 @@ struct DocumentBrowserView: View {
                         Task {
                             await signOutFromLectra()
                         }
+                    },
+                    onDeleteAccount: {
+                        Task {
+                            await deleteAccountFromLectra()
+                        }
                     }
                 )
-                .environmentObject(gradescopeManager)
                 .id(accountSettingsInitialTab)
             }
             .sheet(isPresented: $showFilePicker) {
@@ -866,7 +887,7 @@ struct DocumentBrowserView: View {
            !userEmail.isEmpty {
             return userEmail
         }
-        return "Canvascope Account"
+        return "Lectra Account"
     }
 
     private func openAccountSettings(at tab: AccountSettingsView.SettingsTab = .account) {
@@ -875,10 +896,22 @@ struct DocumentBrowserView: View {
     }
 
     private func signOutFromLectra() async {
-        gradescopeManager.logout()
-        await CanvasCookieStore.clearPersistedSession()
+        LegacyThirdPartyIntegrationData.clearFromDevice()
         await authManager.signOut()
         showAccountSettingsModal = false
+    }
+
+    private func deleteAccountFromLectra() async {
+        do {
+            try await authManager.deleteAccount()
+            LegacyThirdPartyIntegrationData.clearFromDevice()
+            showAccountSettingsModal = false
+        } catch {
+            showFeatureNotice(
+                "We couldn't delete your account. Please check your connection and try again, or contact support.",
+                force: true
+            )
+        }
     }
 
     private func showBackgroundSyncToast(_ message: String) {
@@ -921,7 +954,7 @@ struct DocumentBrowserView: View {
                                 .foregroundStyle(LectraColor.textPrimary)
                                 .lineLimit(1)
 
-                            Text("Canvascope workspace")
+                            Text("Lectra workspace")
                                 .font(LectraTypography.footnote)
                                 .foregroundStyle(LectraColor.textTertiary)
                                 .lineLimit(1)
@@ -970,32 +1003,17 @@ struct DocumentBrowserView: View {
     }
 
     private var brandMark: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            LectraColor.paper.opacity(0.94),
-                            LectraColor.paperMuted.opacity(0.82)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
-                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
-                )
-
-            Image("LaunchMark")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 30, height: 30)
-                .accessibilityHidden(true)
-        }
-        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-        .lectraShadow(LectraElevation.low())
-        .accessibilityHidden(true)
+        Image("AppLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+            .clipShape(RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                    .stroke(LectraColor.edgeStroke, lineWidth: 1)
+            )
+            .lectraShadow(LectraElevation.low())
+            .accessibilityHidden(true)
     }
 
     private var collapseSidebarButton: some View {
@@ -1088,10 +1106,6 @@ struct DocumentBrowserView: View {
             return AnyView(favoritesPane)
         case .shared:
             return AnyView(sharedPane)
-        case .courseBrain:
-            return AnyView(courseBrainPane)
-        case .gradescope:
-            return AnyView(gradescopePane)
         }
     }
 
@@ -1325,83 +1339,6 @@ struct DocumentBrowserView: View {
         }
     }
 
-    private var courseBrainPane: some View {
-        CourseBrainPane(
-            documents: documents,
-            importedDocumentIDForResourceURL: { url in
-                existingLectraDocumentID(forSourceURL: url)
-            },
-            onImportPDF: { url, title in
-                downloadAndImportCourseBrainPDF(from: url, suggestedTitle: title)
-            },
-            onOpenDocument: { documentId in
-                openEditor(documentId: documentId)
-            },
-            canvasImportService: canvasImportService,
-            onStartCanvasImport: { selectedCourses in
-                startCanvasCourseImport(courses: selectedCourses)
-            }
-        )
-    }
-
-    private func startCanvasCourseImport(courses: [CourseTwin]) {
-        ensureImportedFolderHierarchyExists()
-
-        let dependencies = CanvasImportService.Dependencies(
-            canvasFolderId: { importedCanvasFolderId },
-            findOrCreateFolder: { name, parentId in
-                findOrCreateChildFolder(named: name, parentFolderId: parentId)
-            },
-            documentIdForSourceURL: { url in
-                existingLectraDocumentID(forSourceURL: url)
-            },
-            importDownloadedPDF: { tempURL, title, sourceURL, folderId, createdAt in
-                importCanvasImportedPDF(
-                    from: tempURL,
-                    title: title,
-                    sourceURL: sourceURL,
-                    folderId: folderId,
-                    createdAt: createdAt
-                )
-            }
-        )
-
-        canvasImportService.start(courses: courses, dependencies: dependencies)
-    }
-
-    /// Downloads a PDF from a Canvas URL using an in-app WKWebView
-    /// (which shares Safari's session cookies) and imports it into Canvascope.
-    private func downloadAndImportCourseBrainPDF(from url: URL, suggestedTitle: String) {
-        if let existingDocumentID = existingLectraDocumentID(forSourceURL: url) {
-            openEditor(documentId: existingDocumentID)
-            return
-        }
-
-        featureNotice = "Downloading \"\(suggestedTitle)\"…"
-
-        let downloader = CourseBrainPDFDownloader()
-        // Retain the downloader for the duration of the download
-        self.activePDFDownloader = downloader
-
-        downloader.download(from: url, title: suggestedTitle) { result in
-            activePDFDownloader = nil
-
-            switch result {
-            case .success(let fileURL):
-                importLocalPDF(from: fileURL, sourceURL: url)
-                featureNotice = "Imported \"\(suggestedTitle)\" into Canvascope."
-            case .failure(let error):
-                featureNotice = "Download failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private var gradescopePane: some View {
-        GradescopeHubView { templateURL, suggestedName, assignment in
-            importGradescopeTemplate(from: templateURL, suggestedName: suggestedName, assignment: assignment)
-        }
-    }
-
     private func genericTopBar(title: String, filterTitle: String, includeSearch: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
@@ -1556,6 +1493,7 @@ struct DocumentBrowserView: View {
             }
         )
         .frame(width: metrics.cardWidth, height: metrics.folderTotalHeight, alignment: .topLeading)
+        .accessibilityIdentifier("library.folder.card.\(folder.id.uuidString)")
         .overlay(alignment: .topLeading) {
             if isSelectionMode {
                 LibrarySelectionIndicatorView(isSelected: activeSelectedFolderIDs.contains(folder.id))
@@ -1866,6 +1804,7 @@ struct DocumentBrowserView: View {
         .buttonStyle(.plain)
         .disabled(isSelectionMode)
         .opacity(isSelectionMode ? 0.5 : 1)
+        .accessibilityIdentifier("library.new")
         .popover(isPresented: $showCreateMenu, arrowEdge: .top) {
             CreateMenuPopoverView(
                 onNotebook: {
@@ -1889,33 +1828,11 @@ struct DocumentBrowserView: View {
                     showCreateMenu = false
                     showCreateFolderAlert = true
                 },
-                onQuickRecord: {
-                    showCreateMenu = false
-                    createBlankLocalDocument(title: "Quick Record")
-                },
                 onQuickNote: {
                     showCreateMenu = false
                     createBlankLocalDocument(title: "QuickNote")
                 },
-                onScanDocuments: {
-                    showCreateMenu = false
-                    filePickerContentTypes = [.pdf, .image]
-                    showFilePicker = true
-                },
-                onStudySet: {
-                    showCreateMenu = false
-                    createFolder(named: "Study Set")
-                },
                 onImage: {
-                    showCreateMenu = false
-                    filePickerContentTypes = [.image]
-                    showFilePicker = true
-                },
-                onImportGradescopeTemplate: {
-                    showCreateMenu = false
-                    selectSection(.gradescope)
-                },
-                onTakePhoto: {
                     showCreateMenu = false
                     filePickerContentTypes = [.image]
                     showFilePicker = true
@@ -2312,9 +2229,7 @@ struct DocumentBrowserView: View {
     }
 
     private func parentFolderId(for folderId: UUID) -> UUID? {
-        if folderId == importedCanvascopeFolderId
-            || folderId == importedCanvasFolderId
-            || folderId == importedGradescopeFolderId {
+        if folderId == importedCanvascopeFolderId {
             return importedRootFolderId
         }
         if let folder = folders.first(where: { $0.id == folderId }),
@@ -2435,7 +2350,7 @@ struct DocumentBrowserView: View {
     }
 
     private func isDocumentInProtectedImportedFolder(_ document: LocalDocument) -> Bool {
-        // Product rule: only the four managed folders themselves are locked.
+        // Product rule: only the managed import folders themselves are locked.
         // Documents living inside them (including the synced Canvascope imports)
         // are user content and can be deleted.
         return false
@@ -2448,21 +2363,16 @@ struct DocumentBrowserView: View {
     private func ensureImportedFolderHierarchyExists() {
         ensureImportedRootFolderExists()
         ensureImportedCanvascopeFolderExists()
-        ensureImportedCanvasFolderExists()
-        ensureImportedGradescopeFolderExists()
+        migrateLegacyThirdPartyImportFolders()
     }
 
     private func importedFolderManagerName(for folderId: UUID) -> String? {
         if let systemTag = folders.first(where: { $0.id == folderId })?.systemTag {
             switch systemTag {
             case importedRootSystemTag:
-                return "Canvascope"
+                return "Lectra"
             case importedCanvascopeSystemTag:
                 return "Canvascope"
-            case importedCanvasSystemTag:
-                return "Canvas"
-            case importedGradescopeSystemTag:
-                return "Gradescope"
             default:
                 break
             }
@@ -2470,8 +2380,6 @@ struct DocumentBrowserView: View {
         if let ancestorTag = ancestorImportedSystemTag(for: folderId) {
             switch ancestorTag {
             case importedCanvascopeSystemTag: return "Canvascope"
-            case importedCanvasSystemTag: return "Canvas"
-            case importedGradescopeSystemTag: return "Gradescope"
             default: return nil
             }
         }
@@ -2483,14 +2391,14 @@ struct DocumentBrowserView: View {
     }
 
     private func canDeleteFolder(_ folderId: UUID) -> Bool {
-        // Anything nested inside the three managed import folders is user content
-        // and can be deleted; only the four managed folders themselves are locked.
+        // Anything nested inside the managed import folder is user content
+        // and can be deleted; only the managed folders themselves are locked.
         if isImportedManagedDescendantFolder(folderId) { return true }
         return !isProtectedImportedFolder(folderId)
     }
 
-    /// True for a user-created folder nested under "Imported From Canvas/Canvascope/Gradescope".
-    /// The three system folders themselves (and the "Imported" root) return false.
+    /// True for a user-created folder nested under a managed import folder.
+    /// The system folders themselves (and the "Imported" root) return false.
     private func isImportedManagedDescendantFolder(_ folderId: UUID) -> Bool {
         guard let folder = folders.first(where: { $0.id == folderId }) else { return false }
         guard folder.systemTag == nil else { return false }
@@ -2501,9 +2409,7 @@ struct DocumentBrowserView: View {
         var current: UUID? = folderId
         var visited: Set<UUID> = []
         let recognized: Set<String> = [
-            importedCanvascopeSystemTag,
-            importedCanvasSystemTag,
-            importedGradescopeSystemTag
+            importedCanvascopeSystemTag
         ]
         while let id = current {
             if !visited.insert(id).inserted { return nil }
@@ -2536,12 +2442,6 @@ struct DocumentBrowserView: View {
         }
         if proposedName.localizedCaseInsensitiveCompare(importedCanvascopeFolderName) == .orderedSame {
             return "\"\(importedCanvascopeFolderName)\" is reserved."
-        }
-        if proposedName.localizedCaseInsensitiveCompare(importedCanvasFolderName) == .orderedSame {
-            return "\"\(importedCanvasFolderName)\" is reserved."
-        }
-        if proposedName.localizedCaseInsensitiveCompare(importedGradescopeFolderName) == .orderedSame {
-            return "\"\(importedGradescopeFolderName)\" is reserved."
         }
         return nil
     }
@@ -2644,47 +2544,23 @@ struct DocumentBrowserView: View {
         }
     }
 
-    private func ensureImportedCanvasFolderExists() {
+    private func migrateLegacyThirdPartyImportFolders() {
+        guard let importedRootFolderId else { return }
         var changed = false
+        let legacyTags: Set<String> = [
+            legacyCanvasImportSystemTag,
+            legacySubmissionImportSystemTag
+        ]
 
-        var taggedIndices = folders.indices.filter { folders[$0].systemTag == importedCanvasSystemTag }
-        if taggedIndices.count > 1 {
-            for idx in taggedIndices.dropFirst() {
-                folders[idx].systemTag = nil
-                changed = true
+        for index in folders.indices {
+            guard let tag = folders[index].systemTag,
+                  legacyTags.contains(tag) else {
+                continue
             }
-            taggedIndices = folders.indices.filter { folders[$0].systemTag == importedCanvasSystemTag }
-        }
 
-        if let taggedIndex = taggedIndices.first {
-            if folders[taggedIndex].name != importedCanvasFolderName {
-                folders[taggedIndex].name = importedCanvasFolderName
-                changed = true
-            }
-            if changed {
-                saveFolders()
-            }
-            return
-        }
-
-        if let namedIndex = folders.firstIndex(where: {
-            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                .localizedCaseInsensitiveCompare(importedCanvasFolderName) == .orderedSame
-        }) {
-            folders[namedIndex].name = importedCanvasFolderName
-            folders[namedIndex].systemTag = importedCanvasSystemTag
-            changed = true
-        } else {
-            let folder = LocalFolder(
-                id: UUID(),
-                name: importedCanvasFolderName,
-                createdAt: Date(),
-                colorHex: nil,
-                iconSystemName: "folder",
-                systemTag: importedCanvasSystemTag,
-                parentFolderId: nil
-            )
-            folders = [folder] + folders
+            folders[index].systemTag = nil
+            folders[index].parentFolderId = importedRootFolderId
+            folders[index].name = neutralLegacyImportFolderName(excluding: index)
             changed = true
         }
 
@@ -2693,53 +2569,22 @@ struct DocumentBrowserView: View {
         }
     }
 
-    private func ensureImportedGradescopeFolderExists() {
-        var changed = false
-
-        var taggedIndices = folders.indices.filter { folders[$0].systemTag == importedGradescopeSystemTag }
-        if taggedIndices.count > 1 {
-            for idx in taggedIndices.dropFirst() {
-                folders[idx].systemTag = nil
-                changed = true
-            }
-            taggedIndices = folders.indices.filter { folders[$0].systemTag == importedGradescopeSystemTag }
+    private func neutralLegacyImportFolderName(excluding excludedIndex: Array<LocalFolder>.Index) -> String {
+        let existingNames = Set(
+            folders.indices
+                .filter { $0 != excludedIndex }
+                .map { folders[$0].name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        )
+        let baseName = "Imported Files"
+        if !existingNames.contains(baseName.lowercased()) {
+            return baseName
         }
 
-        if let taggedIndex = taggedIndices.first {
-            if folders[taggedIndex].name != importedGradescopeFolderName {
-                folders[taggedIndex].name = importedGradescopeFolderName
-                changed = true
-            }
-            if changed {
-                saveFolders()
-            }
-            return
+        var suffix = 2
+        while existingNames.contains("\(baseName) \(suffix)".lowercased()) {
+            suffix += 1
         }
-
-        if let namedIndex = folders.firstIndex(where: {
-            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                .localizedCaseInsensitiveCompare(importedGradescopeFolderName) == .orderedSame
-        }) {
-            folders[namedIndex].name = importedGradescopeFolderName
-            folders[namedIndex].systemTag = importedGradescopeSystemTag
-            changed = true
-        } else {
-            let folder = LocalFolder(
-                id: UUID(),
-                name: importedGradescopeFolderName,
-                createdAt: Date(),
-                colorHex: nil,
-                iconSystemName: "folder",
-                systemTag: importedGradescopeSystemTag,
-                parentFolderId: nil
-            )
-            folders = [folder] + folders
-            changed = true
-        }
-
-        if changed {
-            saveFolders()
-        }
+        return "\(baseName) \(suffix)"
     }
 
     private func routeNonLocalDocumentsToImportedFolder() {
@@ -2875,7 +2720,7 @@ struct DocumentBrowserView: View {
             guard isICloudAvailable else {
                 isCloudSyncEnabled = false
                 UserDefaults.standard.set(false, forKey: cloudSyncEnabledDefaultsKey)
-                featureNotice = "Sign in to iCloud and enable iCloud Drive to sync Canvascope documents."
+                featureNotice = "Sign in to iCloud and enable iCloud Drive to sync Lectra documents."
                 return
             }
         }
@@ -3048,6 +2893,7 @@ struct DocumentBrowserView: View {
         let snapshot = RecoverySnapshotManifest(
             createdAt: Date(),
             source: location == .iCloudDrive ? "iCloud Drive" : "On Device",
+            ownerUserId: authManager.userId,
             folders: folders.map {
                 SavedLocalFolder(
                     id: $0.id,
@@ -3113,9 +2959,10 @@ struct DocumentBrowserView: View {
         recoverySnapshotsLoadGeneration += 1
         let generation = recoverySnapshotsLoadGeneration
         let roots = availableRecoveryRoots()
+        let ownerUserId = authManager.userId
 
         DispatchQueue.global(qos: .utility).async {
-            let snapshots = Self.readRecoverySnapshots(from: roots)
+            let snapshots = Self.readRecoverySnapshots(from: roots, ownerUserId: ownerUserId)
             DispatchQueue.main.async {
                 guard generation == recoverySnapshotsLoadGeneration else { return }
                 recoverySnapshots = snapshots
@@ -3124,8 +2971,10 @@ struct DocumentBrowserView: View {
     }
 
     private static func readRecoverySnapshots(
-        from roots: [(RecoverySnapshotLocation, URL)]
+        from roots: [(RecoverySnapshotLocation, URL)],
+        ownerUserId: UUID?
     ) -> [RecoverySnapshot] {
+        guard let ownerUserId else { return [] }
         let fileManager = FileManager.default
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -3152,6 +3001,7 @@ struct DocumentBrowserView: View {
                       let manifest = try? decoder.decode(RecoverySnapshotManifest.self, from: data) else {
                     continue
                 }
+                guard manifest.ownerUserId == ownerUserId else { continue }
 
                 snapshots.append(
                     RecoverySnapshot(
@@ -3162,6 +3012,7 @@ struct DocumentBrowserView: View {
                         source: manifest.source,
                         itemCount: manifest.items.count,
                         location: location,
+                        ownerUserId: manifest.ownerUserId,
                         items: manifest.items
                     )
                 )
@@ -3195,6 +3046,10 @@ struct DocumentBrowserView: View {
         guard let manifestData = try? Data(contentsOf: snapshot.manifestURL),
               let manifest = try? decoder.decode(RecoverySnapshotManifest.self, from: manifestData) else {
             featureNotice = "This recovery snapshot could not be read."
+            return
+        }
+        guard manifest.ownerUserId == authManager.userId else {
+            featureNotice = "This recovery snapshot belongs to another Lectra account."
             return
         }
 
@@ -3457,6 +3312,8 @@ struct DocumentBrowserView: View {
 
     private func refreshRemoteDocuments() async {
         guard launchConfiguration == nil else { return }
+        let expectedUserId = authManager.userId
+        guard expectedUserId != nil else { return }
 
         let shouldRefresh = await MainActor.run { () -> Bool in
             if isRefreshingRemoteDocuments {
@@ -3479,6 +3336,7 @@ struct DocumentBrowserView: View {
             let merged = mergeDocuments(fetched: fetched, local: currentLocalDocs)
 
             await MainActor.run {
+                guard authManager.userId == expectedUserId else { return }
                 documents = merged
                 applyTitleOverrides()
                 ensureImportedFolderHierarchyExists()
@@ -3516,6 +3374,7 @@ struct DocumentBrowserView: View {
         var savedLocalDocs: [LocalDocument] = []
 
         for savedItem in saved {
+            guard savedItem.belongs(to: authManager.userId) else { continue }
             let fileURL = documentsDir.appendingPathComponent(savedItem.localPath)
             guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
 
@@ -3830,108 +3689,6 @@ struct DocumentBrowserView: View {
             openEditor(documentId: doc.id)
         } catch {
             featureNotice = "Could not import PDF: \(error.localizedDescription)"
-        }
-    }
-
-    @discardableResult
-    private func importCanvasImportedPDF(
-        from temporaryURL: URL,
-        title: String,
-        sourceURL: URL,
-        folderId: UUID,
-        createdAt: Date = Date()
-    ) -> UUID? {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle = trimmedTitle.isEmpty
-            ? temporaryURL.deletingPathExtension().lastPathComponent
-            : trimmedTitle
-
-        let doc = LocalDocument(
-            title: resolvedTitle,
-            localURL: temporaryURL,
-            sourceURLString: sourceURL.absoluteString,
-            createdAt: createdAt,
-            updatedAt: createdAt
-        )
-
-        let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("pdfs", isDirectory: true)
-            .appendingPathComponent(doc.id.uuidString, isDirectory: true)
-
-        do {
-            try FileManager.default.createDirectory(at: localFolder, withIntermediateDirectories: true)
-            let destination = localFolder.appendingPathComponent("original.pdf")
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.copyItem(at: temporaryURL, to: destination)
-            doc.localPDFURL = destination
-
-            let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
-            storeLocalDocumentMetadata(
-                docId: doc.id,
-                title: resolvedTitle,
-                relativePath: relativePath,
-                sourceURLString: sourceURL.absoluteString,
-                folderId: folderId,
-                createdAt: doc.createdAt,
-                updatedAt: doc.updatedAt
-            )
-
-            documents = [doc] + documents
-            refreshLibraryDerivatives()
-            try? FileManager.default.removeItem(at: temporaryURL)
-            return doc.id
-        } catch {
-            return nil
-        }
-    }
-
-    private func importGradescopeTemplate(from url: URL, suggestedName: String, assignment: GSAssignment) {
-        ensureImportedFolderHierarchyExists()
-
-        let inferredTitle: String = {
-            let trimmed = suggestedName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                return assignment.name
-            }
-            return URL(fileURLWithPath: trimmed).deletingPathExtension().lastPathComponent
-        }()
-
-        let doc = LocalDocument(title: inferredTitle, localURL: url)
-
-        let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("pdfs", isDirectory: true)
-            .appendingPathComponent(doc.id.uuidString, isDirectory: true)
-
-        do {
-            try FileManager.default.createDirectory(at: localFolder, withIntermediateDirectories: true)
-            let destination = localFolder.appendingPathComponent("original.pdf")
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.copyItem(at: url, to: destination)
-            doc.localPDFURL = destination
-
-            let relativePath = "pdfs/\(doc.id.uuidString)/original.pdf"
-            storeLocalDocumentMetadata(
-                docId: doc.id,
-                title: inferredTitle,
-                relativePath: relativePath,
-                folderId: importedGradescopeFolderId,
-                createdAt: doc.createdAt,
-                updatedAt: doc.updatedAt
-            )
-
-            gradescopeManager.linkDocument(
-                documentId: doc.id,
-                courseId: assignment.courseId,
-                assignmentId: assignment.id,
-                mode: .template
-            )
-
-            documents = [doc] + documents
-            refreshLibraryDerivatives()
-            featureNotice = "Imported Gradescope template into \"\(importedGradescopeFolderName)\"."
-            openEditor(documentId: doc.id)
-        } catch {
-            featureNotice = "Could not import Gradescope template: \(error.localizedDescription)"
         }
     }
 
@@ -4261,7 +4018,7 @@ struct DocumentBrowserView: View {
         var existingSaved: [SavedLocalDocument] = []
         if let data = UserDefaults.standard.data(forKey: localPDFsDefaultsKey),
            let saved = try? JSONDecoder().decode([SavedLocalDocument].self, from: data) {
-            existingSaved = saved
+            existingSaved = saved.filter { $0.belongs(to: authManager.userId) }
         }
 
         var isFav = false
@@ -4278,6 +4035,7 @@ struct DocumentBrowserView: View {
             title: title,
             localPath: relativePath,
             sourceURLString: resolvedSourceURLString,
+            ownerUserId: authManager.userId,
             createdAt: createdAt,
             updatedAt: updatedAt,
             isFavorite: isFav
@@ -4512,6 +4270,7 @@ struct DocumentBrowserView: View {
             title: title,
             localPath: saved[index].localPath,
             sourceURLString: saved[index].sourceURLString,
+            ownerUserId: saved[index].ownerUserId,
             createdAt: saved[index].createdAt,
             updatedAt: updatedAt,
             isFavorite: saved[index].isFavorite
@@ -4672,7 +4431,7 @@ private struct FolderOptionsPopoverView: View {
                         Text(folderName)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(LectraColor.textPrimary)
-                        Text("Managed by \(protectedFolderManagerName ?? "Canvascope")")
+                        Text("Managed by \(protectedFolderManagerName ?? "Lectra")")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(LectraColor.textTertiary)
                     }
@@ -4965,13 +4724,8 @@ private struct CreateMenuPopoverView: View {
     let onWhiteboard: () -> Void
     let onImport: () -> Void
     let onFolder: () -> Void
-    let onQuickRecord: () -> Void
     let onQuickNote: () -> Void
-    let onScanDocuments: () -> Void
-    let onStudySet: () -> Void
     let onImage: () -> Void
-    let onImportGradescopeTemplate: () -> Void
-    let onTakePhoto: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -4994,10 +4748,7 @@ private struct CreateMenuPopoverView: View {
 
             VStack(spacing: 0) {
                 PopoverActionRow(title: "Import PDF", icon: "square.and.arrow.down", action: onImport)
-                PopoverActionRow(title: "Import Gradescope Template", icon: "graduationcap", action: onImportGradescopeTemplate)
-                PopoverActionRow(title: "Scan Documents", icon: "doc.viewfinder", action: onScanDocuments)
-                PopoverActionRow(title: "Image", icon: "photo", action: onImage)
-                PopoverActionRow(title: "Take Photo", icon: "camera", showDivider: false, action: onTakePhoto)
+                PopoverActionRow(title: "Image", icon: "photo", showDivider: false, action: onImage)
             }
             .background(LectraColor.surfaceFloating.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -5007,9 +4758,7 @@ private struct CreateMenuPopoverView: View {
                 .foregroundColor(LectraColor.textTertiary)
 
             VStack(spacing: 0) {
-                PopoverActionRow(title: "QuickNote", icon: "square.and.pencil", action: onQuickNote)
-                PopoverActionRow(title: "Quick Record", icon: "mic.badge.plus", action: onQuickRecord)
-                PopoverActionRow(title: "Study Set", icon: "rectangle.stack.badge.play", showDivider: false, action: onStudySet)
+                PopoverActionRow(title: "QuickNote", icon: "square.and.pencil", showDivider: false, action: onQuickNote)
             }
             .background(LectraColor.surfaceFloating.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

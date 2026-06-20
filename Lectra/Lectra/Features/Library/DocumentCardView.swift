@@ -2,7 +2,7 @@
 //  DocumentCardView.swift
 //  Lectra
 //
-//  Canvascope workspace document card for library grids.
+//  Lectra workspace document card for library grids.
 //
 
 import SwiftUI

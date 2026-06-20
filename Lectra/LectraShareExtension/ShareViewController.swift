@@ -51,7 +51,7 @@ final class ShareViewController: UIViewController {
         markView.addSubview(markLabel)
 
         let titleLabel = UILabel()
-        titleLabel.text = "Send to Canvascope"
+        titleLabel.text = "Send to Lectra"
         titleLabel.font = .preferredFont(forTextStyle: .title3)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textAlignment = .center
@@ -146,16 +146,16 @@ final class ShareViewController: UIViewController {
     @MainActor
     private func startShareFlow() async {
         do {
-            setStatus("Checking Canvascope account...")
+            setStatus("Checking Lectra account...")
             try await dropBridgeService.assertAuthenticated()
 
             setStatus("Reading shared file...")
             let fileURL = try await resolveSharedFileURL()
 
-            setStatus("Sending to Canvascope...")
+            setStatus("Sending to Lectra...")
             _ = try await dropBridgeService.uploadSharedFile(fileURL: fileURL)
 
-            setStatus("Sent to Canvascope.", isWorking: false)
+            setStatus("Sent to Lectra.", isWorking: false)
             completeAfterDelay()
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

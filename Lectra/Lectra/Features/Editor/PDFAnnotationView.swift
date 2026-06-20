@@ -35,7 +35,6 @@ struct PDFAnnotationView: View {
     var onRename: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authManager: AuthManager
-    @EnvironmentObject private var gradescopeManager: GradescopeManager
     @StateObject private var editorBridge = PDFEditorBridge()
 
     @State private var currentPage: Int = 0
@@ -85,7 +84,6 @@ struct PDFAnnotationView: View {
     @State private var currentDragLocation: CGPoint? = nil
     @State private var initialTouchOffset: CGSize = .zero
     @State private var canvascopeDeliveryTask: Task<Void, Never>? = nil
-    @State private var showGradescopeSubmitSheet = false
     @State private var showIntelligenceSheet = false
     @State private var showDocumentSearchSheet = false
     @State private var documentSearchQuery = ""
@@ -208,10 +206,6 @@ struct PDFAnnotationView: View {
         .animation(LectraMotion.indicatorFade, value: showPageIndicator)
         .animation(LectraMotion.toast, value: saveMessage)
         .animation(LectraMotion.quick, value: isRenamingTitle)
-        .sheet(isPresented: $showGradescopeSubmitSheet) {
-            GradescopeSubmitSheet(document: document, repository: repository)
-                .environmentObject(gradescopeManager)
-        }
         .sheet(isPresented: $showIntelligenceSheet) {
             if let url = document.localPDFURL {
                 DocumentInsightsSheet(
@@ -498,6 +492,10 @@ struct PDFAnnotationView: View {
     ) -> EditorToolbarDockEdge {
         let leftDist = location.x - safeAreaInsets.leading
         let rightDist = size.width - safeAreaInsets.trailing - location.x
+        if currentDockProfile.requiresVerticalToolbar {
+            return leftDist <= rightDist ? .left : .right
+        }
+
         let topDist = location.y - safeAreaInsets.top
         let bottomDist = size.height - safeAreaInsets.bottom - location.y
 
@@ -563,7 +561,6 @@ struct PDFAnnotationView: View {
             onExportCanvascope: {
                 Task { @MainActor in await exportToCanvascope() }
             },
-            onShowGradescope: { showGradescopeSubmitSheet = true },
             onShare: shareDocument,
             onShowIntelligence: { showIntelligenceSheet = true },
             isTitleFocused: $isTitleFieldFocused
@@ -755,7 +752,7 @@ struct PDFAnnotationView: View {
                     userId: auth.userId
                 )
             } catch {
-                print("[Editor] Background save and sync failed: \(error)")
+                LectraDebugLog("[Editor] Background save and sync failed: \(error)")
             }
         }
     }
@@ -804,7 +801,7 @@ struct PDFAnnotationView: View {
             return
         }
 
-        setToast("Sending to Canvascope…", style: .info, autoHideAfter: nil)
+        setToast("Exporting to Canvascope…", style: .info, autoHideAfter: nil)
 
         do {
             let receipt = try await canvascopeExportService.uploadToCanvascope(fileURL: exportURL)
@@ -841,7 +838,7 @@ struct PDFAnnotationView: View {
                 await MainActor.run {
                     switch status.status {
                     case "downloaded":
-                        setToast("Downloaded on your laptop in Canvascope ✓", style: .success, autoHideAfter: 3.2)
+                        setToast("Downloaded on your laptop in Canvascope", style: .success, autoHideAfter: 3.2)
                     case "canceled":
                         setToast("Canvascope download canceled", style: .info, autoHideAfter: 2.8)
                     default:
@@ -1464,11 +1461,12 @@ private final class TiledPDFPageView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .white
-        isOpaque = true
+        backgroundColor = .clear
+        isOpaque = false
         contentMode = .redraw
 
         let screenScale = UIScreen.main.scale
+        tiledLayer.backgroundColor = UIColor.clear.cgColor
         tiledLayer.levelsOfDetail = 3
         tiledLayer.levelsOfDetailBias = 3
         tiledLayer.tileSize = CGSize(width: 512, height: 512)
@@ -1724,9 +1722,18 @@ private final class PencilStrokeGestureRecognizer: UIGestureRecognizer {
     private(set) var sampledTouches: [UITouch] = []
     private(set) var latestTouch: UITouch?
     private var activeTouch: UITouch?
+    private let acceptsDirectTouches = LectraLaunchConfiguration.current.isUITesting
+
+    var acceptedTouchTypeNumbers: [NSNumber] {
+        var types = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        if acceptsDirectTouches {
+            types.append(NSNumber(value: UITouch.TouchType.direct.rawValue))
+        }
+        return types
+    }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard let touch = touches.first(where: { $0.type == .pencil }) else { return }
+        guard let touch = touches.first(where: isAcceptedTouch(_:)) else { return }
         if let activeTouch, activeTouch !== touch { return }
         activeTouch = touch
         captureSamples(for: touch, event: event)
@@ -1763,6 +1770,10 @@ private final class PencilStrokeGestureRecognizer: UIGestureRecognizer {
     private func captureSamples(for touch: UITouch, event: UIEvent) {
         latestTouch = touch
         sampledTouches = event.coalescedTouches(for: touch) ?? [touch]
+    }
+
+    private func isAcceptedTouch(_ touch: UITouch) -> Bool {
+        touch.type == .pencil || (acceptsDirectTouches && touch.type == .direct)
     }
 }
 
@@ -1825,7 +1836,7 @@ final class VectorInkCanvasView: UIView {
 
     private lazy var pencilGesture: PencilStrokeGestureRecognizer = {
         let gesture = PencilStrokeGestureRecognizer(target: self, action: #selector(handlePencilGesture(_:)))
-        gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        gesture.allowedTouchTypes = gesture.acceptedTouchTypeNumbers
         gesture.cancelsTouchesInView = true
         gesture.delaysTouchesBegan = false
         gesture.delaysTouchesEnded = false
@@ -1844,6 +1855,10 @@ final class VectorInkCanvasView: UIView {
         backgroundColor = .clear
         isOpaque = false
         clipsToBounds = true
+        isAccessibilityElement = true
+        accessibilityLabel = "PDF annotation canvas"
+        accessibilityIdentifier = "editor.canvas"
+        accessibilityTraits = [.allowsDirectInteraction]
         layer.shouldRasterize = false
         layer.drawsAsynchronously = false
         configureEraserPreviewLayer()
@@ -1884,6 +1899,14 @@ final class VectorInkCanvasView: UIView {
     }
 
 #if DEBUG
+    var testingHasActiveSelection: Bool {
+        activeSelection != nil
+    }
+
+    var testingSelectionActionsAreVisible: Bool {
+        !selectionActionsView.isHidden
+    }
+
     func testingSetActiveStroke(
         normalizedPoints: [InkPoint],
         width: CGFloat = 1.0,
@@ -1894,6 +1917,33 @@ final class VectorInkCanvasView: UIView {
         activeStrokeWidth = width
         activeStrokeColor = color
         activeBlendMode = blendMode
+    }
+
+    func testingErase(at point: CGPoint, width: CGFloat = 3.0, mode: EraserMode = .stroke) {
+        tool = InkToolDescriptor(
+            annotationTool: .eraser,
+            inkColor: .black,
+            width: width,
+            eraserMode: mode
+        )
+        erase(at: point)
+    }
+
+    func testingSelectWithLassoPolygon(_ points: [CGPoint]) {
+        let selectedIndexes = drawing.strokes.enumerated().compactMap { index, stroke -> Int? in
+            let strokePoints = denormalizedPoints(for: stroke)
+            return LassoGeometry.strokeIntersectsPolygon(stroke: strokePoints, polygon: points) ? index : nil
+        }
+        activeSelection = buildSelection(from: selectedIndexes)
+        updateSelectionOverlay()
+    }
+
+    func testingDuplicateSelection() {
+        handleDuplicateSelection()
+    }
+
+    func testingDeleteSelection() {
+        handleDeleteSelection()
     }
 #endif
 
@@ -2097,6 +2147,7 @@ final class VectorInkCanvasView: UIView {
         button.configuration = configuration
         button.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         button.accessibilityLabel = title
+        button.accessibilityIdentifier = "editor.selection.\(title.lowercased())"
     }
 
     private func layoutSelectionActionButtons() {
@@ -2673,16 +2724,47 @@ final class VectorInkCanvasView: UIView {
         guard !stroke.points.isEmpty else { return false }
         let threshold = max(radius + stroke.width * 0.5, radius)
         let thresholdSquared = threshold * threshold
+        let points = stroke.points.map { denormalizedPoint(for: $0) }
 
-        for sample in stroke.points {
-            let candidate = denormalizedPoint(for: sample)
+        for candidate in points {
             let dx = candidate.x - point.x
             let dy = candidate.y - point.y
             if (dx * dx) + (dy * dy) <= thresholdSquared {
                 return true
             }
         }
+
+        guard points.count > 1 else { return false }
+
+        for index in 0..<(points.count - 1) {
+            if squaredDistance(from: point, toSegmentStart: points[index], end: points[index + 1]) <= thresholdSquared {
+                return true
+            }
+        }
+
         return false
+    }
+
+    private func squaredDistance(from point: CGPoint, toSegmentStart start: CGPoint, end: CGPoint) -> CGFloat {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lengthSquared = dx * dx + dy * dy
+
+        guard lengthSquared > .leastNonzeroMagnitude else {
+            let pointDx = point.x - start.x
+            let pointDy = point.y - start.y
+            return pointDx * pointDx + pointDy * pointDy
+        }
+
+        let projection = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared
+        let clampedProjection = min(max(projection, 0), 1)
+        let closest = CGPoint(
+            x: start.x + clampedProjection * dx,
+            y: start.y + clampedProjection * dy
+        )
+        let closestDx = point.x - closest.x
+        let closestDy = point.y - closest.y
+        return closestDx * closestDx + closestDy * closestDy
     }
 
     private func rebuildStrokeLayers() {
@@ -2896,6 +2978,7 @@ final class VectorInkCanvasView: UIView {
 }
 
 private final class PageView: UIView {
+    private let previewImageView = UIImageView()
     private let pdfPageView = TiledPDFPageView()
     let canvasView = VectorInkCanvasView()
     private(set) var isRendered = false
@@ -2904,7 +2987,18 @@ private final class PageView: UIView {
     init(pageIndex: Int) {
         self.pageIndex = pageIndex
         super.init(frame: .zero)
-        
+
+        backgroundColor = .white
+        isOpaque = true
+
+        // Hide CATiledLayer's per-tile paint latency during fast page turns.
+        previewImageView.translatesAutoresizingMaskIntoConstraints = false
+        previewImageView.backgroundColor = .white
+        previewImageView.isOpaque = true
+        previewImageView.contentMode = .scaleToFill
+        previewImageView.clipsToBounds = true
+        addSubview(previewImageView)
+
         pdfPageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pdfPageView)
 
@@ -2912,6 +3006,11 @@ private final class PageView: UIView {
         addSubview(canvasView)
 
         NSLayoutConstraint.activate([
+            previewImageView.topAnchor.constraint(equalTo: topAnchor),
+            previewImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            previewImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            previewImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             pdfPageView.topAnchor.constraint(equalTo: topAnchor),
             pdfPageView.leadingAnchor.constraint(equalTo: leadingAnchor),
             pdfPageView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -2929,19 +3028,51 @@ private final class PageView: UIView {
     func render(pdfPage: PDFPage) {
         if isRendered { return }
         isRendered = true
+        previewImageView.image = Self.previewImage(for: pdfPage, targetSize: bounds.size)
         pdfPageView.setPage(pdfPage)
     }
 
     func renderBlank(pageBounds: CGRect) {
         if isRendered { return }
         isRendered = true
+        previewImageView.image = nil
         pdfPageView.setBlankPage(bounds: pageBounds)
     }
     
     func clear() {
         if !isRendered { return }
         isRendered = false
+        previewImageView.image = nil
         pdfPageView.setPage(nil)
+    }
+
+    private static func previewImage(for pdfPage: PDFPage, targetSize: CGSize) -> UIImage? {
+        guard targetSize.width > 1.0, targetSize.height > 1.0 else { return nil }
+
+        let pageBounds = pdfPage.bounds(for: .mediaBox)
+        guard pageBounds.width > 0.0, pageBounds.height > 0.0 else { return nil }
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = UIScreen.main.scale
+        format.opaque = true
+
+        let imageRect = CGRect(origin: .zero, size: targetSize)
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { rendererContext in
+            let context = rendererContext.cgContext
+            context.setFillColor(UIColor.white.cgColor)
+            context.fill(imageRect)
+
+            context.saveGState()
+            context.translateBy(x: 0, y: targetSize.height)
+            context.scaleBy(x: 1, y: -1)
+            context.scaleBy(
+                x: targetSize.width / pageBounds.width,
+                y: targetSize.height / pageBounds.height
+            )
+            pdfPage.draw(with: .mediaBox, to: context)
+            context.restoreGState()
+        }
     }
 }
 

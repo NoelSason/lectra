@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings surface for the Canvascope workspace. Rebuilt to fill its sheet
+/// Settings surface for the Lectra workspace. Rebuilt to fill its sheet
 /// cleanly: a fixed-width sidebar (or a horizontal tab strip when compact) and
 /// a detail pane that always stretches to the full bounds — no fixed content
 /// frame fighting the presentation size.
@@ -8,7 +8,6 @@ struct AccountSettingsView: View {
     enum SettingsTab: String, CaseIterable, Identifiable {
         case account = "Account"
         case intelligence = "Intelligence"
-        case integrations = "Integrations"
         case cloudBackup = "Cloud & Backup"
 
         var id: String { rawValue }
@@ -17,7 +16,6 @@ struct AccountSettingsView: View {
             switch self {
             case .account:      return "person.crop.circle"
             case .intelligence: return "sparkles"
-            case .integrations: return "link"
             case .cloudBackup:  return "icloud"
             }
         }
@@ -45,10 +43,12 @@ struct AccountSettingsView: View {
     let onRestoreSnapshotAsCopy: (RecoverySnapshot) -> Void
     let onRestoreSnapshotReplacing: (RecoverySnapshot) -> Void
     let onSignOut: () -> Void
+    let onDeleteAccount: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab: SettingsTab
+    @State private var showDeleteAccountConfirm = false
 
     init(
         initialTab: SettingsTab = .account,
@@ -69,7 +69,8 @@ struct AccountSettingsView: View {
         onReloadRecoverySnapshots: @escaping () -> Void,
         onRestoreSnapshotAsCopy: @escaping (RecoverySnapshot) -> Void,
         onRestoreSnapshotReplacing: @escaping (RecoverySnapshot) -> Void,
-        onSignOut: @escaping () -> Void
+        onSignOut: @escaping () -> Void,
+        onDeleteAccount: @escaping () -> Void
     ) {
         self.userName = userName
         self.userEmail = userEmail
@@ -89,6 +90,7 @@ struct AccountSettingsView: View {
         self.onRestoreSnapshotAsCopy = onRestoreSnapshotAsCopy
         self.onRestoreSnapshotReplacing = onRestoreSnapshotReplacing
         self.onSignOut = onSignOut
+        self.onDeleteAccount = onDeleteAccount
         _selectedTab = State(initialValue: initialTab)
     }
 
@@ -167,7 +169,7 @@ struct AccountSettingsView: View {
 
             Spacer(minLength: 0)
 
-            Text("Canvascope workspace account, integration, and backup controls.")
+            Text("Lectra workspace account, intelligence, and backup controls.")
                 .font(LectraTypography.captionMedium)
                 .foregroundColor(LectraColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -332,8 +334,6 @@ struct AccountSettingsView: View {
                 accountTab
             case .intelligence:
                 IntelligenceSettingsView()
-            case .integrations:
-                IntegrationsSettingsView()
             case .cloudBackup:
                 CloudBackupSettingsTabView(
                     isCloudSyncEnabled: isCloudSyncEnabled,
@@ -367,7 +367,7 @@ struct AccountSettingsView: View {
                         .font(LectraTypography.displaySmall)
                         .foregroundColor(LectraColor.textPrimary)
 
-                    Text("Canvascope identity and session details.")
+                    Text("Lectra identity and session details.")
                         .font(LectraTypography.body)
                         .foregroundColor(LectraColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -394,14 +394,14 @@ struct AccountSettingsView: View {
                                     .lineLimit(2)
                             }
 
-                            LectraStatusBadge(title: "Signed in to Canvascope", color: LectraColor.accentSoft)
+                            LectraStatusBadge(title: "Signed in to Lectra", color: LectraColor.accentSoft)
                                 .padding(.top, 2)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Google account details are used for this Canvascope workspace session.")
+                        Text("Google account details are used for this Lectra workspace session.")
                             .font(LectraTypography.body)
                             .foregroundColor(LectraColor.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -410,18 +410,72 @@ struct AccountSettingsView: View {
                             LectraHaptics.warning()
                             onSignOut()
                         } label: {
-                            Label("Sign Out of Canvascope", systemImage: "rectangle.portrait.and.arrow.right")
+                            Label("Sign Out of Lectra", systemImage: "rectangle.portrait.and.arrow.right")
                         }
                         .buttonStyle(LectraDestructiveButtonStyle())
                     }
                 }
                 .padding(22)
                 .background(panelBackground)
+
+                privacyAndDeletionPanel
             }
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(28)
         }
+        .alert("Delete Account?", isPresented: $showDeleteAccountConfirm) {
+            Button("Delete Account", role: .destructive) { onDeleteAccount() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your Lectra account along with all synced documents, notes, and cloud backups. This cannot be undone.")
+        }
+    }
+
+    private var privacyAndDeletionPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Privacy & Data")
+                    .font(LectraTypography.title)
+                    .foregroundColor(LectraColor.textPrimary)
+
+                HStack(spacing: 20) {
+                    Link(destination: LectraLinks.privacyPolicy) {
+                        Label("Privacy Policy", systemImage: "hand.raised")
+                            .font(LectraTypography.body)
+                            .foregroundColor(LectraColor.accentSoft)
+                    }
+                    .accessibilityIdentifier("settings.account.privacy")
+
+                    Link(destination: LectraLinks.support) {
+                        Label("Support", systemImage: "questionmark.circle")
+                            .font(LectraTypography.body)
+                            .foregroundColor(LectraColor.accentSoft)
+                    }
+                    .accessibilityIdentifier("settings.account.support")
+                }
+            }
+
+            Divider().overlay(LectraColor.edgeStroke)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Deleting your account removes your Lectra identity and all data stored on our servers. Documents kept only on this iPad are removed when you sign out.")
+                    .font(LectraTypography.body)
+                    .foregroundColor(LectraColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button(role: .destructive) {
+                    LectraHaptics.warning()
+                    showDeleteAccountConfirm = true
+                } label: {
+                    Label("Delete Account", systemImage: "trash")
+                }
+                .buttonStyle(LectraDestructiveButtonStyle())
+                .accessibilityIdentifier("settings.account.delete")
+            }
+        }
+        .padding(22)
+        .background(panelBackground)
     }
 
     private var panelBackground: some View {

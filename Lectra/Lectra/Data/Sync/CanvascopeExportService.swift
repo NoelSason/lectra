@@ -2,7 +2,7 @@
 //  CanvascopeExportService.swift
 //  Lectra
 //
-//  Uploads a local PDF to DropBridge v2 so the signed-in Canvascope extension
+//  Uploads a local PDF to DropBridge v2 so the signed-in Lectra extension
 //  can auto-download it without manual pairing.
 //
 
@@ -28,6 +28,17 @@ struct CanvascopeUploadStatusReceipt: Decodable {
     let expiresAt: String?
 }
 
+nonisolated private struct CanvascopeUploadStatusEnvelope: Decodable {
+    struct Payload: Decodable {
+        let uploadId: String?
+        let status: String?
+    }
+
+    let payload: Payload?
+    let uploadId: String?
+    let status: String?
+}
+
 enum CanvascopeExportError: LocalizedError {
     case notAuthenticated
     case noActiveReceiver
@@ -39,9 +50,9 @@ enum CanvascopeExportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notAuthenticated:
-            return "Please sign in again to export to Canvascope."
+            return "Please sign in again to export to Lectra."
         case .noActiveReceiver:
-            return "Open the Canvascope extension on desktop to receive this file."
+            return "Open the Lectra extension on desktop to receive this file."
         case .fileTooLarge:
             return "This file is too large to export (25 MB max)."
         case .network(let message):
@@ -49,7 +60,7 @@ enum CanvascopeExportError: LocalizedError {
         case .server(let message):
             return message
         case .invalidResponse:
-            return "Unexpected response from Canvascope export service."
+            return "Unexpected response from Lectra export service."
         }
     }
 }
@@ -218,19 +229,9 @@ final class CanvascopeExportService {
         }
     }
 
-    private struct StatusEnvelope: Decodable {
-        struct Payload: Decodable {
-            let uploadId: String?
-            let status: String?
-        }
-        let payload: Payload?
-        let uploadId: String?
-        let status: String?
-    }
-
-    private static func decodeStatusEnvelope(_ message: [String: AnyJSON]) -> StatusEnvelope? {
+    nonisolated private static func decodeStatusEnvelope(_ message: [String: AnyJSON]) -> CanvascopeUploadStatusEnvelope? {
         guard let data = try? JSONEncoder().encode(message) else { return nil }
-        return try? JSONDecoder().decode(StatusEnvelope.self, from: data)
+        return try? JSONDecoder().decode(CanvascopeUploadStatusEnvelope.self, from: data)
     }
 
     private func awaitPolledStatus(

@@ -53,7 +53,7 @@ struct CloudBackupSettingsTabView: View {
                 .font(LectraTypography.displaySmall)
                 .foregroundColor(LectraColor.textPrimary)
 
-            Text("Canvascope workspace sync, local recovery snapshots, and iCloud availability.")
+            Text("Lectra workspace sync, local recovery snapshots, and iCloud availability.")
                 .font(LectraTypography.body)
                 .foregroundColor(LectraColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

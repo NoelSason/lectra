@@ -22,6 +22,15 @@ enum EditorDockProfile: String, CaseIterable, Codable {
     case landscapeRegular
     case landscapeCompact
 
+    var requiresVerticalToolbar: Bool {
+        switch self {
+        case .portraitCompact, .landscapeCompact:
+            return true
+        case .portraitRegular, .landscapeRegular:
+            return false
+        }
+    }
+
     static func resolve(for size: CGSize) -> EditorDockProfile {
         let isPortrait = size.height >= size.width
         let compactWidthThreshold: CGFloat = 820
@@ -37,6 +46,17 @@ enum EditorDockProfile: String, CaseIterable, Codable {
         case (false, false):
             return .landscapeRegular
         }
+    }
+
+    func normalizedDockEdge(
+        _ edge: EditorToolbarDockEdge,
+        handedness: EditorHandedness
+    ) -> EditorToolbarDockEdge {
+        if requiresVerticalToolbar, !edge.isVertical {
+            return EditorToolbarDockEdge.defaultEdge(for: handedness)
+        }
+
+        return edge
     }
 }
 
