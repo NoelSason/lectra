@@ -457,6 +457,26 @@ struct DocumentBrowserView: View {
         selectedItemCount > 0
     }
 
+    /// IDs of every folder/document currently visible in this scope, used to
+    /// drive the "Select All" toggle in the selection action bar.
+    private var visibleSelectableFolderIDs: Set<UUID> {
+        Set(filteredFolders.map(\.id))
+    }
+
+    private var visibleSelectableDocumentIDs: Set<UUID> {
+        Set(filteredDocuments.map(\.id))
+    }
+
+    private var hasSelectableItems: Bool {
+        !visibleSelectableFolderIDs.isEmpty || !visibleSelectableDocumentIDs.isEmpty
+    }
+
+    private var isAllSelected: Bool {
+        hasSelectableItems
+            && visibleSelectableFolderIDs.isSubset(of: selectedFolderIDs)
+            && visibleSelectableDocumentIDs.isSubset(of: selectedDocumentIDs)
+    }
+
     private var mainContentLayout: AnyView {
         if isCompactLayout {
             // iPhone: no permanent sidebar — the pane owns the full width.
@@ -1363,15 +1383,24 @@ struct DocumentBrowserView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 13, weight: .semibold))
-                        Text(backNavigationLabel)
-                            .font(LectraTypography.caption)
+                        // On iPhone the bar is tight: drop to a chevron-only back
+                        // button so the parent name can't wrap ("Documen/ts") or
+                        // crowd the folder title. The title shows the current folder.
+                        if !isCompactLayout {
+                            Text(backNavigationLabel)
+                                .font(LectraTypography.caption)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
                     }
                     .foregroundColor(LectraColor.accentSoft)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, isCompactLayout ? 9 : 10)
                     .frame(height: 34)
                     .background(controlSurface)
                 }
                 .buttonStyle(.plain)
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("Back to \(backNavigationLabel)")
             }
 
             Text(libraryHeaderTitle)
@@ -1379,6 +1408,7 @@ struct DocumentBrowserView: View {
                 .foregroundStyle(LectraColor.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.74)
+                .layoutPriority(1)
         }
         .frame(minHeight: 38, alignment: .leading)
     }
@@ -2074,6 +2104,15 @@ struct DocumentBrowserView: View {
                     .font(LectraTypography.bodyEmphasis)
                     .foregroundColor(LectraColor.textPrimary)
 
+                bulkActionButton(
+                    title: isAllSelected ? "Deselect All" : "Select All",
+                    icon: isAllSelected ? "circle" : "checkmark.circle.fill",
+                    isEnabled: hasSelectableItems,
+                    action: {
+                        toggleSelectAll()
+                    }
+                )
+
                 Spacer(minLength: 0)
 
                 bulkActionButton(
@@ -2354,6 +2393,15 @@ struct DocumentBrowserView: View {
     private func clearSelection() {
         selectedFolderIDs.removeAll()
         selectedDocumentIDs.removeAll()
+    }
+
+    private func toggleSelectAll() {
+        if isAllSelected {
+            clearSelection()
+        } else {
+            selectedFolderIDs.formUnion(visibleSelectableFolderIDs)
+            selectedDocumentIDs.formUnion(visibleSelectableDocumentIDs)
+        }
     }
 
     private func toggleFolderSelection(_ folderId: UUID) {
@@ -2746,7 +2794,19 @@ struct DocumentBrowserView: View {
         var changed = false
         for doc in documents where doc.status != .local {
             let key = doc.id.uuidString
-            let required = importedFolderId.uuidString
+            // Course imports carry a folder chain (Course / subfolder…); nest them
+            // under "Imported From Canvascope". Legacy single sends have no chain
+            // and stay in the root folder.
+            let chain = doc.sourceDocumentData?.importFolderChain ?? []
+            let targetId: UUID
+            if chain.isEmpty {
+                targetId = importedFolderId
+            } else {
+                let result = ensureCanvascopeSubfolderChain(chain, under: importedFolderId)
+                if result.didCreate { changed = true }
+                targetId = result.leafId
+            }
+            let required = targetId.uuidString
             if documentFolderMap[key] != required {
                 documentFolderMap[key] = required
                 changed = true
@@ -2754,8 +2814,44 @@ struct DocumentBrowserView: View {
         }
 
         if changed {
+            saveFolders()
             saveDocumentFolderMap()
         }
+    }
+
+    /// Find or create the nested folder chain under the Canvascope import folder,
+    /// returning the leaf folder id. Created folders are managed descendants
+    /// (no systemTag) so they render normally and remain user-deletable.
+    private func ensureCanvascopeSubfolderChain(
+        _ chain: [String],
+        under rootId: UUID
+    ) -> (leafId: UUID, didCreate: Bool) {
+        var parentId = rootId
+        var didCreate = false
+        for rawName in chain {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.isEmpty { continue }
+            if let existing = folders.first(where: {
+                $0.parentFolderId == parentId
+                    && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+            }) {
+                parentId = existing.id
+            } else {
+                let folder = LocalFolder(
+                    id: UUID(),
+                    name: name,
+                    createdAt: Date(),
+                    colorHex: nil,
+                    iconSystemName: "folder",
+                    systemTag: nil,
+                    parentFolderId: parentId
+                )
+                folders.append(folder)
+                parentId = folder.id
+                didCreate = true
+            }
+        }
+        return (parentId, didCreate)
     }
 
     private func folderAccentColor(for folder: LocalFolder) -> Color {
@@ -4505,9 +4601,12 @@ private struct VaultFolderCardView: View {
                 Text(folderName)
                     .font(LectraTypography.bodyEmphasis)
                     .foregroundColor(LectraColor.textPrimary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .minimumScaleFactor(0.9)
+                    .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(perform: onOpen)
-                .frame(height: 24, alignment: .topLeading)
+                .frame(height: 42, alignment: .topLeading)
 
                 Text(subtitle)
                     .font(LectraTypography.captionMedium)

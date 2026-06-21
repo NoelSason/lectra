@@ -42,6 +42,11 @@ struct DocumentData: Codable, Equatable {
     let storagePath: String
     var annotatedStoragePath: String?
     var status: String   // "pending_annotation" | "annotated" | "archived"
+    /// Course-level import metadata (present on Canvascope course imports).
+    /// Used to nest imports under "Imported From Canvascope / <Course> / <subfolder>".
+    let courseName: String?
+    let folderPath: String?        // e.g. "Discussions > 202 > Solutions"
+    let pathSegments: [String]?    // e.g. ["Discussions", "202", "Solutions"]
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -50,6 +55,55 @@ struct DocumentData: Codable, Equatable {
         case storagePath        = "storagePath"
         case annotatedStoragePath = "annotatedStoragePath"
         case status
+        case courseName         = "courseName"
+        case folderPath         = "folderPath"
+        case pathSegments       = "pathSegments"
+    }
+
+    init(
+        title: String,
+        courseId: Int?,
+        sourceUrl: String?,
+        storagePath: String,
+        annotatedStoragePath: String?,
+        status: String,
+        courseName: String? = nil,
+        folderPath: String? = nil,
+        pathSegments: [String]? = nil
+    ) {
+        self.title = title
+        self.courseId = courseId
+        self.sourceUrl = sourceUrl
+        self.storagePath = storagePath
+        self.annotatedStoragePath = annotatedStoragePath
+        self.status = status
+        self.courseName = courseName
+        self.folderPath = folderPath
+        self.pathSegments = pathSegments
+    }
+
+    /// Ordered folder chain to nest this import under the Canvascope folder:
+    /// the course name followed by the Canvas subfolder segments. Empty when
+    /// the document has no course/folder metadata (legacy single-file sends).
+    var importFolderChain: [String] {
+        var chain: [String] = []
+        if let courseName = courseName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !courseName.isEmpty {
+            chain.append(courseName)
+        }
+        let segments: [String]
+        if let pathSegments, !pathSegments.isEmpty {
+            segments = pathSegments
+        } else if let folderPath, !folderPath.isEmpty {
+            segments = folderPath.components(separatedBy: ">")
+        } else {
+            segments = []
+        }
+        for segment in segments {
+            let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { chain.append(trimmed) }
+        }
+        return chain
     }
 }
 

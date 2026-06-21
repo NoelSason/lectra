@@ -40,7 +40,7 @@ final class EditorPreferencesStoreTests: XCTestCase {
         XCTAssertEqual(loaded.lastAnnotationTool, .highlighter)
         XCTAssertEqual(loaded.selectedColor, .yellow)
         XCTAssertEqual(loaded.highlighterOpacity, 0.52, accuracy: 0.001)
-        XCTAssertEqual(loaded.dockEdge(for: .portraitCompact), .left)
+        XCTAssertEqual(loaded.dockEdge(for: .portraitCompact), .bottom)
         XCTAssertEqual(loaded.dockEdge(for: .landscapeRegular), .bottom)
     }
 
@@ -51,15 +51,17 @@ final class EditorPreferencesStoreTests: XCTestCase {
         XCTAssertEqual(preferences.dockEdge(for: .landscapeRegular), .top)
     }
 
-    func testCompactDockProfilesUseReachableSideRailForHorizontalSavedEdges() {
+    func testCompactDockProfilesUseReachableBottomBarForVerticalSavedEdges() {
         var preferences = EditorPreferences(toolbarDockEdge: EditorToolbarDockEdge.bottom.rawValue)
 
-        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .left)
-        XCTAssertEqual(preferences.dockEdge(for: .landscapeCompact), .left)
+        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .bottom)
+        XCTAssertEqual(preferences.dockEdge(for: .landscapeCompact), .bottom)
 
         preferences.handedness = .left
         preferences.setDockEdge(.top, for: .portraitCompact)
 
-        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .right)
+        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .top)
+        preferences.setDockEdge(.right, for: .portraitCompact)
+        XCTAssertEqual(preferences.dockEdge(for: .portraitCompact), .bottom)
     }
 }

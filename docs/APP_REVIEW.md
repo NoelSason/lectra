@@ -7,14 +7,14 @@ app binary.
 
 ---
 
-## Current local release audit — June 20, 2026
+## Current local release audit — June 21, 2026
 
 **Current build identity**
 
 - Bundle ID: `com.canvascope.Lectra`
 - App name: `Lectra`
 - Marketing version: `1.0`
-- Build number: `2`
+- Build number: `4`
 - Deployment target: iOS/iPadOS `17.2`
 - Team ID: `3D8X943476`
 - Launch screen: `UILaunchStoryboardName = LaunchScreen`
@@ -30,11 +30,13 @@ app binary.
 **Local verification completed**
 
 - `xcodebuild -project Lectra.xcodeproj -scheme Lectra -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5),OS=26.5' test`
-  passed: 22 unit tests and 8 UI tests.
+  passed: 22 unit tests and 10 UI tests.
 - `xcodebuild -project Lectra.xcodeproj -scheme Lectra -configuration Release -destination 'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO`
   passed and ran Xcode's shallow store validation.
-- `xcodebuild -project Lectra.xcodeproj -scheme Lectra -configuration Release -destination 'generic/platform=iOS' -archivePath /tmp/Lectra-release-audit.xcarchive archive`
+- `xcodebuild -project Lectra.xcodeproj -scheme Lectra -configuration Release -destination 'generic/platform=iOS' -archivePath /tmp/LectraAppReview-20260621.xcarchive archive`
   passed.
+- `xcodebuild -exportArchive -archivePath /tmp/LectraAppReview-20260621.xcarchive -exportPath /tmp/LectraAppReview-export -exportOptionsPlist docs/AppStoreExportOptions.plist -allowProvisioningUpdates`
+  currently fails on local Apple signing credentials; see Distribution signing.
 - Live simulator launch on the booted iPad Pro 13-inch (M5) showed a
   Documents-only sidebar with no Course Brain or Gradescope entry points.
 - `npx -y deno-bin@2.2.7 fmt --check supabase/functions/delete-account/index.ts`
@@ -43,20 +45,18 @@ app binary.
 - `https://www.canvascope.org/privacy` and `https://www.canvascope.org` returned
   HTTP 200.
 
-**Current blocking item**
+**Current blocking items**
 
-`xcodebuild -exportArchive` for App Store Connect still fails on Apple-side
-signing/profile configuration. This was reproduced with
-`docs/AppStoreExportOptions.plist` on June 20, 2026. It is not a source-code
-failure. Xcode reports:
+The local source, tests, and archive are passing. Before submission, finish the
+distribution signing, App Store Connect, and backend checks that cannot be fully
+verified from this checkout:
 
-- no App Store account available to xcodebuild on this machine;
-- no `iOS Distribution` signing certificate installed;
-- the App Store provisioning profile for `com.canvascope.Lectra` does not
-  include Push Notifications, Sign in with Apple, iCloud, or
-  `iCloud.com.canvascope.Lectra`.
-
-Fix those items in Apple Developer/Xcode before the next upload attempt.
+- restore a usable App Store Connect/Xcode account session and iOS Distribution
+  signing identity for export;
+- provide reviewer access and notes;
+- complete app privacy, age rating, pricing/availability, and export compliance;
+- confirm the Supabase Apple provider and `delete-account` Edge Function are
+  deployed and tested against a throwaway production account.
 
 ## 1. Reviewer access (Guideline 2.1) **[ASC]**
 
@@ -157,29 +157,20 @@ No data is used for tracking; no third-party analytics or ad SDKs are present.
 
 ## 9. Distribution signing **[ASC]**
 
-- A local `xcodebuild archive` succeeds, but `xcodebuild -exportArchive` for
-  App Store Connect currently fails until the Apple Developer account has:
-  - a valid iOS Distribution certificate available to Xcode;
-  - valid Xcode account credentials in the local keychain;
-  - an App Store provisioning profile for `com.canvascope.Lectra` that includes
-    Push Notifications, Sign in with Apple, iCloud, and
-    `iCloud.com.canvascope.Lectra`.
-- In Apple Developer → Certificates, Identifiers & Profiles:
-  - Enable capabilities on the `com.canvascope.Lectra` App ID:
-    Push Notifications, Sign in with Apple, and iCloud Documents.
-  - Ensure the iCloud container `iCloud.com.canvascope.Lectra` exists and is
-    assigned to the App ID.
-  - Create or regenerate the App Store provisioning profile after those
-    capabilities are enabled.
-  - Install an Apple/iOS Distribution certificate and matching private key in
-    the local keychain, or sign in to an Xcode account allowed to create one.
-- After fixing signing, rerun export with the checked-in template:
+- Local archive succeeds, but the current local keychain only exposes an Apple
+  Development signing identity.
+- Fresh App Store Connect export fails with:
+  - no usable Xcode/App Store account credentials;
+  - no `iOS Distribution` signing certificate available locally.
+- Reauthenticate the Apple Developer account in Xcode or install a valid
+  distribution certificate/private key, then rerun export for the final
+  submission build with the checked-in template:
 
   ```bash
   xcodebuild -exportArchive \
-    -archivePath /tmp/Lectra-release-audit.xcarchive \
-    -exportPath /tmp/Lectra-appstore-export \
-    -exportOptionsPlist ../docs/AppStoreExportOptions.plist \
+    -archivePath /tmp/LectraAppReview-20260621.xcarchive \
+    -exportPath /tmp/LectraAppReview-export \
+    -exportOptionsPlist docs/AppStoreExportOptions.plist \
     -allowProvisioningUpdates
   ```
 

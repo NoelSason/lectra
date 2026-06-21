@@ -100,7 +100,7 @@ struct PDFAnnotationView: View {
                 LectraGradient.appBackdrop.ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    topBar
+                    topBar(width: rootProxy.size.width)
 
                     if let url = document.localPDFURL {
                         ZStack {
@@ -539,7 +539,7 @@ struct PDFAnnotationView: View {
 
     // MARK: - Top Nav Bar
 
-    private var topBar: some View {
+    private func topBar(width: CGFloat) -> some View {
         EditorTopBar(
             documentTitle: document.title,
             titleDraft: $titleDraft,
@@ -553,6 +553,7 @@ struct PDFAnnotationView: View {
             hasOutline: !outlineItems.isEmpty,
             handedness: editorPreferences.handedness,
             squeezeAction: editorPreferences.squeezeAction,
+            barWidth: width,
             onBack: {
                 Task { @MainActor in await saveAndSync() }
             },
@@ -3156,6 +3157,10 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private var displayScales: [CGFloat] = []
     private var pageFrames: [CGRect] = []
     private var scrollDirectionMode: ScrollDirectionMode = .horizontal
+    // On iPhone we present a GoodNotes-style continuous, fit-to-width vertical
+    // reader instead of the iPad page-turn layout, so the page fills the full
+    // screen width and scrolls vertically rather than being shrunk to fit.
+    private let isContinuousLayout: Bool = UIDevice.current.userInterfaceIdiom == .phone
     private var pendingDoubleTapRecenteringPageIndex: Int?
     private var lastLaidOutViewportSize: CGSize = .zero
     private var undoStack: [DrawingHistoryStep] = []
@@ -3187,6 +3192,10 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
         pdfDocument = PDFDocument(url: pdfURL)
         loadSavedDrawings()
+
+        if isContinuousLayout {
+            scrollDirectionMode = .vertical
+        }
 
         setupScrollView()
         setupPencilSqueezeInteractionIfAvailable()
@@ -3276,7 +3285,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         scrollView.showsVerticalScrollIndicator = false
         scrollView.bouncesZoom = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.decelerationRate = .fast
+        scrollView.decelerationRate = isContinuousLayout ? .normal : .fast
         scrollView.panGestureRecognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         scrollView.pinchGestureRecognizer?.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         view.addSubview(scrollView)
@@ -3366,10 +3375,21 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
     private func displayedCanvasSize(for pageBounds: CGRect) -> CGSize {
         let bounds = normalizedPageBounds(pageBounds)
+        let scale = displayScale(for: bounds)
+        return CGSize(width: bounds.width * scale, height: bounds.height * scale)
+    }
+
+    /// Scale used to display a page at the fully zoomed-out baseline.
+    /// Continuous (iPhone) layout fills the viewport width and lets the page
+    /// extend vertically; the paged (iPad) layout fits the entire page.
+    private func displayScale(for pageBounds: CGRect) -> CGFloat {
+        let bounds = normalizedPageBounds(pageBounds)
         let viewWidth = max(view.bounds.width, 1.0)
         let viewHeight = max(view.bounds.height, 1.0)
-        let scale = min(viewWidth / bounds.width, viewHeight / bounds.height)
-        return CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        if isContinuousLayout {
+            return viewWidth / bounds.width
+        }
+        return min(viewWidth / bounds.width, viewHeight / bounds.height)
     }
 
     private func initialDrawingForPage(index: Int, canvasSize: CGSize) -> InkPageDrawing {
@@ -3388,9 +3408,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private func appendPage(descriptor: PageDescriptor, drawing: InkPageDrawing) -> Int {
         let index = pageViews.count
         let bounds = normalizedPageBounds(descriptor.pageBounds)
-        let viewWidth = max(view.bounds.width, 1.0)
-        let viewHeight = max(view.bounds.height, 1.0)
-        let scale = min(viewWidth / bounds.width, viewHeight / bounds.height)
+        let scale = displayScale(for: bounds)
         let scaledWidth = bounds.width * scale
         let scaledHeight = bounds.height * scale
         let frame = pageFrameForIndex(
@@ -3465,9 +3483,16 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             let contentWidth = max(0, CGFloat(pageViews.count) * slotWidth - pagePadding)
             containerView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: viewHeight)
         case .vertical:
-            let slotHeight = viewHeight + pagePadding
-            let contentHeight = max(0, CGFloat(pageViews.count) * slotHeight - pagePadding)
-            containerView.frame = CGRect(x: 0, y: 0, width: viewWidth, height: contentHeight)
+            if isContinuousLayout {
+                // Content spans from the top gap to the bottom of the last page
+                // plus a matching trailing gap.
+                let contentHeight = (pageFrames.last?.maxY ?? viewHeight) + pagePadding
+                containerView.frame = CGRect(x: 0, y: 0, width: viewWidth, height: contentHeight)
+            } else {
+                let slotHeight = viewHeight + pagePadding
+                let contentHeight = max(0, CGFloat(pageViews.count) * slotHeight - pagePadding)
+                containerView.frame = CGRect(x: 0, y: 0, width: viewWidth, height: contentHeight)
+            }
         }
         scrollView.contentSize = containerView.bounds.size
     }
@@ -3487,6 +3512,20 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 height: scaledHeight
             )
         case .vertical:
+            if isContinuousLayout {
+                // Stack pages back-to-back with a uniform gap so the document
+                // scrolls as one continuous strip. Heights can vary per page,
+                // so derive each page's top from the previous page's frame.
+                let priorMaxY = (index > 0 && pageFrames.indices.contains(index - 1))
+                    ? pageFrames[index - 1].maxY + pagePadding
+                    : pagePadding
+                return CGRect(
+                    x: xOffset,
+                    y: priorMaxY,
+                    width: scaledWidth,
+                    height: scaledHeight
+                )
+            }
             let slotHeight = viewHeight + pagePadding
             return CGRect(
                 x: xOffset,
@@ -3509,9 +3548,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         for index in pageViews.indices {
             guard pageDescriptors.indices.contains(index) else { continue }
             let bounds = pageDescriptors[index].pageBounds
-            let viewWidth = max(view.bounds.width, 1.0)
-            let viewHeight = max(view.bounds.height, 1.0)
-            let scale = min(viewWidth / bounds.width, viewHeight / bounds.height)
+            let scale = displayScale(for: bounds)
             let frame = pageFrameForIndex(
                 index,
                 scaledWidth: bounds.width * scale,
@@ -3754,6 +3791,8 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func alignToNearestPageIfNeededAfterInteraction() {
+        // Continuous (iPhone) layout never snaps to a page after scrolling.
+        guard !isContinuousLayout else { return }
         guard !pageFrames.isEmpty else { return }
         let zoomScale = max(scrollView.zoomScale, 0.001)
         guard zoomIntent(for: zoomScale) == .turnPages else { return }
@@ -3909,6 +3948,10 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
         guard !pageViews.isEmpty else { return }
+
+        // Continuous (iPhone) layout scrolls freely like a document reader; the
+        // page-snapping and zoomed-in page-flip behaviour below is paged-only.
+        if isContinuousLayout { return }
 
         let zoomScale = max(scrollView.zoomScale, 0.001)
         let currentVisibleRect = visibleRect(for: scrollView.contentOffset, zoomScale: zoomScale)

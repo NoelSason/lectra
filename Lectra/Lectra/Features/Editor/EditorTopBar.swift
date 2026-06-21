@@ -24,6 +24,9 @@ struct EditorTopBar: View {
     let hasOutline: Bool
     let handedness: EditorHandedness
     let squeezeAction: PencilSqueezeAction
+    /// Width available to the bar, used to decide whether there's room to truly
+    /// center the title (landscape) or whether it should flow inline (portrait).
+    let barWidth: CGFloat
     let onBack: () -> Void
     let onUndo: () -> Void
     let onRedo: () -> Void
@@ -56,7 +59,7 @@ struct EditorTopBar: View {
 
     private var expandedLayout: some View {
         HStack(spacing: 10) {
-            backButton
+            backButton(showsLabel: true)
             undoButton
             redoButton
             titleSection
@@ -69,9 +72,43 @@ struct EditorTopBar: View {
         }
     }
 
+    // iPhone uses the compact layout in both orientations. A truly centered
+    // title only fits when the bar is wide (landscape); in the narrow portrait
+    // bar there isn't room for back+undo+redo, a centered title, and the
+    // trailing controls without overlap, so the title flows inline instead.
+    @ViewBuilder
     private var compactLayout: some View {
+        if barWidth >= 600 {
+            wideCompactLayout
+        } else {
+            narrowCompactLayout
+        }
+    }
+
+    // Wide (landscape): title centered across the full bar. It renders behind
+    // the edge controls and is only tappable in the clear central band; the
+    // horizontal padding keeps it clear of the leading/trailing clusters.
+    private var wideCompactLayout: some View {
+        ZStack {
+            titleSection
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 160)
+            HStack(spacing: 10) {
+                backButton(showsLabel: false)
+                undoButton
+                redoButton
+                Spacer(minLength: 8)
+                statusSection
+                compactOverflowMenu
+            }
+        }
+    }
+
+    // Narrow (portrait): inline flow so nothing overlaps; the flexible title
+    // centers in the space between the button clusters and truncates as needed.
+    private var narrowCompactLayout: some View {
         HStack(spacing: 10) {
-            backButton
+            backButton(showsLabel: false)
             undoButton
             redoButton
             titleSection
@@ -81,7 +118,7 @@ struct EditorTopBar: View {
         }
     }
 
-    private var backButton: some View {
+    private func backButton(showsLabel: Bool) -> some View {
         Button {
             LectraHaptics.selection()
             onBack()
@@ -94,8 +131,10 @@ struct EditorTopBar: View {
                     .scaledToFit()
                     .frame(width: 19, height: 19)
                     .accessibilityHidden(true)
-                Text("Workspace")
-                    .font(LectraTypography.bodyEmphasis)
+                if showsLabel {
+                    Text("Workspace")
+                        .font(LectraTypography.bodyEmphasis)
+                }
             }
             .foregroundColor(LectraColor.textPrimary)
             .padding(.horizontal, 12)
@@ -104,6 +143,7 @@ struct EditorTopBar: View {
         }
         .buttonStyle(.plain)
         .disabled(isSaving)
+        .accessibilityLabel("Workspace")
         .accessibilityIdentifier("editor.back")
     }
 

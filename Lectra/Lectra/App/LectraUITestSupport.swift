@@ -243,6 +243,7 @@ private struct CompactEditorTopBarScenarioView: View {
                     hasOutline: true,
                     handedness: .right,
                     squeezeAction: .togglePenEraser,
+                    barWidth: 720,
                     onBack: {},
                     onUndo: {},
                     onRedo: {},

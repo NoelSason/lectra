@@ -401,7 +401,7 @@ struct AccountSettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Google account details are used for this Lectra workspace session.")
+                        Text("Your account details are used for this Lectra workspace session.")
                             .font(LectraTypography.body)
                             .foregroundColor(LectraColor.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
