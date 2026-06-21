@@ -14,6 +14,10 @@ struct FloatingToolPickerView: View {
     @Binding var highlighterOpacity: CGFloat
     @Binding var selectedEraserMode: EraserMode
     var isVertical: Bool = false
+    /// When laid out horizontally, caps the bar to the available screen width so the
+    /// palette scrolls instead of overflowing on a narrow phone. `nil` lets it hug
+    /// its content (used for the vertical side rail).
+    var maxWidth: CGFloat? = nil
 
     private let colors: [AnnotationInkColor] = [.yellow, .black, .white, .accent, .blue, .green]
 
@@ -74,12 +78,13 @@ struct FloatingToolPickerView: View {
         }
     }
 
-    var body: some View {
+    @ViewBuilder
+    private var dockContent: some View {
         let layout = isVertical
             ? AnyLayout(VStackLayout(spacing: 12))
             : AnyLayout(HStackLayout(spacing: 14))
 
-        return layout {
+        layout {
             toolsSection
             if showsThicknessControls {
                 sectionDivider
@@ -92,6 +97,21 @@ struct FloatingToolPickerView: View {
         }
         .padding(.horizontal, isVertical ? 10 : 14)
         .padding(.vertical, isVertical ? 12 : 10)
+    }
+
+    var body: some View {
+        Group {
+            if isVertical {
+                dockContent
+            } else {
+                // Horizontal bottom bar: scrolls sideways when the palette is wider
+                // than the phone, so all colors stay reachable without clipping.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    dockContent
+                }
+                .frame(maxWidth: maxWidth)
+            }
+        }
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: toolbarCornerRadius, style: .continuous)

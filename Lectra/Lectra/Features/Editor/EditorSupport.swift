@@ -22,7 +22,10 @@ enum EditorDockProfile: String, CaseIterable, Codable {
     case landscapeRegular
     case landscapeCompact
 
-    var requiresVerticalToolbar: Bool {
+    /// Compact (phone-width) layouts force a horizontal bar docked to the bottom.
+    /// A vertical side rail floats over the page and covers the user's writing on a
+    /// narrow screen, so phones get a bottom bar (scrollable) instead.
+    var requiresHorizontalToolbar: Bool {
         switch self {
         case .portraitCompact, .landscapeCompact:
             return true
@@ -52,8 +55,8 @@ enum EditorDockProfile: String, CaseIterable, Codable {
         _ edge: EditorToolbarDockEdge,
         handedness: EditorHandedness
     ) -> EditorToolbarDockEdge {
-        if requiresVerticalToolbar, !edge.isVertical {
-            return EditorToolbarDockEdge.defaultEdge(for: handedness)
+        if requiresHorizontalToolbar, edge.isVertical {
+            return .bottom
         }
 
         return edge

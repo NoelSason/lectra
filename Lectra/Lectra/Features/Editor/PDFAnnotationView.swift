@@ -247,13 +247,23 @@ struct PDFAnnotationView: View {
     }
 
     private func floatingToolbar(in proxy: GeometryProxy) -> some View {
-        FloatingToolPickerView(
+        // Phone-width layouts use a horizontal bottom bar that spans the available
+        // width and scrolls; it isn't draggable (it's pinned to the bottom), so the
+        // sideways swipe scrolls the palette instead of relocating it.
+        let isHorizontalBar = currentDockProfile.requiresHorizontalToolbar
+        let availableWidth = proxy.size.width
+            - proxy.safeAreaInsets.leading
+            - proxy.safeAreaInsets.trailing
+            - (LectraSpacing.lg * 2)
+
+        return FloatingToolPickerView(
             selectedTool: $selectedTool,
             selectedColor: $selectedColor,
             selectedStrokeWidth: $selectedStrokeWidth,
             highlighterOpacity: $highlighterOpacity,
             selectedEraserMode: $selectedEraserMode,
-            isVertical: toolbarDockEdge.isVertical
+            isVertical: toolbarDockEdge.isVertical,
+            maxWidth: toolbarDockEdge.isVertical ? nil : availableWidth
         )
         .background(
             GeometryReader { toolbarProxy in
@@ -270,7 +280,10 @@ struct PDFAnnotationView: View {
         .opacity(isToolbarDragging ? 0.90 : 1.0)
         .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7, blendDuration: 0), value: isToolbarDragging)
         .position(toolbarPosition(in: proxy))
-        .simultaneousGesture(toolbarDragGesture(in: proxy.size, safeAreaInsets: proxy.safeAreaInsets, proxy: proxy))
+        .simultaneousGesture(
+            toolbarDragGesture(in: proxy.size, safeAreaInsets: proxy.safeAreaInsets, proxy: proxy),
+            including: isHorizontalBar ? .subviews : .all
+        )
     }
 
     private func statusToast(message: String, in proxy: GeometryProxy) -> some View {
@@ -492,12 +505,12 @@ struct PDFAnnotationView: View {
     ) -> EditorToolbarDockEdge {
         let leftDist = location.x - safeAreaInsets.leading
         let rightDist = size.width - safeAreaInsets.trailing - location.x
-        if currentDockProfile.requiresVerticalToolbar {
-            return leftDist <= rightDist ? .left : .right
-        }
-
         let topDist = location.y - safeAreaInsets.top
         let bottomDist = size.height - safeAreaInsets.bottom - location.y
+
+        if currentDockProfile.requiresHorizontalToolbar {
+            return topDist <= bottomDist ? .top : .bottom
+        }
 
         let minDist = min(leftDist, rightDist, topDist, bottomDist)
         if minDist == leftDist {
@@ -551,7 +564,10 @@ struct PDFAnnotationView: View {
             onShowOutline: { showOutlineSheet = true },
             onSetHandedness: { handedness in
                 editorPreferences.handedness = handedness
-                toolbarDockEdge = EditorToolbarDockEdge.defaultEdge(for: handedness)
+                toolbarDockEdge = currentDockProfile.normalizedDockEdge(
+                    EditorToolbarDockEdge.defaultEdge(for: handedness),
+                    handedness: handedness
+                )
                 persistEditorPreferences()
             },
             onSetSqueezeAction: { action in
@@ -763,8 +779,9 @@ struct PDFAnnotationView: View {
         Task { @MainActor in
             guard await saveLocally(showBlockingOverlay: true) else { return }
 
-            guard let finalURL = preferredExportURL() else { return }
-            
+            guard let sourceURL = annotatedSourceURL() else { return }
+            let finalURL = await ExportNamer.preparedExportURL(source: sourceURL, documentTitle: document.title)
+
             let activityVC = UIActivityViewController(activityItems: [finalURL], applicationActivities: nil)
             
             // For iPad, we need a popover source, but we can just use the window scenes for a hacky center popover
@@ -796,10 +813,11 @@ struct PDFAnnotationView: View {
 
         guard await saveLocally(showBlockingOverlay: false) else { return }
 
-        guard let exportURL = preferredExportURL() else {
+        guard let sourceURL = annotatedSourceURL() else {
             setToast("PDF not available for export.", style: .error, autoHideAfter: 2.6)
             return
         }
+        let exportURL = await ExportNamer.preparedExportURL(source: sourceURL, documentTitle: document.title)
 
         setToast("Exporting to Canvascope…", style: .info, autoHideAfter: nil)
 
@@ -851,15 +869,15 @@ struct PDFAnnotationView: View {
         }
     }
 
-    private func preferredExportURL() -> URL? {
-        let annotatedURL = repository.localPDFURL(for: document.id)
-            .deletingLastPathComponent()
-            .appendingPathComponent("annotated.pdf")
-
+    /// Resolves the on-disk PDF to export: the flattened annotated copy if it
+    /// exists, otherwise the original. The returned file keeps its internal name
+    /// ("annotated.pdf"/"original.pdf"); call sites pass it through `ExportNamer`
+    /// to produce a descriptively-named copy before sharing.
+    private func annotatedSourceURL() -> URL? {
+        let annotatedURL = repository.localAnnotatedPDFURL(for: document.id)
         if FileManager.default.fileExists(atPath: annotatedURL.path) {
             return annotatedURL
         }
-
         return document.localPDFURL
     }
 

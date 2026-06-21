@@ -401,7 +401,10 @@ struct EditorPreferences: Codable, Equatable {
             return profile.normalizedDockEdge(legacyEdge, handedness: handedness)
         }
 
-        return EditorToolbarDockEdge.defaultEdge(for: handedness)
+        return profile.normalizedDockEdge(
+            EditorToolbarDockEdge.defaultEdge(for: handedness),
+            handedness: handedness
+        )
     }
 
     mutating func setDockEdge(_ edge: EditorToolbarDockEdge, for profile: EditorDockProfile) {

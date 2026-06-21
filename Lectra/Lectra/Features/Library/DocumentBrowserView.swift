@@ -147,6 +147,7 @@ private enum LibrarySortMode: String, CaseIterable {
 struct DocumentBrowserView: View {
     @EnvironmentObject private var authManager: AuthManager
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var documents: [LocalDocument] = []
     @State private var folders: [LocalFolder] = []
@@ -234,6 +235,24 @@ struct DocumentBrowserView: View {
 
     private var sidebarWidth: CGFloat {
         isSidebarCollapsed ? 86 : 292
+    }
+
+    /// Compact layout = every iPhone (any orientation) plus iPad in a compact
+    /// multitasking width. The permanent iPad-style sidebar is dropped here and the
+    /// toolbar collapses into icons.
+    ///
+    /// We can't key off `horizontalSizeClass == .compact` alone: large "Max"/"Plus"
+    /// iPhones report a *regular* width in landscape, which would otherwise resurrect
+    /// the two-column sidebar and squish the UI. Gate on the device idiom so an iPhone
+    /// is always single-column.
+    private var isCompactLayout: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone || horizontalSizeClass == .compact
+    }
+
+    /// Content spans the full pane (no centered max-width column) whenever the
+    /// sidebar is gone — either collapsed on iPad or absent on iPhone.
+    private var usesFullWidthContent: Bool {
+        isSidebarCollapsed || isCompactLayout
     }
 
     private var visibleSidebarSections: [LibrarySection] {
@@ -326,7 +345,11 @@ struct DocumentBrowserView: View {
     }
 
     private var libraryCardWidth: CGFloat {
-        currentFolderId == nil ? 220 : 202
+        if isCompactLayout {
+            // Smaller cards so two columns fit on an iPhone in portrait.
+            return currentFolderId == nil ? 168 : 158
+        }
+        return currentFolderId == nil ? 220 : 202
     }
 
     private var libraryGridMetrics: LibraryGridMetrics {
@@ -336,7 +359,8 @@ struct DocumentBrowserView: View {
     }
 
     private var gridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: libraryCardWidth, maximum: libraryCardWidth), spacing: 26, alignment: .top)]
+        let spacing: CGFloat = isCompactLayout ? 16 : 26
+        return [GridItem(.adaptive(minimum: libraryCardWidth, maximum: libraryCardWidth), spacing: spacing, alignment: .top)]
     }
 
     private var trimmedSearchText: String {
@@ -434,7 +458,16 @@ struct DocumentBrowserView: View {
     }
 
     private var mainContentLayout: AnyView {
-        AnyView(
+        if isCompactLayout {
+            // iPhone: no permanent sidebar — the pane owns the full width.
+            return AnyView(
+                mainPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(LectraGradient.appBackdrop.ignoresSafeArea())
+            )
+        }
+
+        return AnyView(
             HStack(spacing: 0) {
                 sidebar
                     .frame(width: sidebarWidth)
@@ -1134,13 +1167,13 @@ struct DocumentBrowserView: View {
                     }
                 }
                 .frame(
-                    maxWidth: isSidebarCollapsed ? .infinity : expandedSidebarContentMaxWidth,
+                    maxWidth: usesFullWidthContent ? .infinity : expandedSidebarContentMaxWidth,
                     alignment: .leading
                 )
                 .frame(
                     maxWidth: .infinity,
                     maxHeight: .infinity,
-                    alignment: isSidebarCollapsed ? .topLeading : .top
+                    alignment: usesFullWidthContent ? .topLeading : .top
                 )
 
                 if showSearchOverlay {
@@ -1177,12 +1210,12 @@ struct DocumentBrowserView: View {
 
                 Spacer(minLength: 8)
 
-                filterMenu
-                selectButton
-                newButton
-                viewModeButton
-                cloudButton
-                utilityButtons(showSearch: true)
+                // Collapses to icons + an overflow menu whenever the labeled
+                // controls can't fit (iPhone, and iPad in portrait/split).
+                ViewThatFits(in: .horizontal) {
+                    fullTrailingControls
+                    compactTrailingControls
+                }
             }
         }
         .padding(.vertical, 6)
@@ -1191,6 +1224,134 @@ struct DocumentBrowserView: View {
                 .fill(LectraColor.edgeStroke)
                 .frame(height: 1)
         }
+    }
+
+    private var fullTrailingControls: some View {
+        HStack(spacing: 10) {
+            filterMenu
+            selectButton
+            newButton(compact: false)
+            viewModeButton
+            cloudButton
+            searchButton
+            avatarButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var compactTrailingControls: some View {
+        HStack(spacing: 8) {
+            newButton(compact: true)
+            cloudButton
+            compactOverflowMenu
+            avatarButton
+        }
+    }
+
+    private var searchButton: some View {
+        Button {
+            withAnimation(LectraMotion.quick) {
+                showSearchOverlay = true
+                searchText = ""
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(LectraColor.textPrimary)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background(controlSurface)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Search library")
+        .accessibilityHint("Searches documents and notes.")
+        .accessibilityIdentifier("library.search")
+    }
+
+    /// Overflow: folds the secondary library controls (search, select, filter,
+    /// view, sort) into a single menu so the bar never wraps on narrow widths.
+    private var compactOverflowMenu: some View {
+        Menu {
+            Button {
+                withAnimation(LectraMotion.quick) {
+                    showSearchOverlay = true
+                    searchText = ""
+                }
+            } label: {
+                Label("Search", systemImage: "magnifyingglass")
+            }
+
+            Button {
+                if isSelectionMode {
+                    exitSelectionMode()
+                } else {
+                    enterSelectionMode()
+                }
+            } label: {
+                Label(isSelectionMode ? "Cancel Selection" : "Select", systemImage: isSelectionMode ? "xmark.circle" : "checkmark.circle")
+            }
+
+            Divider()
+
+            if currentFolderId == nil {
+                Menu("Filter") {
+                    ForEach(LibraryFilter.allCases) { filter in
+                        Button {
+                            documentFilter = filter
+                        } label: {
+                            if documentFilter == filter {
+                                Label(filter.title, systemImage: "checkmark")
+                            } else {
+                                Text(filter.title)
+                            }
+                        }
+                    }
+                }
+                .disabled(isSelectionMode)
+            }
+
+            Menu("View") {
+                Button {
+                    viewMode = .grid
+                } label: {
+                    if viewMode == .grid {
+                        Label("Grid", systemImage: "checkmark")
+                    } else {
+                        Text("Grid")
+                    }
+                }
+                Button {
+                    viewMode = .list
+                } label: {
+                    if viewMode == .list {
+                        Label("List", systemImage: "checkmark")
+                    } else {
+                        Text("List")
+                    }
+                }
+            }
+
+            Menu("Sort") {
+                ForEach(LibrarySortMode.allCases, id: \.self) { mode in
+                    Button {
+                        sortMode = mode
+                    } label: {
+                        if sortMode == mode {
+                            Label(mode.title, systemImage: "checkmark")
+                        } else {
+                            Text(mode.title)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(LectraColor.textPrimary)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background(controlSurface)
+        }
+        .accessibilityLabel("More library options")
+        .accessibilityIdentifier("library.overflow")
     }
 
     private var documentTitleCluster: some View {
@@ -1666,40 +1827,29 @@ struct DocumentBrowserView: View {
     private func utilityButtons(showSearch: Bool) -> some View {
         HStack(spacing: 10) {
             if showSearch {
-                Button {
-                    withAnimation(LectraMotion.quick) {
-                        showSearchOverlay = true
-                        searchText = ""
-                    }
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(LectraColor.textPrimary)
-                        .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                        .background(controlSurface)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search library")
-                .accessibilityHint("Searches documents and notes.")
-                .accessibilityIdentifier("library.search")
+                searchButton
             }
 
-            Button {
-                openAccountSettings()
-            } label: {
-                ProfileAvatarView(
-                    avatarURL: authManager.avatarURL,
-                    fallbackName: authManager.userName ?? authManager.userEmail,
-                    size: 18
-                )
-                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                .background(controlSurface)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open account settings")
-            .accessibilityHint("Shows account, integration, and backup settings.")
-            .accessibilityIdentifier("library.account")
+            avatarButton
         }
+    }
+
+    private var avatarButton: some View {
+        Button {
+            openAccountSettings()
+        } label: {
+            ProfileAvatarView(
+                avatarURL: authManager.avatarURL,
+                fallbackName: authManager.userName ?? authManager.userEmail,
+                size: 18
+            )
+            .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+            .background(controlSurface)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open account settings")
+        .accessibilityHint("Shows account, integration, and backup settings.")
+        .accessibilityIdentifier("library.account")
     }
 
     private var controlSurface: some View {
@@ -1773,19 +1923,22 @@ struct DocumentBrowserView: View {
         .buttonStyle(.plain)
     }
 
-    private var newButton: some View {
+    private func newButton(compact: Bool) -> some View {
         Button {
             showCreateMenu = true
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .medium))
-                Text("New")
-                    .font(LectraTypography.bodyEmphasis)
+                if !compact {
+                    Text("New")
+                        .font(LectraTypography.bodyEmphasis)
+                        .fixedSize()
+                }
             }
             .foregroundColor(LectraColor.textPrimary)
-            .padding(.horizontal, 14)
-            .frame(height: LectraSizing.minHitTarget)
+            .padding(.horizontal, compact ? 0 : 14)
+            .frame(width: compact ? LectraSizing.minHitTarget : nil, height: LectraSizing.minHitTarget)
             .background(
                 RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
                     .fill(
