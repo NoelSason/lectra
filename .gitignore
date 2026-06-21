@@ -3,3 +3,6 @@
 xcuserdata/
 DerivedData/
 
+# Local clone of the supabase-swift package (build uses the remote SwiftPM package, not this folder)
+supabase-swift/
+
