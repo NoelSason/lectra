@@ -187,6 +187,8 @@ struct DocumentBrowserView: View {
     @State private var selectedDocumentIDs: Set<UUID> = []
     @State private var showBulkDeleteConfirm = false
     @State private var showBulkMoveSheet = false
+    @State private var showNotebooks = false
+    @State private var crossAskInput: CrossAskInput?
 
     @State private var featureNotice: String?
     @State private var backgroundSyncToast: String?
@@ -451,6 +453,25 @@ struct DocumentBrowserView: View {
 
     private var canExportSelection: Bool {
         !exportableSelectionURLs.isEmpty
+    }
+
+    /// Documents in the current selection that have readable local text and can
+    /// be reasoned over together. Need at least two for a cross-document ask.
+    private var crossAskCandidates: [LocalDocument] {
+        resolvedSelectedDocuments.filter { $0.localPDFURL != nil }
+    }
+
+    private var canAskAcrossSelection: Bool {
+        crossAskCandidates.count >= 2
+    }
+
+    private func presentCrossDocumentAsk() {
+        let documents = crossAskCandidates.compactMap { doc -> CrossAskInput.Document? in
+            guard let url = doc.localPDFURL else { return nil }
+            return CrossAskInput.Document(id: doc.id, title: doc.title, url: url)
+        }
+        guard documents.count >= 2 else { return }
+        crossAskInput = CrossAskInput(documents: documents)
     }
 
     private var canDeleteSelection: Bool {
@@ -844,6 +865,12 @@ struct DocumentBrowserView: View {
             }
             .sheet(item: $sharePayload) { payload in
                 ShareSheetView(items: payload.urls)
+            }
+            .sheet(item: $crossAskInput) { input in
+                CrossDocumentAskSheet(input: input)
+            }
+            .sheet(isPresented: $showNotebooks) {
+                NotebookLibraryView()
             }
             .fullScreenCover(item: $editorRoute) { route in
                 if let doc = document(for: route.documentId) {
@@ -1252,6 +1279,7 @@ struct DocumentBrowserView: View {
             selectButton
             newButton(compact: false)
             viewModeButton
+            notebooksButton
             cloudButton
             searchButton
             avatarButton
@@ -1262,10 +1290,28 @@ struct DocumentBrowserView: View {
     private var compactTrailingControls: some View {
         HStack(spacing: 8) {
             newButton(compact: true)
+            notebooksButton
             cloudButton
             compactOverflowMenu
             avatarButton
         }
+    }
+
+    private var notebooksButton: some View {
+        Button {
+            LectraHaptics.tap()
+            showNotebooks = true
+        } label: {
+            Image(systemName: "book.closed")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(LectraColor.textPrimary)
+                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                .background(controlSurface)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Notebooks")
+        .accessibilityHint("Open and create Python notebooks.")
+        .accessibilityIdentifier("library.notebooks")
     }
 
     private var searchButton: some View {
@@ -2121,6 +2167,15 @@ struct DocumentBrowserView: View {
                     isEnabled: canMoveSelection,
                     action: {
                         showBulkMoveSheet = true
+                    }
+                )
+
+                bulkActionButton(
+                    title: "Ask",
+                    icon: "sparkles",
+                    isEnabled: canAskAcrossSelection,
+                    action: {
+                        presentCrossDocumentAsk()
                     }
                 )
 
@@ -3935,6 +3990,7 @@ struct DocumentBrowserView: View {
 
             documents = [doc] + documents
             refreshLibraryDerivatives()
+            autoTitleImportedDocumentIfNeeded(doc)
             openEditor(documentId: doc.id)
         } catch {
             featureNotice = "Could not import PDF: \(error.localizedDescription)"
@@ -4463,6 +4519,34 @@ struct DocumentBrowserView: View {
     }
 
     // MARK: - Renaming
+
+    /// After importing a document whose name is generic (e.g. "Scan 2026-06-14",
+    /// "IMG_0042", "Untitled"), ask the on-device model to suggest a specific
+    /// title from its opening pages and apply it. Best-effort and non-blocking:
+    /// if intelligence is unavailable, the model declines, or the user renames it
+    /// first, the original name is left untouched.
+    private func autoTitleImportedDocumentIfNeeded(_ doc: LocalDocument) {
+        let current = doc.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = doc.localPDFURL else { return }
+        if #available(iOS 26.0, *) {
+            guard current.isEmpty || DocumentAutoTagger.looksGeneric(current),
+                  LectraIntelligence.isReady else { return }
+            Task { @MainActor in
+                // Need real text to title from — scanned/image-only PDFs have no
+                // text layer, so skip rather than risk an invented title.
+                let opening = await Task.detached(priority: .utility) {
+                    PDFTextExtractor.fullText(at: url, pageLimit: 2)
+                }.value
+                guard opening.trimmingCharacters(in: .whitespacesAndNewlines).count >= 40 else { return }
+                guard let labels = try? await DocumentAutoTagger().labels(forFirstPagesOf: url) else { return }
+                let suggested = labels.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Skip if the model gave nothing, or the user renamed it meanwhile.
+                guard !suggested.isEmpty,
+                      doc.title.trimmingCharacters(in: .whitespacesAndNewlines) == current else { return }
+                persistTitleRename(for: doc, newTitle: suggested)
+            }
+        }
+    }
 
     private func persistTitleRename(for doc: LocalDocument, newTitle: String) {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)

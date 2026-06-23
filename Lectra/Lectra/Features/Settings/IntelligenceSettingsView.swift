@@ -91,7 +91,7 @@ struct IntelligenceSettingsView: View {
                     .font(LectraTypography.headlineMedium)
                     .foregroundColor(LectraColor.textPrimary)
             }
-            Text("Everything runs on-device — your documents never leave your iPad. A future update will add Private Cloud Compute for longer documents and deeper reasoning, keeping the same privacy guarantees.")
+            Text("Your study materials stay private. Most work happens right on your iPad, and longer documents get the extra power they need without giving up that privacy — your work is never stored or shared, and no one else can access it.")
                 .font(LectraTypography.captionMedium)
                 .foregroundColor(LectraColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

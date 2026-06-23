@@ -36,7 +36,7 @@ final class DocumentSummarizer: ObservableObject {
     // MARK: Summarize
 
     func summarize(text: String, scope: Scope) async throws -> String {
-        let clamped = PDFTextExtractor.clamp(text, toChars: PDFTextExtractor.onDeviceCharBudget)
+        let clamped = PDFTextExtractor.clamp(text, toChars: LectraModelRouter.shared.documentCharBudget())
         guard !clamped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return "There's no readable text in this document to summarize."
         }
@@ -67,7 +67,7 @@ final class DocumentSummarizer: ObservableObject {
     /// Primes the chat session with the document text. Call once when the
     /// "Ask" tab opens; subsequent `ask(_:)` calls reuse the context.
     func beginConversation(documentText: String) {
-        let clamped = PDFTextExtractor.clamp(documentText, toChars: PDFTextExtractor.onDeviceCharBudget)
+        let clamped = PDFTextExtractor.clamp(documentText, toChars: LectraModelRouter.shared.documentCharBudget())
         let primed = """
         \(Self.askInstructions)
 

@@ -150,6 +150,13 @@ private final class InsightsStore: ObservableObject {
         isTextReady = true
     }
 
+    /// How the whole document will be handled, so the UI can show an honest cue
+    /// (full extended context vs. only the first portion). Only meaningful for
+    /// whole-document features; page summaries are always short.
+    var documentContextHandling: LectraModelRouter.ContextHandling {
+        LectraModelRouter.shared.contextHandling(forChars: documentText.count)
+    }
+
     func summarize(pageText: String) async {
         summaryLoading = true
         summaryError = nil
@@ -233,11 +240,15 @@ private struct IntelligenceContentView: View {
 
     @State private var tab: InsightTab = .summary
     @StateObject private var store = InsightsStore()
+    @State private var notebookDoc: NotebookDocument?
 
     var body: some View {
         VStack(spacing: 0) {
             tabBar
             Divider().overlay(LectraColor.edgeStroke)
+            if store.isTextReady, tab != .summary || store.summaryScope == .document {
+                ContextBanner(handling: store.documentContextHandling)
+            }
             ScrollView {
                 Group {
                     switch tab {
@@ -250,7 +261,32 @@ private struct IntelligenceContentView: View {
                 .padding(LectraSpacing.lg)
             }
         }
+        .safeAreaInset(edge: .bottom) { createNotebookBar }
         .task { await store.loadText(from: pdfURL) }
+        .fullScreenCover(item: $notebookDoc) { doc in
+            NotebookView(document: doc)
+        }
+    }
+
+    /// Turns the document's study aids into a runnable Lectra notebook. Works
+    /// with whatever has been generated so far (and seeds a starter cell if
+    /// nothing has).
+    private var createNotebookBar: some View {
+        Button {
+            LectraHaptics.tap()
+            notebookDoc = NotebookStore.shared.makeStudyNotebook(
+                title: documentTitle,
+                sourceDocument: documentTitle,
+                summary: store.summary,
+                cards: store.cards,
+                quiz: store.quiz)
+        } label: {
+            Label("Create Notebook", systemImage: "book.closed")
+        }
+        .buttonStyle(LectraPrimaryButtonStyle())
+        .padding(.horizontal, LectraSpacing.lg)
+        .padding(.vertical, LectraSpacing.sm)
+        .background(.ultraThinMaterial)
     }
 
     private var pageText: String {
@@ -286,6 +322,49 @@ private struct IntelligenceContentView: View {
             }
         }
         .padding(LectraSpacing.md)
+    }
+}
+
+// MARK: - Context banner (honest cue about how much of the document is used)
+
+@available(iOS 26.0, *)
+private struct ContextBanner: View {
+    let handling: LectraModelRouter.ContextHandling
+
+    var body: some View {
+        switch handling {
+        case .standard:
+            EmptyView()
+        case .extended:
+            banner(
+                icon: "sparkles",
+                tint: LectraColor.accentSoft,
+                text: "This is a long document — it's being read in full."
+            )
+        case .truncated:
+            banner(
+                icon: "doc.text.magnifyingglass",
+                tint: LectraColor.warning,
+                text: "This document is long, so only the beginning is used for now. Summaries and study tools cover the first part."
+            )
+        }
+    }
+
+    private func banner(icon: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(text)
+                .font(LectraTypography.footnoteBold)
+                .foregroundStyle(LectraColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, LectraSpacing.lg)
+        .padding(.vertical, LectraSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08))
     }
 }
 

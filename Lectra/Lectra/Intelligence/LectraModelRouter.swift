@@ -36,25 +36,62 @@ final class LectraModelRouter {
     /// headroom for instructions + the response).
     private let onDeviceTokenBudget = 3_000
 
-    /// Which tier *would* serve an input of this size. Drives UI hints and,
-    /// once PCC ships, actual routing.
+    /// Which tier *would* serve an input of this size. Drives UI hints and
+    /// actual routing. Inputs that overflow the on-device window prefer PCC;
+    /// whether PCC is actually used still depends on its runtime availability.
     func preferredTier(forApproxTokens tokens: Int) -> Tier {
         tokens > onDeviceTokenBudget ? .privateCloudCompute : .onDevice
     }
 
+    /// The character budget a caller should clamp document text to, based on
+    /// the best tier available right now. PCC (iOS 27+) handles a far larger
+    /// window than the on-device model, so long documents keep their tail.
+    func documentCharBudget() -> Int {
+        if #available(iOS 27.0, *), LectraIntelligence.pccAvailable {
+            return PDFTextExtractor.pccCharBudget
+        }
+        return PDFTextExtractor.onDeviceCharBudget
+    }
+
+    /// How a document of a given length will actually be handled, so the UI can
+    /// be honest with the user instead of silently truncating long material.
+    enum ContextHandling: Equatable {
+        /// Fits comfortably in the on-device window — handled in full, privately.
+        case standard
+        /// Long, and handled in full via the larger Private Cloud Compute window.
+        case extended
+        /// Long, but no extended window is available, so only the first portion
+        /// is used. The UI should say so.
+        case truncated
+    }
+
+    /// Classifies how text of `chars` characters will be handled right now.
+    func contextHandling(forChars chars: Int) -> ContextHandling {
+        guard chars > PDFTextExtractor.onDeviceCharBudget else { return .standard }
+        if #available(iOS 27.0, *), LectraIntelligence.pccAvailable {
+            return .extended
+        }
+        return .truncated
+    }
+
     // MARK: Session construction
 
-    /// Builds a session for the given instructions. Long inputs are flagged for
-    /// PCC but currently fall back to on-device (see seam).
+    /// Builds a session for the given instructions. Inputs that overflow the
+    /// on-device window are routed to Private Cloud Compute when it's available
+    /// (iOS 27+), and otherwise fall back to the on-device model.
     func makeSession(instructions: String, approxTokens: Int = 0) -> LanguageModelSession {
-        // ── PCC SEAM ──────────────────────────────────────────────────────
-        // if #available(iOS 27.0, *),
-        //    preferredTier(forApproxTokens: approxTokens) == .privateCloudCompute,
-        //    case .available = PrivateCloudComputeLanguageModel().availability {
-        //     return LanguageModelSession(model: PrivateCloudComputeLanguageModel(),
-        //                                 instructions: instructions)
-        // }
-        // ──────────────────────────────────────────────────────────────────
+        #if canImport(FoundationModels)
+        if #available(iOS 27.0, *),
+           preferredTier(forApproxTokens: approxTokens) == .privateCloudCompute {
+            // Construct once: PCC won't run in the Simulator (FB177684296) and
+            // is gated on the managed private-cloud-compute entitlement, so we
+            // confirm availability before binding the session to it.
+            let pcc = PrivateCloudComputeLanguageModel()
+            if case .available = pcc.availability {
+                return LanguageModelSession(model: pcc, instructions: instructions)
+            }
+        }
+        #endif
         return LanguageModelSession(model: .default, instructions: instructions)
     }
 

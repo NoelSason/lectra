@@ -13,9 +13,16 @@ import PDFKit
 
 enum PDFTextExtractor {
 
-    /// Approximate token budget the on-device model comfortably handles.
+    /// Approximate character budget the on-device model comfortably handles.
     /// Used by callers to decide how much of a document to feed in.
     static let onDeviceCharBudget = 14_000
+
+    /// Character budget when Private Cloud Compute (iOS 27+) serves the request.
+    /// PCC's ~32K-token window holds far more text, so whole-document features
+    /// keep the tail instead of truncating at the on-device limit. Conservative
+    /// (~30K tokens at ~4 chars/token) to leave headroom for instructions and
+    /// the response.
+    static let pccCharBudget = 120_000
 
     /// Whole-document text, optionally capped to the first `pageLimit` pages.
     nonisolated static func fullText(at url: URL, pageLimit: Int? = nil) -> String {

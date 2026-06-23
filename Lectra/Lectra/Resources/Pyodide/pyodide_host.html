@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<!--
+  pyodide_host.html — Lectra's invisible Python kernel host.
+
+  Loaded inside a hidden WKWebView (see PyodideRuntime.swift). All assets are
+  bundled and served over the custom `lectrapy://` scheme, so this runs fully
+  offline. Swift drives execution by calling window.lectraRun(cellID, code);
+  results are posted back via webkit.messageHandlers.lectra.
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="lectrapy:///pyodide.js"></script>
+</head>
+<body>
+<script>
+  let pyodide = null;
+  let runner = null;
+
+  function post(msg) {
+    try { window.webkit.messageHandlers.lectra.postMessage(msg); } catch (e) {}
+  }
+
+  // Persistent kernel namespace + a runner that captures stdout/stderr, the
+  // last-expression repr (Jupyter style), and tracebacks. Supports top-level
+  // await via eval_code_async.
+  const RUNNER_PY = `
+import io, contextlib, traceback as _tb
+from pyodide.code import eval_code_async
+
+__lectra_ns = {"__name__": "__main__"}
+
+async def __lectra_run(code):
+    out = io.StringIO()
+    err = io.StringIO()
+    result_repr = None
+    error = None
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            val = await eval_code_async(code, globals=__lectra_ns)
+            if val is not None:
+                result_repr = repr(val)
+        except Exception:
+            error = _tb.format_exc()
+    return [out.getvalue(), err.getvalue(), result_repr, error]
+
+def __lectra_reset():
+    __lectra_ns.clear()
+    __lectra_ns["__name__"] = "__main__"
+`;
+
+  async function init() {
+    try {
+      pyodide = await loadPyodide({ indexURL: "lectrapy:///" });
+      await pyodide.runPythonAsync(RUNNER_PY);
+      runner = pyodide.globals.get("__lectra_run");
+      post({ type: "ready" });
+    } catch (e) {
+      post({ type: "fatal", error: String(e && e.message ? e.message : e) });
+    }
+  }
+
+  // Called from Swift. cellID correlates the async result with its cell.
+  window.lectraRun = async function (cellID, code) {
+    if (!runner) {
+      post({ type: "result", cellID, stdout: "", stderr: "",
+             result: null, error: "Python is still starting. Try again in a moment." });
+      return;
+    }
+    try {
+      const proxy = await runner(code);
+      const arr = proxy.toJs();
+      proxy.destroy();
+      const [stdout, stderr, result, error] = arr;
+      post({ type: "result", cellID,
+             stdout: stdout || "", stderr: stderr || "",
+             result: result || null, error: error || null });
+    } catch (e) {
+      post({ type: "result", cellID, stdout: "", stderr: "",
+             result: null, error: String(e && e.message ? e.message : e) });
+    }
+  };
+
+  // Called from Swift to clear the kernel namespace ("Restart kernel").
+  window.lectraReset = async function () {
+    try { pyodide.runPython("__lectra_reset()"); } catch (e) {}
+    post({ type: "reset" });
+  };
+
+  init();
+</script>
+</body>
+</html>

@@ -30,7 +30,7 @@ final class StudyAidGenerator: ObservableObject {
     """
 
     func flashcards(from text: String) async throws -> [LectraFlashcard] {
-        let clamped = PDFTextExtractor.clamp(text, toChars: PDFTextExtractor.onDeviceCharBudget)
+        let clamped = PDFTextExtractor.clamp(text, toChars: LectraModelRouter.shared.documentCharBudget())
         let prompt = """
         Create study flashcards from the material below.
 
@@ -47,7 +47,7 @@ final class StudyAidGenerator: ObservableObject {
     }
 
     func quiz(from text: String) async throws -> [LectraQuizQuestion] {
-        let clamped = PDFTextExtractor.clamp(text, toChars: PDFTextExtractor.onDeviceCharBudget)
+        let clamped = PDFTextExtractor.clamp(text, toChars: LectraModelRouter.shared.documentCharBudget())
         let prompt = """
         Write a practice quiz from the material below.
 

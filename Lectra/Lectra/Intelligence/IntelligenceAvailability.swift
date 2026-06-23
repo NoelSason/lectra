@@ -96,4 +96,20 @@ enum LectraIntelligence {
     }
 
     static var isReady: Bool { status.isReady }
+
+    /// Whether the Private Cloud Compute tier (iOS 27+) can serve a request
+    /// right now. Long documents route here for a larger context window while
+    /// keeping the same privacy guarantees. `false` on iOS 26, in the
+    /// Simulator (FB177684296), or without the managed PCC entitlement.
+    static var pccAvailable: Bool {
+        guard #available(iOS 27.0, *) else { return false }
+        #if canImport(FoundationModels)
+        if case .available = PrivateCloudComputeLanguageModel().availability {
+            return true
+        }
+        return false
+        #else
+        return false
+        #endif
+    }
 }
