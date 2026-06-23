@@ -266,3 +266,20 @@ func postAccessibilityAnnouncement(_ message: String) {
     }
     #endif
 }
+
+enum InkZoomFidelity {
+    static func contentsScale(screenScale: CGFloat, zoomScale: CGFloat) -> CGFloat {
+        screenScale * max(zoomScale, 1.0)
+    }
+
+    static func shouldRefreshVisibleCanvases(
+        previousZoomScale: CGFloat,
+        currentZoomScale: CGFloat,
+        bucketSize: CGFloat = 0.5
+    ) -> Bool {
+        guard bucketSize > 0 else { return true }
+        let previousBucket = floor(max(previousZoomScale, 1.0) / bucketSize)
+        let currentBucket = floor(max(currentZoomScale, 1.0) / bucketSize)
+        return previousBucket != currentBucket
+    }
+}

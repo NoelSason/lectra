@@ -192,6 +192,13 @@ struct JupyterOutput: Codable {
     static func error(name: String, value: String, traceback: [String]) -> JupyterOutput {
         JupyterOutput(output_type: "error", ename: name, evalue: value, traceback: traceback)
     }
+
+    /// A rendered image (e.g. a matplotlib figure) as a `display_data` output
+    /// carrying a base64 PNG — the same shape Jupyter writes for inline plots.
+    static func image(base64 png: String) -> JupyterOutput {
+        JupyterOutput(output_type: "display_data",
+                      data: OutputData(textPlain: nil, imagePng: png))
+    }
 }
 
 // MARK: - Lenient decoding helpers

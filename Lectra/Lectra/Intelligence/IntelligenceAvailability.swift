@@ -103,7 +103,7 @@ enum LectraIntelligence {
     /// Simulator (FB177684296), or without the managed PCC entitlement.
     static var pccAvailable: Bool {
         guard #available(iOS 27.0, *) else { return false }
-        #if canImport(FoundationModels)
+        #if canImport(FoundationModels) && LECTRA_ENABLE_PCC
         if case .available = PrivateCloudComputeLanguageModel().availability {
             return true
         }

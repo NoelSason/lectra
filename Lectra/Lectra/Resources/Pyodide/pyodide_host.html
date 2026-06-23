@@ -25,16 +25,37 @@
   // last-expression repr (Jupyter style), and tracebacks. Supports top-level
   // await via eval_code_async.
   const RUNNER_PY = `
-import io, contextlib, traceback as _tb
+import io, os, sys, base64, contextlib, traceback as _tb
 from pyodide.code import eval_code_async
 
+# Force matplotlib's non-interactive Agg backend before it is ever imported, so
+# figures render to PNG buffers instead of trying to draw into the (headless)
+# DOM. Captured figures are returned to Swift as base64 PNGs, Jupyter-style.
+os.environ.setdefault("MPLBACKEND", "AGG")
+
 __lectra_ns = {"__name__": "__main__"}
+
+def __lectra_capture_figs():
+    figs = []
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return figs
+    try:
+        for num in plt.get_fignums():
+            buf = io.BytesIO()
+            plt.figure(num).savefig(buf, format="png", bbox_inches="tight", dpi=110)
+            figs.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+        plt.close("all")
+    except Exception:
+        pass
+    return figs
 
 async def __lectra_run(code):
     out = io.StringIO()
     err = io.StringIO()
     result_repr = None
     error = None
+    images = []
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
             val = await eval_code_async(code, globals=__lectra_ns)
@@ -42,7 +63,8 @@ async def __lectra_run(code):
                 result_repr = repr(val)
         except Exception:
             error = _tb.format_exc()
-    return [out.getvalue(), err.getvalue(), result_repr, error]
+        images = __lectra_capture_figs()
+    return [out.getvalue(), err.getvalue(), result_repr, error, images]
 
 def __lectra_reset():
     __lectra_ns.clear()
@@ -68,13 +90,20 @@ def __lectra_reset():
       return;
     }
     try {
+      // Auto-load any bundled packages the cell imports (numpy, pandas,
+      // matplotlib, …) before running it. A failure here is non-fatal: the
+      // import itself will raise a normal ModuleNotFoundError if the package
+      // isn't bundled, which is the right message to show the user.
+      try { await pyodide.loadPackagesFromImports(code); } catch (e) {}
+
       const proxy = await runner(code);
       const arr = proxy.toJs();
       proxy.destroy();
-      const [stdout, stderr, result, error] = arr;
+      const [stdout, stderr, result, error, images] = arr;
       post({ type: "result", cellID,
              stdout: stdout || "", stderr: stderr || "",
-             result: result || null, error: error || null });
+             result: result || null, error: error || null,
+             images: images || [] });
     } catch (e) {
       post({ type: "result", cellID, stdout: "", stderr: "",
              result: null, error: String(e && e.message ? e.message : e) });

@@ -42,6 +42,11 @@ nonisolated final class DocumentRepository {
         localFolder(for: documentId).appendingPathComponent("drawings.dat")
     }
 
+    /// Path to the semantic annotation sidecar on disk.
+    func localAnnotationsURL(for documentId: UUID) -> URL {
+        localFolder(for: documentId).appendingPathComponent("annotations.json")
+    }
+
     /// Path to the flattened annotated PDF on disk.
     func localAnnotatedPDFURL(for documentId: UUID) -> URL {
         localFolder(for: documentId).appendingPathComponent("annotated.pdf")
@@ -57,6 +62,18 @@ nonisolated final class DocumentRepository {
         let folder = documentsDirectory.appendingPathComponent("sync", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appendingPathComponent("pending-sync-jobs.json")
+    }
+
+    func ocrQueueURL() -> URL {
+        let folder = documentsDirectory.appendingPathComponent("ocr", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("pending-ocr-jobs.json")
+    }
+
+    func assetLibraryURL() -> URL {
+        let folder = documentsDirectory.appendingPathComponent("assets", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("reusable-assets.json")
     }
 
     // MARK: - Fetch Document List
@@ -170,6 +187,20 @@ nonisolated final class DocumentRepository {
         return try? Data(contentsOf: url)
     }
 
+    func saveLocalAnnotations(_ store: LectraAnnotationStore, documentId: UUID) throws {
+        let url = localAnnotationsURL(for: documentId)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(store)
+        try data.write(to: url, options: [.atomic])
+    }
+
+    func loadLocalAnnotations(documentId: UUID) -> LectraAnnotationStore? {
+        let url = localAnnotationsURL(for: documentId)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(LectraAnnotationStore.self, from: data)
+    }
+
     func saveLocalMetadata(_ metadata: DocumentLocalMetadata, documentId: UUID) {
         let url = localMetadataURL(for: documentId)
         guard let data = try? JSONEncoder().encode(metadata) else { return }
@@ -198,6 +229,51 @@ nonisolated final class DocumentRepository {
             return []
         }
         return jobs
+    }
+
+    func savePendingOCRJobs(_ jobs: [PDFOCRWorkItem]) {
+        let url = ocrQueueURL()
+        guard let data = try? JSONEncoder().encode(jobs) else { return }
+        try? data.write(to: url, options: [.atomic])
+    }
+
+    func loadPendingOCRJobs() -> [PDFOCRWorkItem] {
+        let url = ocrQueueURL()
+        guard let data = try? Data(contentsOf: url),
+              let jobs = try? JSONDecoder().decode([PDFOCRWorkItem].self, from: data) else {
+            return []
+        }
+        return jobs
+    }
+
+    func mergePendingOCRJobs(_ jobs: [PDFOCRWorkItem]) {
+        guard !jobs.isEmpty else { return }
+        var current = loadPendingOCRJobs()
+        var existingKeys = Set(current.map { "\($0.documentId.uuidString):\($0.pageIndex)" })
+        for job in jobs {
+            let key = "\(job.documentId.uuidString):\(job.pageIndex)"
+            guard !existingKeys.contains(key) else { continue }
+            current.append(job)
+            existingKeys.insert(key)
+        }
+        savePendingOCRJobs(current)
+    }
+
+    func saveAssetLibrary(_ library: LectraAssetLibrary) throws {
+        let url = assetLibraryURL()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(library)
+        try data.write(to: url, options: [.atomic])
+    }
+
+    func loadAssetLibrary() -> LectraAssetLibrary {
+        let url = assetLibraryURL()
+        guard let data = try? Data(contentsOf: url),
+              let library = try? JSONDecoder().decode(LectraAssetLibrary.self, from: data) else {
+            return LectraAssetLibrary()
+        }
+        return library
     }
 
     // MARK: - Check if PDF is cached

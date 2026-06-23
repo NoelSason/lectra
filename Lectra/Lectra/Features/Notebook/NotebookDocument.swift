@@ -27,20 +27,25 @@ struct CellOutput: Equatable {
     var stderr: String = ""
     var result: String?      // repr of last expression
     var error: String?       // traceback
+    var images: [String] = []  // base64-encoded PNGs (matplotlib figures)
 
     var isEmpty: Bool {
-        stdout.isEmpty && stderr.isEmpty && (result?.isEmpty ?? true) && (error?.isEmpty ?? true)
+        stdout.isEmpty && stderr.isEmpty && (result?.isEmpty ?? true)
+            && (error?.isEmpty ?? true) && images.isEmpty
     }
 
-    init(stdout: String = "", stderr: String = "", result: String? = nil, error: String? = nil) {
+    init(stdout: String = "", stderr: String = "", result: String? = nil,
+         error: String? = nil, images: [String] = []) {
         self.stdout = stdout
         self.stderr = stderr
         self.result = result
         self.error = error
+        self.images = images
     }
 
     init(_ run: PyodideRunResult) {
-        self.init(stdout: run.stdout, stderr: run.stderr, result: run.result, error: run.error)
+        self.init(stdout: run.stdout, stderr: run.stderr, result: run.result,
+                  error: run.error, images: run.images)
     }
 }
 
@@ -73,6 +78,9 @@ final class NotebookDocument: ObservableObject, Identifiable {
     let id: UUID
     @Published var title: String
     @Published var cells: [NotebookCell]
+    /// The cell whose editor should hold keyboard focus. Drives programmatic
+    /// focus moves for the run shortcuts (Shift/⌥+Enter).
+    @Published var focusedCellID: String?
     let sourceDocument: String?
     let createdAt: Date
 
@@ -92,13 +100,21 @@ final class NotebookDocument: ObservableObject, Identifiable {
 
     // MARK: Cell editing
 
-    func addCell(_ type: NotebookCellType, after cell: NotebookCell?) {
+    @discardableResult
+    func addCell(_ type: NotebookCellType, after cell: NotebookCell?) -> NotebookCell {
         let new = NotebookCell(type: type, source: "")
         if let cell, let idx = cells.firstIndex(where: { $0.id == cell.id }) {
             cells.insert(new, at: idx + 1)
         } else {
             cells.append(new)
         }
+        return new
+    }
+
+    /// The first code cell after `cell`, if any.
+    func nextCodeCell(after cell: NotebookCell) -> NotebookCell? {
+        guard let idx = cells.firstIndex(where: { $0.id == cell.id }) else { return nil }
+        return cells[(idx + 1)...].first { $0.type == .code }
     }
 
     func delete(_ cell: NotebookCell) {
@@ -179,6 +195,9 @@ final class NotebookDocument: ObservableObject, Identifiable {
         if let repr = output.result, !repr.isEmpty {
             result.append(.result(repr, executionCount: count ?? 0))
         }
+        for png in output.images where !png.isEmpty {
+            result.append(.image(base64: png))
+        }
         if let error = output.error, !error.isEmpty {
             let lines = error.components(separatedBy: "\n")
             result.append(.error(name: "Error",
@@ -197,7 +216,11 @@ final class NotebookDocument: ObservableObject, Identifiable {
                 if o.name == "stderr" { out.stderr += (o.text ?? []).joined() }
                 else { out.stdout += (o.text ?? []).joined() }
             case "execute_result", "display_data":
-                out.result = (o.data?.textPlain ?? []).joined()
+                if let png = o.data?.imagePng, !png.isEmpty {
+                    out.images.append(png)
+                } else if let text = o.data?.textPlain {
+                    out.result = text.joined()
+                }
             case "error":
                 out.error = (o.traceback ?? []).joined(separator: "\n")
             default:

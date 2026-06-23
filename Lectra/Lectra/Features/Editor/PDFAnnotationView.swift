@@ -237,6 +237,9 @@ struct PDFAnnotationView: View {
         .onChange(of: highlighterOpacity) { _, _ in persistEditorPreferences() }
         .onChange(of: selectedEraserMode) { _, _ in persistEditorPreferences() }
         .onChange(of: toolbarDockEdge) { _, _ in persistEditorPreferences() }
+        .task(id: document.localPDFURL) {
+            await refreshOCRStatusIfNeeded()
+        }
         .onDisappear {
             indicatorTask?.cancel()
             canvascopeDeliveryTask?.cancel()
@@ -579,6 +582,8 @@ struct PDFAnnotationView: View {
                 Task { @MainActor in await exportToCanvascope() }
             },
             onShare: shareDocument,
+            onShareOriginal: shareOriginalDocument,
+            onShareEditable: shareEditablePackage,
             onShowIntelligence: { showIntelligenceSheet = true },
             isTitleFocused: $isTitleFieldFocused
         )
@@ -587,6 +592,14 @@ struct PDFAnnotationView: View {
     // MARK: - Save & Sync
 
     private var syncStatusDescriptor: EditorSyncStatusDescriptor? {
+        if document.conflictState == .needsReview {
+            return EditorSyncStatusDescriptor(title: "Needs Review", color: LectraColor.accent)
+        }
+
+        if document.ocrState == .needsOCR, document.syncState == .idle || document.syncState == .synced {
+            return EditorSyncStatusDescriptor(title: "Needs OCR", color: LectraColor.warningSubtle)
+        }
+
         switch document.syncState {
         case .idle:
             return nil
@@ -607,6 +620,37 @@ struct PDFAnnotationView: View {
                 }
             )
         }
+    }
+
+    private func refreshOCRStatusIfNeeded() async {
+        guard let pdfURL = document.localPDFURL else { return }
+        var metadata = repository.loadLocalMetadata(documentId: document.id)
+        guard metadata.ocrState == .unknown || metadata.ocrCheckedAt == nil else {
+            document.apply(metadata: metadata)
+            return
+        }
+
+        let result = await Task.detached(priority: .utility) {
+            PDFOCRAnalyzer.detectTextAvailability(at: pdfURL)
+        }.value
+
+        metadata.applyOCRDetection(result)
+        if result.needsOCR {
+            repository.mergePendingOCRJobs(
+                PDFOCRAnalyzer.workItems(
+                    for: document.id,
+                    pageIndexes: result.sampledPageIndexes,
+                    queuedAt: result.checkedAt
+                )
+            )
+        }
+
+        repository.saveLocalMetadata(metadata, documentId: document.id)
+        document.apply(metadata: metadata)
+        NotificationCenter.default.post(
+            name: .lectraDocumentSyncStateDidChange,
+            object: DocumentSyncStatusPayload(documentId: document.id, metadata: metadata)
+        )
     }
 
     private func beginTitleRename() {
@@ -655,7 +699,21 @@ struct PDFAnnotationView: View {
                 lastRemoteSyncAt: document.lastRemoteSyncAt,
                 lastOpenedPage: currentPage,
                 thumbnailRevision: document.thumbnailRevision,
-                searchIndexRevision: document.searchIndexRevision
+                searchIndexRevision: document.searchIndexRevision,
+                annotationSchemaVersion: document.annotationSchemaVersion,
+                lastLocalCheckpointAt: document.lastLocalCheckpointAt,
+                lastUploadAttemptAt: document.lastUploadAttemptAt,
+                lastSuccessfulUploadAt: document.lastSuccessfulUploadAt,
+                nextRetryAt: document.nextRetryAt,
+                conflictState: document.conflictState,
+                iCloudMirrorState: document.iCloudMirrorState,
+                lastICloudMirrorAt: document.lastICloudMirrorAt,
+                iCloudMirrorErrorMessage: document.iCloudMirrorErrorMessage,
+                ocrState: document.ocrState,
+                ocrCheckedAt: document.ocrCheckedAt,
+                ocrSampledPageIndexes: document.ocrSampledPageIndexes,
+                ocrExtractedCharacterCount: document.ocrExtractedCharacterCount,
+                ocrQueuedPageIndexes: document.ocrQueuedPageIndexes
             )
             document.apply(metadata: startingMetadata)
             repository.saveLocalMetadata(startingMetadata, documentId: document.id)
@@ -670,7 +728,21 @@ struct PDFAnnotationView: View {
                 lastRemoteSyncAt: document.lastRemoteSyncAt,
                 lastOpenedPage: result.lastOpenedPage,
                 thumbnailRevision: document.thumbnailRevision + 1,
-                searchIndexRevision: document.searchIndexRevision + 1
+                searchIndexRevision: document.searchIndexRevision + 1,
+                annotationSchemaVersion: LectraAnnotationStore.currentVersion,
+                lastLocalCheckpointAt: result.localEditAt,
+                lastUploadAttemptAt: document.lastUploadAttemptAt,
+                lastSuccessfulUploadAt: document.lastSuccessfulUploadAt,
+                nextRetryAt: document.nextRetryAt,
+                conflictState: document.conflictState,
+                iCloudMirrorState: document.iCloudMirrorState,
+                lastICloudMirrorAt: document.lastICloudMirrorAt,
+                iCloudMirrorErrorMessage: document.iCloudMirrorErrorMessage,
+                ocrState: document.ocrState,
+                ocrCheckedAt: document.ocrCheckedAt,
+                ocrSampledPageIndexes: document.ocrSampledPageIndexes,
+                ocrExtractedCharacterCount: document.ocrExtractedCharacterCount,
+                ocrQueuedPageIndexes: document.ocrQueuedPageIndexes
             )
             document.apply(metadata: metadata)
 
@@ -723,7 +795,21 @@ struct PDFAnnotationView: View {
             lastRemoteSyncAt: doc.lastRemoteSyncAt,
             lastOpenedPage: currentPageIndex,
             thumbnailRevision: doc.thumbnailRevision,
-            searchIndexRevision: doc.searchIndexRevision
+            searchIndexRevision: doc.searchIndexRevision,
+            annotationSchemaVersion: doc.annotationSchemaVersion,
+            lastLocalCheckpointAt: doc.lastLocalCheckpointAt,
+            lastUploadAttemptAt: doc.lastUploadAttemptAt,
+            lastSuccessfulUploadAt: doc.lastSuccessfulUploadAt,
+            nextRetryAt: doc.nextRetryAt,
+            conflictState: doc.conflictState,
+            iCloudMirrorState: doc.iCloudMirrorState,
+            lastICloudMirrorAt: doc.lastICloudMirrorAt,
+            iCloudMirrorErrorMessage: doc.iCloudMirrorErrorMessage,
+            ocrState: doc.ocrState,
+            ocrCheckedAt: doc.ocrCheckedAt,
+            ocrSampledPageIndexes: doc.ocrSampledPageIndexes,
+            ocrExtractedCharacterCount: doc.ocrExtractedCharacterCount,
+            ocrQueuedPageIndexes: doc.ocrQueuedPageIndexes
         )
         doc.apply(metadata: startingMetadata)
         rep.saveLocalMetadata(startingMetadata, documentId: doc.id)
@@ -746,7 +832,21 @@ struct PDFAnnotationView: View {
                         lastRemoteSyncAt: doc.lastRemoteSyncAt,
                         lastOpenedPage: result.lastOpenedPage,
                         thumbnailRevision: doc.thumbnailRevision + 1,
-                        searchIndexRevision: doc.searchIndexRevision + 1
+                        searchIndexRevision: doc.searchIndexRevision + 1,
+                        annotationSchemaVersion: LectraAnnotationStore.currentVersion,
+                        lastLocalCheckpointAt: result.localEditAt,
+                        lastUploadAttemptAt: doc.lastUploadAttemptAt,
+                        lastSuccessfulUploadAt: doc.lastSuccessfulUploadAt,
+                        nextRetryAt: doc.nextRetryAt,
+                        conflictState: doc.conflictState,
+                        iCloudMirrorState: doc.iCloudMirrorState,
+                        lastICloudMirrorAt: doc.lastICloudMirrorAt,
+                        iCloudMirrorErrorMessage: doc.iCloudMirrorErrorMessage,
+                        ocrState: doc.ocrState,
+                        ocrCheckedAt: doc.ocrCheckedAt,
+                        ocrSampledPageIndexes: doc.ocrSampledPageIndexes,
+                        ocrExtractedCharacterCount: doc.ocrExtractedCharacterCount,
+                        ocrQueuedPageIndexes: doc.ocrQueuedPageIndexes
                     )
                     doc.apply(metadata: metadata)
                     rep.saveLocalMetadata(metadata, documentId: doc.id)
@@ -782,26 +882,59 @@ struct PDFAnnotationView: View {
 
             guard let sourceURL = annotatedSourceURL() else { return }
             let finalURL = await ExportNamer.preparedExportURL(source: sourceURL, documentTitle: document.title)
+            presentShareSheet(for: finalURL)
+        }
+    }
 
-            let activityVC = UIActivityViewController(activityItems: [finalURL], applicationActivities: nil)
-            
-            // For iPad, we need a popover source, but we can just use the window scenes for a hacky center popover
-            if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
-               let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-               var topVC = window.rootViewController {
-                
-                while let presented = topVC.presentedViewController {
-                    topVC = presented
-                }
-                
-                if let popover = activityVC.popoverPresentationController {
-                    popover.sourceView = topVC.view
-                    popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
-                    popover.permittedArrowDirections = []
-                }
-                
-                topVC.present(activityVC, animated: true, completion: nil)
+    private func shareOriginalDocument() {
+        Task { @MainActor in
+            guard let sourceURL = document.localPDFURL else {
+                setToast("Original PDF is not available.", style: .error, autoHideAfter: 2.6)
+                return
             }
+
+            let finalURL = await ExportNamer.preparedExportURL(source: sourceURL, documentTitle: document.title)
+            presentShareSheet(for: finalURL)
+        }
+    }
+
+    private func shareEditablePackage() {
+        Task { @MainActor in
+            guard await saveLocally(showBlockingOverlay: true) else { return }
+
+            do {
+                let packageURL = try LectraEditablePackageExporter.preparedPackageURL(
+                    documentId: document.id,
+                    title: document.title,
+                    repository: repository,
+                    originalPDFURL: document.localPDFURL
+                )
+                presentShareSheet(for: packageURL)
+            } catch {
+                setToast("Editable export failed. Try again.", style: .error, autoHideAfter: 2.8)
+            }
+        }
+    }
+
+    @MainActor
+    private func presentShareSheet(for url: URL) {
+        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+
+        if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+           let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+           var topVC = window.rootViewController {
+
+            while let presented = topVC.presentedViewController {
+                topVC = presented
+            }
+
+            if let popover = activityVC.popoverPresentationController {
+                popover.sourceView = topVC.view
+                popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+
+            topVC.present(activityVC, animated: true, completion: nil)
         }
     }
 
@@ -1831,12 +1964,15 @@ final class VectorInkCanvasView: UIView {
 
     private var strokeLayers: [CAShapeLayer] = []
     private var activeStrokePoints: [InkPoint] = []
+    private var activeStrokeDisplayPoints: [CGPoint] = []
     private var activeStrokeWidth: CGFloat = 1.0
     private var activeStrokeColor = InkColorComponents(red: 0, green: 0, blue: 0, alpha: 1)
     private var activeBlendMode: InkBlendMode = .normal
     private var activeStrokeLayer: CAShapeLayer?
     private var committedActivePath: UIBezierPath?
     private var lastCommittedPointIndex: Int = 0
+    private var activeStrokeDisplayLink: CADisplayLink?
+    private var needsActiveStrokeDisplayUpdate = false
     private let eraserPreviewLayer = CAShapeLayer()
     private var eraserPreviewCenter: CGPoint?
     private let lassoPreviewLayer = CAShapeLayer()
@@ -1887,7 +2023,18 @@ final class VectorInkCanvasView: UIView {
         addGestureRecognizer(pencilHoverGesture)
     }
 
+    deinit {
+        invalidateActiveStrokeDisplayLink()
+    }
+
     required init?(coder: NSCoder) { fatalError() }
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        if newWindow == nil {
+            invalidateActiveStrokeDisplayLink()
+        }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -1964,6 +2111,14 @@ final class VectorInkCanvasView: UIView {
     func testingDeleteSelection() {
         handleDeleteSelection()
     }
+
+    var testingLayerContentsScale: CGFloat {
+        layer.contentsScale
+    }
+
+    var testingStrokeLayerContentsScales: [CGFloat] {
+        strokeLayers.map(\.contentsScale)
+    }
 #endif
 
     func finalizeActiveStrokeIfNeeded() {
@@ -1971,8 +2126,15 @@ final class VectorInkCanvasView: UIView {
         finishStroke()
     }
 
-    func refreshForZoom(zoomScale: CGFloat, forceRedraw: Bool = false) {
-        let targetScale = UIScreen.main.scale * max(zoomScale, 1.0)
+    func refreshForZoom(
+        zoomScale: CGFloat,
+        forceRedraw: Bool = false,
+        screenScale: CGFloat = UIScreen.main.scale
+    ) {
+        let targetScale = InkZoomFidelity.contentsScale(
+            screenScale: screenScale,
+            zoomScale: zoomScale
+        )
         if abs(layer.contentsScale - targetScale) > 0.1 || forceRedraw {
             layer.contentsScale = targetScale
             for strokeLayer in strokeLayers {
@@ -2553,8 +2715,10 @@ final class VectorInkCanvasView: UIView {
 
     private func beginStroke(at point: CGPoint, force: CGFloat) {
         activeStrokePoints.removeAll(keepingCapacity: true)
+        activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
         let normalized = normalizedPoint(for: point, force: force)
         activeStrokePoints.append(normalized)
+        activeStrokeDisplayPoints.append(point)
 
         committedActivePath = UIBezierPath()
         committedActivePath?.move(to: point)
@@ -2573,10 +2737,11 @@ final class VectorInkCanvasView: UIView {
         layer.addSublayer(strokeLayer)
         activeStrokeLayer = strokeLayer
         updateActiveStrokePath()
+        startActiveStrokeDisplayLink()
     }
 
     private func appendStroke(at point: CGPoint, force: CGFloat) {
-        guard let activeStrokeLayer else {
+        guard activeStrokeLayer != nil else {
             beginStroke(at: point, force: force)
             return
         }
@@ -2591,13 +2756,13 @@ final class VectorInkCanvasView: UIView {
         }
 
         activeStrokePoints.append(normalized)
+        activeStrokeDisplayPoints.append(point)
         if tool.mode == .pen {
             let updatedWidth = max(tool.width * pressureFactor(for: force), 0.4)
             activeStrokeWidth = (activeStrokeWidth * 0.7) + (updatedWidth * 0.3)
-            activeStrokeLayer.lineWidth = activeStrokeWidth
         }
 
-        updateActiveStrokePathIncremental()
+        scheduleActiveStrokeDisplayUpdate()
     }
 
     private func activeStrokeSnapshot() -> InkStroke? {
@@ -2619,21 +2784,26 @@ final class VectorInkCanvasView: UIView {
         }
 
         drawing.strokes.append(stroke)
+        flushActiveStrokeDisplayUpdate()
         strokeLayers.append(strokeLayer)
         onDrawingChanged?(drawing)
 
+        invalidateActiveStrokeDisplayLink()
         activeStrokeLayer = nil
         committedActivePath = nil
         lastCommittedPointIndex = 0
         activeStrokePoints.removeAll(keepingCapacity: true)
+        activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
     }
 
     private func discardActiveStroke() {
         activeStrokeLayer?.removeFromSuperlayer()
+        invalidateActiveStrokeDisplayLink()
         activeStrokeLayer = nil
         committedActivePath = nil
         lastCommittedPointIndex = 0
         activeStrokePoints.removeAll(keepingCapacity: true)
+        activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
     }
 
     private func erase(at point: CGPoint) {
@@ -2790,6 +2960,8 @@ final class VectorInkCanvasView: UIView {
         activeStrokeLayer?.removeFromSuperlayer()
         activeStrokeLayer = nil
         activeStrokePoints.removeAll(keepingCapacity: true)
+        activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
+        invalidateActiveStrokeDisplayLink()
 
         strokeLayers.forEach { $0.removeFromSuperlayer() }
         strokeLayers.removeAll(keepingCapacity: true)
@@ -2835,7 +3007,10 @@ final class VectorInkCanvasView: UIView {
             color: activeStrokeColor,
             blendMode: activeBlendMode
         )
-        activeStrokeLayer.path = strokePath(for: stroke).cgPath
+        performWithoutLayerActions {
+            activeStrokeLayer.lineWidth = activeStrokeWidth
+            activeStrokeLayer.path = strokePath(for: stroke).cgPath
+        }
     }
 
     private func updateActiveStrokePathIncremental() {
@@ -2847,7 +3022,10 @@ final class VectorInkCanvasView: UIView {
         let count = activeStrokePoints.count
         guard count > 0 else { return }
 
-        let points = activeStrokePoints.map { denormalizedPoint(for: $0) }
+        if activeStrokeDisplayPoints.count != activeStrokePoints.count {
+            activeStrokeDisplayPoints = activeStrokePoints.map { denormalizedPoint(for: $0) }
+        }
+        let points = activeStrokeDisplayPoints
 
         if lastCommittedPointIndex >= count {
             lastCommittedPointIndex = 0
@@ -2890,18 +3068,22 @@ final class VectorInkCanvasView: UIView {
             }
         }
 
-        activeStrokeLayer.path = displayPath.cgPath
+        performWithoutLayerActions {
+            activeStrokeLayer.lineWidth = activeStrokeWidth
+            activeStrokeLayer.path = displayPath.cgPath
+        }
     }
 
     private func rebuildCommittedActivePath() {
         guard activeStrokeLayer != nil else { return }
+        activeStrokeDisplayPoints = activeStrokePoints.map { denormalizedPoint(for: $0) }
         committedActivePath = UIBezierPath()
         lastCommittedPointIndex = 0
 
         let count = activeStrokePoints.count
         guard count > 0 else { return }
 
-        let points = activeStrokePoints.map { denormalizedPoint(for: $0) }
+        let points = activeStrokeDisplayPoints
         committedActivePath?.move(to: points[0])
 
         if count >= 3 {
@@ -2929,7 +3111,57 @@ final class VectorInkCanvasView: UIView {
         strokeLayer.contentsScale = UIScreen.main.scale
         strokeLayer.shouldRasterize = false
         strokeLayer.drawsAsynchronously = false
+        strokeLayer.actions = [
+            "path": NSNull(),
+            "lineWidth": NSNull(),
+            "opacity": NSNull(),
+            "position": NSNull(),
+            "bounds": NSNull(),
+            "contentsScale": NSNull(),
+        ]
         return strokeLayer
+    }
+
+    private func startActiveStrokeDisplayLink() {
+        guard activeStrokeDisplayLink == nil else { return }
+        let displayLink = CADisplayLink(target: self, selector: #selector(handleActiveStrokeDisplayLink(_:)))
+        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        displayLink.add(to: .main, forMode: .common)
+        activeStrokeDisplayLink = displayLink
+    }
+
+    private func scheduleActiveStrokeDisplayUpdate() {
+        needsActiveStrokeDisplayUpdate = true
+        startActiveStrokeDisplayLink()
+    }
+
+    private func flushActiveStrokeDisplayUpdate() {
+        guard activeStrokeLayer != nil else { return }
+        needsActiveStrokeDisplayUpdate = false
+        updateActiveStrokePathIncremental()
+    }
+
+    @objc
+    private func handleActiveStrokeDisplayLink(_ displayLink: CADisplayLink) {
+        guard activeStrokeLayer != nil else {
+            invalidateActiveStrokeDisplayLink()
+            return
+        }
+        guard needsActiveStrokeDisplayUpdate else { return }
+        flushActiveStrokeDisplayUpdate()
+    }
+
+    private func invalidateActiveStrokeDisplayLink() {
+        activeStrokeDisplayLink?.invalidate()
+        activeStrokeDisplayLink = nil
+        needsActiveStrokeDisplayUpdate = false
+    }
+
+    private func performWithoutLayerActions(_ updates: () -> Void) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updates()
+        CATransaction.commit()
     }
 
     private func denormalizedPoints(for stroke: InkStroke) -> [CGPoint] {
@@ -3167,6 +3399,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private var redoStack: [DrawingHistoryStep] = []
     private var isApplyingHistoryChange = false
     private var lastAutoAppendedBlankPageIndex: Int?
+    private var lastCanvasResolutionRefreshZoomScale: CGFloat = 1.0
 
     private var currentTool: InkToolDescriptor = .default
     private let pagePadding: CGFloat = 20.0
@@ -3270,6 +3503,16 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 data: prepared.drawingsData,
                 documentId: prepared.documentId
             )
+            if let drawingStore = try? JSONDecoder().decode(InkDrawingStore.self, from: prepared.drawingsData) {
+                let annotationStore = LectraAnnotationStore(
+                    documentId: prepared.documentId,
+                    migrating: drawingStore
+                )
+                try? repository.saveLocalAnnotations(
+                    annotationStore,
+                    documentId: prepared.documentId
+                )
+            }
             repository.saveLocalMetadata(
                 prepared.metadata,
                 documentId: prepared.documentId
@@ -3366,6 +3609,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         scrollView.minimumZoomScale = 1.0 // Fully zoomed-out fits perfectly inside the screen limits
         scrollView.maximumZoomScale = 5.0
         scrollView.zoomScale = 1.0
+        lastCanvasResolutionRefreshZoomScale = scrollView.zoomScale
 
         currentPageIndex = min(max(currentPageIndex, 0), max(pageViews.count - 1, 0))
         updateVisiblePages()
@@ -3399,6 +3643,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         if let legacyDrawing = legacyDrawings[index] {
             let migrated = migrateLegacyDrawing(legacyDrawing, canvasSize: canvasSize)
             pageDrawings[index] = migrated
+            persistCurrentAnnotationSidecar()
             return migrated
         }
         return InkPageDrawing()
@@ -3924,6 +4169,19 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 forceRedraw: forceRedraw
             )
         }
+        lastCanvasResolutionRefreshZoomScale = scrollView.zoomScale
+    }
+
+    private func refreshVisibleCanvasResolutionDuringActiveZoom() {
+        let zoomScale = max(scrollView.zoomScale, 0.001)
+        guard InkZoomFidelity.shouldRefreshVisibleCanvases(
+            previousZoomScale: lastCanvasResolutionRefreshZoomScale,
+            currentZoomScale: zoomScale
+        ) else {
+            return
+        }
+
+        refreshVisibleCanvasResolution(forceRedraw: false)
     }
     
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -4053,6 +4311,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         containerView.center = CGPoint(x: scrollView.contentSize.width * 0.5 + offsetX,
                                        y: scrollView.contentSize.height * 0.5 + offsetY)
         updateVisiblePages()
+        refreshVisibleCanvasResolutionDuringActiveZoom()
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
@@ -4243,7 +4502,15 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             version: 1,
             pages: snapshotDrawings.filter { !$0.value.isEmpty }
         )
+        let localEditAt = Date()
         let encodedDrawings = try JSONEncoder().encode(drawingsPayload)
+        let encodedAnnotations = try JSONEncoder().encode(
+            LectraAnnotationStore(
+                documentId: documentId,
+                migrating: drawingsPayload,
+                migratedAt: localEditAt
+            )
+        )
         let displayScalesSnapshot = displayScales
         let descriptorsSnapshot = pageDescriptors.map { descriptor in
             switch descriptor.kind {
@@ -4255,7 +4522,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         }
         let annotatedURL = repository.localAnnotatedPDFURL(for: documentId)
         let drawingsURL = repository.localDrawingsURL(for: documentId)
-        let localEditAt = Date()
+        let annotationsURL = repository.localAnnotationsURL(for: documentId)
         let currentPage = currentPageIndex
         let pdfURL = self.pdfURL!
         let recoveryPayload = makeRecoveryPayload(
@@ -4270,6 +4537,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 withIntermediateDirectories: true
             )
             try encodedDrawings.write(to: drawingsURL, options: [.atomic])
+            try encodedAnnotations.write(to: annotationsURL, options: [.atomic])
 
             guard let annotatedData = Self.createFlattenedPDF(
                 pdfURL: pdfURL,
@@ -4571,17 +4839,27 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func loadSavedDrawings() {
+        if let annotationStore = repository.loadLocalAnnotations(documentId: documentId) {
+            pageDrawings = annotationStore.inkDrawingsByPage()
+            legacyDrawings = [:]
+            return
+        }
+
         guard let data = repository.loadLocalDrawings(documentId: documentId) else { return }
 
         if let decoded = try? JSONDecoder().decode(InkDrawingStore.self, from: data) {
             pageDrawings = decoded.pages
             legacyDrawings = [:]
+            persistAnnotationSidecar(from: decoded)
             return
         }
 
         if let decodedPages = try? JSONDecoder().decode([Int: InkPageDrawing].self, from: data) {
             pageDrawings = decodedPages
             legacyDrawings = [:]
+            persistAnnotationSidecar(
+                from: InkDrawingStore(version: 1, pages: decodedPages)
+            )
             return
         }
 
@@ -4591,6 +4869,24 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                     legacyDrawings[page] = drawing
                 }
             }
+        }
+    }
+
+    private func persistCurrentAnnotationSidecar() {
+        persistAnnotationSidecar(
+            from: InkDrawingStore(
+                version: 1,
+                pages: pageDrawings.filter { !$0.value.isEmpty }
+            )
+        )
+    }
+
+    private func persistAnnotationSidecar(from drawingStore: InkDrawingStore) {
+        guard let documentId else { return }
+        Task.detached(priority: .utility) {
+            let repository = DocumentRepository()
+            let store = LectraAnnotationStore(documentId: documentId, migrating: drawingStore)
+            try? repository.saveLocalAnnotations(store, documentId: documentId)
         }
     }
 

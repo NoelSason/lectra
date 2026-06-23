@@ -1,0 +1,200 @@
+name: CI
+
+# Build, test, and lint the Lectra iOS app.
+#
+# Lectra targets iOS 26.2 and uses Foundation Models / on-device intelligence,
+# so it requires Xcode 26 — which means the macOS 26 runner image. If GitHub
+# retires that label, bump `runs-on` and the `setup-xcode` version together.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so pushes don't pile up on the (paid)
+# macOS runners.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT: Lectra/Lectra.xcodeproj
+  SCHEME: Lectra
+  # iPhone 17 Pro is the default simulator shipped with Xcode 26.
+  DESTINATION: "platform=iOS Simulator,name=iPhone 17 Pro"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Style — advisory only. The codebase predates SwiftLint, so violations are
+  # surfaced as annotations but never block a merge.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: SwiftLint (advisory)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Lint app sources
+        continue-on-error: true
+        run: swiftlint lint --config .swiftlint.yml --reporter github-actions-logging
+
+  # ---------------------------------------------------------------------------
+  # Unit tests — the primary gate. Fast, deterministic, with code coverage.
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          echo "Available simulators:"
+          xcrun simctl list devices available | grep -i iphone || true
+
+      - name: Cache SwiftPM packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve dependencies
+        run: xcodebuild -resolvePackageDependencies -project "$PROJECT" -scheme "$SCHEME"
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      - name: Build & run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "$DESTINATION" \
+            -only-testing:LectraTests \
+            -resultBundlePath UnitTestResults.xcresult \
+            -enableCodeCoverage YES \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -d UnitTestResults.xcresult ]; then
+            echo "### Code coverage" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            xcrun xccov view --report --only-targets UnitTestResults.xcresult >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: UnitTestResults.xcresult
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # UI tests — slower and inherently flakier, so they retry before failing.
+  # Runs in parallel with the unit-test job.
+  # ---------------------------------------------------------------------------
+  ui-tests:
+    name: UI Tests
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache SwiftPM packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      - name: Run UI tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "$DESTINATION" \
+            -only-testing:LectraUITests \
+            -resultBundlePath UITestResults.xcresult \
+            -retry-tests-on-failure \
+            -test-iterations 3 \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+
+      - name: Upload UI test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: UITestResults.xcresult
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Release archive — only on version tags. Unsigned (no secrets needed); proves
+  # the app archives cleanly and uploads the .xcarchive as a build artifact.
+  # ---------------------------------------------------------------------------
+  archive:
+    name: Release Archive
+    runs-on: macos-26
+    timeout-minutes: 45
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      - name: Archive (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "generic/platform=iOS" \
+            -archivePath build/Lectra.xcarchive \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcbeautify --renderer github-actions
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: lectra-xcarchive-${{ github.ref_name }}
+          path: build/Lectra.xcarchive
+          retention-days: 30

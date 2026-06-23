@@ -89,6 +89,44 @@ final class EditorSupportTests: XCTestCase {
         XCTAssertEqual(canvas.currentDrawing().strokes.count, 2)
     }
 
+    func testCanvasContentsScaleTracksScreenScaleTimesZoomScale() {
+        let canvas = VectorInkCanvasView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        canvas.setDrawing(
+            InkPageDrawing(
+                strokes: [
+                    makeStroke(from: CGPoint(x: 0.20, y: 0.20), to: CGPoint(x: 0.40, y: 0.40))
+                ]
+            )
+        )
+
+        for zoomScale in [CGFloat(1), 2, 4, 8] {
+            canvas.refreshForZoom(
+                zoomScale: zoomScale,
+                forceRedraw: true,
+                screenScale: 2
+            )
+            let expected = InkZoomFidelity.contentsScale(screenScale: 2, zoomScale: zoomScale)
+
+            XCTAssertEqual(canvas.testingLayerContentsScale, expected, accuracy: 0.001)
+            XCTAssertEqual(canvas.testingStrokeLayerContentsScales, [expected])
+        }
+    }
+
+    func testZoomFidelityRefreshesWhenScaleBucketChanges() {
+        XCTAssertFalse(
+            InkZoomFidelity.shouldRefreshVisibleCanvases(
+                previousZoomScale: 1.0,
+                currentZoomScale: 1.2
+            )
+        )
+        XCTAssertTrue(
+            InkZoomFidelity.shouldRefreshVisibleCanvases(
+                previousZoomScale: 1.0,
+                currentZoomScale: 1.55
+            )
+        )
+    }
+
     func testBlankPageUndoGuardRejectsTouchedOrNonTerminalPages() {
         XCTAssertTrue(
             AutoAppendedBlankPageUndoGuard.canUndo(

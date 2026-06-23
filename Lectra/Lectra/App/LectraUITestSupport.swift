@@ -255,6 +255,8 @@ private struct CompactEditorTopBarScenarioView: View {
                     onSetSqueezeAction: { _ in },
                     onExportCanvascope: {},
                     onShare: {},
+                    onShareOriginal: {},
+                    onShareEditable: {},
                     onShowIntelligence: {},
                     isTitleFocused: $isTitleFocused
                 )

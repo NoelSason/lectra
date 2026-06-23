@@ -17,9 +17,14 @@ struct NotebookView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var sharePayload: SharePayload?
+    @FocusState private var titleFocused: Bool
 
-    init(document: NotebookDocument) {
+    /// Called when the title is committed, so the library card can be renamed.
+    private let onTitleChange: ((String) -> Void)?
+
+    init(document: NotebookDocument, onTitleChange: ((String) -> Void)? = nil) {
         _document = StateObject(wrappedValue: document)
+        self.onTitleChange = onTitleChange
     }
 
     var body: some View {
@@ -31,10 +36,14 @@ struct NotebookView: View {
                         NotebookCellView(
                             cell: cell,
                             onRun: { run(cell) },
+                            onRunSelectBelow: { runSelectBelow(cell) },
+                            onRunInsertBelow: { runInsertBelow(cell) },
                             onDelete: { withAnimation(LectraMotion.quick) { document.delete(cell) } },
                             onMoveUp: { withAnimation(LectraMotion.quick) { document.move(cell, by: -1) } },
                             onMoveDown: { withAnimation(LectraMotion.quick) { document.move(cell, by: 1) } },
-                            onChangeType: { document.changeType(cell, to: $0) })
+                            onChangeType: { document.changeType(cell, to: $0) },
+                            isFocused: document.focusedCellID == cell.id,
+                            onFocus: { document.focusedCellID = cell.id })
                     }
                     addCellBar
                 }
@@ -53,6 +62,7 @@ struct NotebookView: View {
             try? await runtime.start()
         }
         .onDisappear {
+            commitTitle()
             store.save(document)
             runtime.shutdown()
         }
@@ -64,11 +74,36 @@ struct NotebookView: View {
     // MARK: Header
 
     private var titleField: some View {
-        TextField("Notebook title", text: $document.title)
-            .font(LectraTypography.title)
-            .foregroundStyle(LectraColor.textPrimary)
-            .textFieldStyle(.plain)
-            .padding(.bottom, LectraSpacing.xs)
+        HStack(spacing: LectraSpacing.sm) {
+            TextField("Notebook title", text: $document.title)
+                .font(LectraTypography.title)
+                .foregroundStyle(LectraColor.textPrimary)
+                .textFieldStyle(.plain)
+                .focused($titleFocused)
+                .submitLabel(.done)
+                .onSubmit { commitTitle() }
+            Image(systemName: "pencil")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(titleFocused ? LectraColor.accentSoft : LectraColor.textTertiary)
+        }
+        .padding(.horizontal, LectraSpacing.md)
+        .frame(minHeight: 44)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                .fill(LectraColor.surfaceFloating.opacity(titleFocused ? 0.85 : 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
+                        .stroke(titleFocused ? LectraColor.accent.opacity(0.5) : LectraColor.edgeStroke, lineWidth: 1))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { titleFocused = true }
+    }
+
+    private func commitTitle() {
+        let trimmed = document.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { document.title = "Untitled Notebook" }
+        store.save(document)
+        onTitleChange?(document.title)
     }
 
     private var kernelBar: some View {
@@ -86,6 +121,8 @@ struct NotebookView: View {
                 Text("Starting Python…").foregroundStyle(LectraColor.textSecondary)
             }
             Spacer()
+            Text("⇧⏎ run")
+                .foregroundStyle(LectraColor.textTertiary)
         }
         .font(LectraTypography.footnoteBold)
         .padding(.horizontal, LectraSpacing.lg)
@@ -170,6 +207,25 @@ struct NotebookView: View {
             if result.error != nil { LectraHaptics.warning() } else { LectraHaptics.success() }
             store.save(document)
         }
+    }
+
+    /// Shift+Enter: run, then focus the next code cell (creating one at the end
+    /// if there isn't a next code cell).
+    private func runSelectBelow(_ cell: NotebookCell) {
+        run(cell)
+        if let next = document.nextCodeCell(after: cell) {
+            document.focusedCellID = next.id
+        } else {
+            let new = document.addCell(.code, after: document.cells.last)
+            document.focusedCellID = new.id
+        }
+    }
+
+    /// Option+Enter: run, then insert and focus a new code cell directly below.
+    private func runInsertBelow(_ cell: NotebookCell) {
+        run(cell)
+        let new = document.addCell(.code, after: cell)
+        document.focusedCellID = new.id
     }
 
     private func runAll() {

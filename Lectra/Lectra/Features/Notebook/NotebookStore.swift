@@ -73,6 +73,12 @@ final class NotebookStore: ObservableObject {
         return NotebookDocument(jupyter: nb)
     }
 
+    /// Whether a notebook file exists for this id. Used by the library to tell
+    /// notebook documents apart from PDFs.
+    func exists(id: UUID) -> Bool {
+        fileManager.fileExists(atPath: fileURL(for: id).path)
+    }
+
     @discardableResult
     func save(_ document: NotebookDocument) -> Bool {
         guard let data = try? document.toJupyter().encodeIPYNB() else { return false }
@@ -110,11 +116,14 @@ final class NotebookStore: ObservableObject {
 
     // MARK: Creation
 
-    func newEmpty() -> NotebookDocument {
+    /// A starter notebook with a fixed id so it can pair with a library
+    /// document of the same id.
+    func newEmpty(id: UUID, title: String) -> NotebookDocument {
         NotebookDocument(
-            title: "Untitled Notebook",
+            id: id,
+            title: title,
             cells: [
-                NotebookCell(type: .markdown, source: "# Untitled Notebook\n\nStart writing, or add a code cell to run Python."),
+                NotebookCell(type: .markdown, source: "# \(title)\n\nStart writing, or add a code cell to run Python."),
                 NotebookCell(type: .code, source: "")
             ])
     }

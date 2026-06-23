@@ -195,8 +195,15 @@ struct DocumentCardView: View {
     }
 
     private var cloudGlyph: (symbol: String, tint: Color)? {
+        if document.conflictState == .needsReview {
+            return ("exclamationmark.triangle.fill", LectraColor.accent)
+        }
+
         switch document.syncState {
         case .idle:
+            if document.ocrState == .needsOCR {
+                return ("text.viewfinder", LectraColor.warningSubtle)
+            }
             return nil
         case .synced:
             return ("checkmark.icloud.fill", LectraColor.success)

@@ -14,10 +14,14 @@ struct NotebookCellView: View {
     @ObservedObject var cell: NotebookCell
 
     let onRun: () -> Void
+    let onRunSelectBelow: () -> Void
+    let onRunInsertBelow: () -> Void
     let onDelete: () -> Void
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
     let onChangeType: (NotebookCellType) -> Void
+    let isFocused: Bool
+    let onFocus: () -> Void
 
     @State private var isEditingMarkdown = false
     @State private var editorHeight: CGFloat = 44
@@ -155,7 +159,15 @@ struct NotebookCellView: View {
                     .padding(.vertical, 10)
                     .allowsHitTesting(false)
             }
-            PlainTextEditor(text: $cell.source, codeMode: monospaced, height: $editorHeight)
+            PlainTextEditor(
+                text: $cell.source,
+                codeMode: monospaced,
+                height: $editorHeight,
+                onRun: monospaced ? onRun : nil,
+                onRunSelectBelow: monospaced ? onRunSelectBelow : nil,
+                onRunInsertBelow: monospaced ? onRunInsertBelow : nil,
+                isFocused: isFocused,
+                onFocus: onFocus)
                 .frame(height: max(44, editorHeight))
         }
         .background(
@@ -177,9 +189,14 @@ private struct PlainTextEditor: UIViewRepresentable {
     @Binding var text: String
     var codeMode: Bool
     @Binding var height: CGFloat
+    var onRun: (() -> Void)? = nil
+    var onRunSelectBelow: (() -> Void)? = nil
+    var onRunInsertBelow: (() -> Void)? = nil
+    var isFocused: Bool = false
+    var onFocus: (() -> Void)? = nil
 
-    func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
+    func makeUIView(context: Context) -> CodeTextView {
+        let view = CodeTextView()
         view.delegate = context.coordinator
         view.backgroundColor = .clear
         view.isScrollEnabled = false
@@ -188,6 +205,8 @@ private struct PlainTextEditor: UIViewRepresentable {
         view.textColor = UIColor(hex: 0xF6F1E7)               // LectraColor.textPrimary
         view.tintColor = LectraColor.accentUIColor
         view.font = Self.font(codeMode: codeMode)
+        view.accessibilityIdentifier = codeMode ? "notebook.code.editor" : "notebook.markdown.editor"
+        view.commandsEnabled = codeMode
         if codeMode {
             view.autocorrectionType = .no
             view.autocapitalizationType = .none
@@ -200,9 +219,19 @@ private struct PlainTextEditor: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: UITextView, context: Context) {
-        if view.text != text { view.text = text }
+    func updateUIView(_ view: CodeTextView, context: Context) {
+        if view.text != text {
+            view.text = text
+            context.coordinator.applyHighlight(view)
+        }
+        // Refresh the action closures each update so they capture current state.
+        view.onRun = onRun
+        view.onRunSelectBelow = onRunSelectBelow
+        view.onRunInsertBelow = onRunInsertBelow
         recalcHeight(view)
+        if isFocused, !view.isFirstResponder {
+            DispatchQueue.main.async { view.becomeFirstResponder() }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -224,11 +253,73 @@ private struct PlainTextEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         private let parent: PlainTextEditor
         init(_ parent: PlainTextEditor) { self.parent = parent }
+
+        /// Recolors the code cell in place, preserving the caret.
+        func applyHighlight(_ view: CodeTextView) {
+            guard parent.codeMode, let font = view.font else { return }
+            let selected = view.selectedRange
+            view.textStorage.setAttributedString(PythonSyntax.highlighted(view.text, font: font))
+            view.selectedRange = selected
+            view.typingAttributes = [.font: font, .foregroundColor: PythonSyntax.defaultColor]
+        }
+
         func textViewDidChange(_ view: UITextView) {
             parent.text = view.text
+            if let code = view as? CodeTextView { applyHighlight(code) }
             parent.recalcHeight(view)
         }
+
+        func textViewDidBeginEditing(_ view: UITextView) {
+            parent.onFocus?()
+        }
+
+        /// Auto-indents the next line: pressing Return keeps the current line's
+        /// indentation and adds one level after a line that ends with `:`.
+        func textView(_ view: UITextView,
+                      shouldChangeTextIn range: NSRange,
+                      replacementText text: String) -> Bool {
+            guard parent.codeMode, text == "\n" else { return true }
+            let ns = view.text as NSString
+            let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
+            let currentLine = ns.substring(with: lineRange)
+            let insertion = "\n" + PythonSyntax.nextLineIndent(currentLine: currentLine)
+
+            let updated = ns.replacingCharacters(in: range, with: insertion)
+            view.text = updated
+            let caret = range.location + (insertion as NSString).length
+            view.selectedRange = NSRange(location: caret, length: 0)
+
+            parent.text = updated
+            if let code = view as? CodeTextView { applyHighlight(code) }
+            parent.recalcHeight(view)
+            return false
+        }
     }
+}
+
+/// A UITextView that runs notebook cells via Jupyter-style keyboard shortcuts.
+/// Shift/⌘/⌥+Return take priority over inserting a newline; plain Return still
+/// inserts a newline as usual.
+final class CodeTextView: UITextView {
+    var onRun: (() -> Void)?
+    var onRunSelectBelow: (() -> Void)?
+    var onRunInsertBelow: (() -> Void)?
+    var commandsEnabled = false
+
+    override var keyCommands: [UIKeyCommand]? {
+        guard commandsEnabled else { return nil }
+        let commands = [
+            UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(handleRunSelectBelow)),
+            UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(handleRun)),
+            UIKeyCommand(input: "\r", modifierFlags: .alternate, action: #selector(handleRunInsertBelow))
+        ]
+        commands.forEach { $0.wantsPriorityOverSystemBehavior = true }
+        return commands
+    }
+
+    @objc private func handleRunSelectBelow() { onRunSelectBelow?() }
+    @objc private func handleRun() { onRun?() }
+    @objc private func handleRunInsertBelow() { onRunInsertBelow?() }
 }
 
 // MARK: - Output
@@ -247,6 +338,15 @@ private struct CellOutputView: View {
             if let result = output.result, !result.isEmpty {
                 outputText(result, color: LectraColor.accentSoft)
             }
+            ForEach(Array(output.images.enumerated()), id: \.offset) { _, png in
+                if let image = Self.decode(png) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous))
+                }
+            }
             if let error = output.error, !error.isEmpty {
                 outputText(error, color: LectraColor.accentDestructive)
             }
@@ -256,6 +356,14 @@ private struct CellOutputView: View {
         .background(
             RoundedRectangle(cornerRadius: LectraRadius.input, style: .continuous)
                 .fill(LectraColor.surfaceOverlay.opacity(0.6)))
+    }
+
+    /// Decodes a base64 PNG, tolerating any whitespace/newlines that notebook
+    /// tools sometimes wrap the payload in.
+    private static func decode(_ base64: String) -> UIImage? {
+        let cleaned = base64.filter { !$0.isWhitespace }
+        guard let data = Data(base64Encoded: cleaned) else { return nil }
+        return UIImage(data: data)
     }
 
     private func outputText(_ text: String, color: Color) -> some View {

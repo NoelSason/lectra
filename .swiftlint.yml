@@ -1,0 +1,45 @@
+# SwiftLint configuration for Lectra.
+#
+# Advisory in CI (never blocks a merge). Scoped to first-party app + test
+# sources; vendored dependencies and generated folders are excluded.
+
+included:
+  - Lectra/Lectra
+  - Lectra/LectraTests
+  - Lectra/LectraUITests
+  - Lectra/LectraShareExtension
+
+excluded:
+  - Lectra/Lectra/Resources
+  - supabase-swift
+  - "**/.build"
+  - "**/DerivedData"
+  - "**/build"
+
+# Keep the signal high: opt out of the noisiest defaults rather than churn the
+# whole codebase to satisfy them.
+disabled_rules:
+  - line_length
+  - todo
+  - trailing_comma
+  - type_body_length
+  - file_length
+  - function_body_length
+  - cyclomatic_complexity
+  - identifier_name
+  - nesting
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - first_where
+  - contains_over_filter_count
+  - last_where
+  - redundant_nil_coalescing
+  - unused_import
+  - force_unwrapping
+
+# Don't fail the process on style; the CI job is advisory anyway.
+force_cast: warning
+force_try: warning
+force_unwrapping: warning

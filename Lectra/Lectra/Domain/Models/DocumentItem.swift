@@ -131,6 +131,20 @@ final class LocalDocument: Identifiable, ObservableObject {
     @Published var lastOpenedPage: Int = 0
     @Published var thumbnailRevision: Int = 0
     @Published var searchIndexRevision: Int = 0
+    @Published var annotationSchemaVersion: Int = LectraAnnotationStore.currentVersion
+    @Published var lastLocalCheckpointAt: Date?
+    @Published var lastUploadAttemptAt: Date?
+    @Published var lastSuccessfulUploadAt: Date?
+    @Published var nextRetryAt: Date?
+    @Published var conflictState: DocumentConflictState = .none
+    @Published var iCloudMirrorState: ICloudMirrorState = .unknown
+    @Published var lastICloudMirrorAt: Date?
+    @Published var iCloudMirrorErrorMessage: String?
+    @Published var ocrState: PDFOCRState = .unknown
+    @Published var ocrCheckedAt: Date?
+    @Published var ocrSampledPageIndexes: [Int] = []
+    @Published var ocrExtractedCharacterCount: Int = 0
+    @Published var ocrQueuedPageIndexes: [Int] = []
 
     private static let isoParserWithFractionalSeconds: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -203,6 +217,20 @@ final class LocalDocument: Identifiable, ObservableObject {
         lastOpenedPage = metadata.lastOpenedPage ?? 0
         thumbnailRevision = metadata.thumbnailRevision
         searchIndexRevision = metadata.searchIndexRevision
+        annotationSchemaVersion = metadata.annotationSchemaVersion
+        lastLocalCheckpointAt = metadata.lastLocalCheckpointAt
+        lastUploadAttemptAt = metadata.lastUploadAttemptAt
+        lastSuccessfulUploadAt = metadata.lastSuccessfulUploadAt
+        nextRetryAt = metadata.nextRetryAt
+        conflictState = metadata.conflictState
+        iCloudMirrorState = metadata.iCloudMirrorState
+        lastICloudMirrorAt = metadata.lastICloudMirrorAt
+        iCloudMirrorErrorMessage = metadata.iCloudMirrorErrorMessage
+        ocrState = metadata.ocrState
+        ocrCheckedAt = metadata.ocrCheckedAt
+        ocrSampledPageIndexes = metadata.ocrSampledPageIndexes
+        ocrExtractedCharacterCount = metadata.ocrExtractedCharacterCount
+        ocrQueuedPageIndexes = metadata.ocrQueuedPageIndexes
     }
 }
 

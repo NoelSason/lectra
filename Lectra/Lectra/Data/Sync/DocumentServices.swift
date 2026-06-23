@@ -12,6 +12,20 @@ nonisolated enum DocumentSyncState: String, Codable, CaseIterable, Sendable {
     case failed
 }
 
+nonisolated enum DocumentConflictState: String, Codable, CaseIterable, Sendable {
+    case none
+    case needsReview
+    case resolved
+}
+
+nonisolated enum ICloudMirrorState: String, Codable, CaseIterable, Sendable {
+    case unknown
+    case pending
+    case mirrored
+    case unavailable
+    case failed
+}
+
 nonisolated struct DocumentLocalMetadata: Codable, Equatable, Sendable {
     var syncState: DocumentSyncState = .idle
     var syncErrorMessage: String?
@@ -21,6 +35,119 @@ nonisolated struct DocumentLocalMetadata: Codable, Equatable, Sendable {
     var lastOpenedPage: Int?
     var thumbnailRevision: Int = 0
     var searchIndexRevision: Int = 0
+    var annotationSchemaVersion: Int = LectraAnnotationStore.currentVersion
+    var lastLocalCheckpointAt: Date?
+    var lastUploadAttemptAt: Date?
+    var lastSuccessfulUploadAt: Date?
+    var nextRetryAt: Date?
+    var conflictState: DocumentConflictState = .none
+    var iCloudMirrorState: ICloudMirrorState = .unknown
+    var lastICloudMirrorAt: Date?
+    var iCloudMirrorErrorMessage: String?
+    var ocrState: PDFOCRState = .unknown
+    var ocrCheckedAt: Date?
+    var ocrSampledPageIndexes: [Int] = []
+    var ocrExtractedCharacterCount: Int = 0
+    var ocrQueuedPageIndexes: [Int] = []
+
+    init(
+        syncState: DocumentSyncState = .idle,
+        syncErrorMessage: String? = nil,
+        dirtyPageIndexes: [Int] = [],
+        lastLocalEditAt: Date? = nil,
+        lastRemoteSyncAt: Date? = nil,
+        lastOpenedPage: Int? = nil,
+        thumbnailRevision: Int = 0,
+        searchIndexRevision: Int = 0,
+        annotationSchemaVersion: Int = LectraAnnotationStore.currentVersion,
+        lastLocalCheckpointAt: Date? = nil,
+        lastUploadAttemptAt: Date? = nil,
+        lastSuccessfulUploadAt: Date? = nil,
+        nextRetryAt: Date? = nil,
+        conflictState: DocumentConflictState = .none,
+        iCloudMirrorState: ICloudMirrorState = .unknown,
+        lastICloudMirrorAt: Date? = nil,
+        iCloudMirrorErrorMessage: String? = nil,
+        ocrState: PDFOCRState = .unknown,
+        ocrCheckedAt: Date? = nil,
+        ocrSampledPageIndexes: [Int] = [],
+        ocrExtractedCharacterCount: Int = 0,
+        ocrQueuedPageIndexes: [Int] = []
+    ) {
+        self.syncState = syncState
+        self.syncErrorMessage = syncErrorMessage
+        self.dirtyPageIndexes = dirtyPageIndexes
+        self.lastLocalEditAt = lastLocalEditAt
+        self.lastRemoteSyncAt = lastRemoteSyncAt
+        self.lastOpenedPage = lastOpenedPage
+        self.thumbnailRevision = thumbnailRevision
+        self.searchIndexRevision = searchIndexRevision
+        self.annotationSchemaVersion = annotationSchemaVersion
+        self.lastLocalCheckpointAt = lastLocalCheckpointAt
+        self.lastUploadAttemptAt = lastUploadAttemptAt
+        self.lastSuccessfulUploadAt = lastSuccessfulUploadAt
+        self.nextRetryAt = nextRetryAt
+        self.conflictState = conflictState
+        self.iCloudMirrorState = iCloudMirrorState
+        self.lastICloudMirrorAt = lastICloudMirrorAt
+        self.iCloudMirrorErrorMessage = iCloudMirrorErrorMessage
+        self.ocrState = ocrState
+        self.ocrCheckedAt = ocrCheckedAt
+        self.ocrSampledPageIndexes = ocrSampledPageIndexes
+        self.ocrExtractedCharacterCount = ocrExtractedCharacterCount
+        self.ocrQueuedPageIndexes = ocrQueuedPageIndexes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case syncState
+        case syncErrorMessage
+        case dirtyPageIndexes
+        case lastLocalEditAt
+        case lastRemoteSyncAt
+        case lastOpenedPage
+        case thumbnailRevision
+        case searchIndexRevision
+        case annotationSchemaVersion
+        case lastLocalCheckpointAt
+        case lastUploadAttemptAt
+        case lastSuccessfulUploadAt
+        case nextRetryAt
+        case conflictState
+        case iCloudMirrorState
+        case lastICloudMirrorAt
+        case iCloudMirrorErrorMessage
+        case ocrState
+        case ocrCheckedAt
+        case ocrSampledPageIndexes
+        case ocrExtractedCharacterCount
+        case ocrQueuedPageIndexes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        syncState = try container.decodeIfPresent(DocumentSyncState.self, forKey: .syncState) ?? .idle
+        syncErrorMessage = try container.decodeIfPresent(String.self, forKey: .syncErrorMessage)
+        dirtyPageIndexes = try container.decodeIfPresent([Int].self, forKey: .dirtyPageIndexes) ?? []
+        lastLocalEditAt = try container.decodeIfPresent(Date.self, forKey: .lastLocalEditAt)
+        lastRemoteSyncAt = try container.decodeIfPresent(Date.self, forKey: .lastRemoteSyncAt)
+        lastOpenedPage = try container.decodeIfPresent(Int.self, forKey: .lastOpenedPage)
+        thumbnailRevision = try container.decodeIfPresent(Int.self, forKey: .thumbnailRevision) ?? 0
+        searchIndexRevision = try container.decodeIfPresent(Int.self, forKey: .searchIndexRevision) ?? 0
+        annotationSchemaVersion = try container.decodeIfPresent(Int.self, forKey: .annotationSchemaVersion) ?? 1
+        lastLocalCheckpointAt = try container.decodeIfPresent(Date.self, forKey: .lastLocalCheckpointAt)
+        lastUploadAttemptAt = try container.decodeIfPresent(Date.self, forKey: .lastUploadAttemptAt)
+        lastSuccessfulUploadAt = try container.decodeIfPresent(Date.self, forKey: .lastSuccessfulUploadAt)
+        nextRetryAt = try container.decodeIfPresent(Date.self, forKey: .nextRetryAt)
+        conflictState = try container.decodeIfPresent(DocumentConflictState.self, forKey: .conflictState) ?? .none
+        iCloudMirrorState = try container.decodeIfPresent(ICloudMirrorState.self, forKey: .iCloudMirrorState) ?? .unknown
+        lastICloudMirrorAt = try container.decodeIfPresent(Date.self, forKey: .lastICloudMirrorAt)
+        iCloudMirrorErrorMessage = try container.decodeIfPresent(String.self, forKey: .iCloudMirrorErrorMessage)
+        ocrState = try container.decodeIfPresent(PDFOCRState.self, forKey: .ocrState) ?? .unknown
+        ocrCheckedAt = try container.decodeIfPresent(Date.self, forKey: .ocrCheckedAt)
+        ocrSampledPageIndexes = try container.decodeIfPresent([Int].self, forKey: .ocrSampledPageIndexes) ?? []
+        ocrExtractedCharacterCount = try container.decodeIfPresent(Int.self, forKey: .ocrExtractedCharacterCount) ?? 0
+        ocrQueuedPageIndexes = try container.decodeIfPresent([Int].self, forKey: .ocrQueuedPageIndexes) ?? []
+    }
 }
 
 extension DocumentLocalMetadata {
@@ -34,8 +161,59 @@ extension DocumentLocalMetadata {
         metadata.dirtyPageIndexes = dirtyPageIndexes
         if let editedAt {
             metadata.lastLocalEditAt = editedAt
+            metadata.lastLocalCheckpointAt = editedAt
         }
+        metadata.annotationSchemaVersion = LectraAnnotationStore.currentVersion
         return metadata
+    }
+
+    nonisolated mutating func markLocalCheckpoint(
+        editedAt: Date,
+        lastOpenedPage: Int,
+        dirtyPageIndexes: [Int]
+    ) {
+        self.lastLocalEditAt = editedAt
+        self.lastLocalCheckpointAt = editedAt
+        self.lastOpenedPage = lastOpenedPage
+        self.dirtyPageIndexes = dirtyPageIndexes
+        self.annotationSchemaVersion = LectraAnnotationStore.currentVersion
+    }
+
+    nonisolated mutating func markUploadQueued() {
+        syncState = .queuedUpload
+        syncErrorMessage = nil
+        nextRetryAt = nil
+    }
+
+    nonisolated mutating func markUploadAttempt(at attemptedAt: Date) {
+        syncState = .uploading
+        syncErrorMessage = nil
+        lastUploadAttemptAt = attemptedAt
+        nextRetryAt = nil
+    }
+
+    nonisolated mutating func markUploadSucceeded(at uploadedAt: Date) {
+        syncState = .synced
+        syncErrorMessage = nil
+        lastRemoteSyncAt = uploadedAt
+        lastSuccessfulUploadAt = uploadedAt
+        dirtyPageIndexes = []
+        nextRetryAt = nil
+        conflictState = .none
+    }
+
+    nonisolated mutating func markUploadFailed(message: String, nextRetryAt retryAt: Date?) {
+        syncState = .failed
+        syncErrorMessage = message
+        nextRetryAt = retryAt
+    }
+
+    nonisolated mutating func applyOCRDetection(_ result: PDFOCRDetectionResult) {
+        ocrState = result.state
+        ocrCheckedAt = result.checkedAt
+        ocrSampledPageIndexes = result.sampledPageIndexes
+        ocrExtractedCharacterCount = result.extractedCharacterCount
+        ocrQueuedPageIndexes = result.needsOCR ? result.sampledPageIndexes : []
     }
 }
 
@@ -282,7 +460,16 @@ final class ICloudDocumentStore {
                     "mirroredAt": formatter.string(from: mirroredAt),
                     "lastLocalEditAt": metadata.lastLocalEditAt.map(formatter.string(from:)),
                     "lastRemoteSyncAt": metadata.lastRemoteSyncAt.map(formatter.string(from:)),
+                    "lastLocalCheckpointAt": metadata.lastLocalCheckpointAt.map(formatter.string(from:)),
+                    "lastUploadAttemptAt": metadata.lastUploadAttemptAt.map(formatter.string(from:)),
+                    "lastSuccessfulUploadAt": metadata.lastSuccessfulUploadAt.map(formatter.string(from:)),
+                    "nextRetryAt": metadata.nextRetryAt.map(formatter.string(from:)),
                     "lastOpenedPage": metadata.lastOpenedPage,
+                    "annotationSchemaVersion": metadata.annotationSchemaVersion,
+                    "syncState": metadata.syncState.rawValue,
+                    "conflictState": metadata.conflictState.rawValue,
+                    "iCloudMirrorState": metadata.iCloudMirrorState.rawValue,
+                    "ocrState": metadata.ocrState.rawValue,
                     "preferredFileName": preferredFileName,
                 ]
                 let manifest = manifestObject.compactMapValues { $0 }
@@ -773,12 +960,17 @@ final class DocumentSyncCoordinator {
         userId: UUID?
     ) async {
         var metadata = repository.loadLocalMetadata(documentId: documentId)
-        metadata.lastLocalEditAt = result.localEditAt
-        metadata.lastOpenedPage = result.lastOpenedPage
-        metadata.dirtyPageIndexes = result.dirtyPageIndexes
+        metadata.markLocalCheckpoint(
+            editedAt: result.localEditAt,
+            lastOpenedPage: result.lastOpenedPage,
+            dirtyPageIndexes: result.dirtyPageIndexes
+        )
         metadata.thumbnailRevision += 1
         metadata.searchIndexRevision += 1
-        scheduleICloudMirror(documentId: documentId, title: title, metadata: metadata)
+        if UserDefaults.standard.bool(forKey: "lectra_cloud_sync_enabled") {
+            metadata.iCloudMirrorState = .pending
+            metadata.iCloudMirrorErrorMessage = nil
+        }
 
         if let annotatedFilePath = result.annotatedFilePath,
            let rowId,
@@ -798,10 +990,10 @@ final class DocumentSyncCoordinator {
             )
             pendingJobs[documentId] = job
             repository.savePendingSyncJobs(Array(pendingJobs.values))
-            metadata.syncState = .queuedUpload
-            metadata.syncErrorMessage = nil
+            metadata.markUploadQueued()
             repository.saveLocalMetadata(metadata, documentId: documentId)
             publish(documentId: documentId, metadata: metadata)
+            scheduleICloudMirror(documentId: documentId, title: title, metadata: metadata)
             scheduleProcessing()
             return
         }
@@ -810,6 +1002,7 @@ final class DocumentSyncCoordinator {
         metadata.syncErrorMessage = nil
         repository.saveLocalMetadata(metadata, documentId: documentId)
         publish(documentId: documentId, metadata: metadata)
+        scheduleICloudMirror(documentId: documentId, title: title, metadata: metadata)
     }
 
     func retry(documentId: UUID) async {
@@ -818,6 +1011,11 @@ final class DocumentSyncCoordinator {
         job.lastErrorMessage = nil
         pendingJobs[documentId] = job
         repository.savePendingSyncJobs(Array(pendingJobs.values))
+
+        var metadata = repository.loadLocalMetadata(documentId: documentId)
+        metadata.markUploadQueued()
+        repository.saveLocalMetadata(metadata, documentId: documentId)
+        publish(documentId: documentId, metadata: metadata)
         scheduleProcessing()
     }
 
@@ -866,16 +1064,17 @@ final class DocumentSyncCoordinator {
 
     private func process(job: PendingSyncJob) async {
         var metadata = repository.loadLocalMetadata(documentId: job.documentId)
-        metadata.syncState = .uploading
-        metadata.syncErrorMessage = nil
+        metadata.markUploadAttempt(at: Date())
         repository.saveLocalMetadata(metadata, documentId: job.documentId)
         publish(documentId: job.documentId, metadata: metadata)
 
         let annotatedURL = URL(fileURLWithPath: job.annotatedFilePath)
         guard let data = try? Data(contentsOf: annotatedURL) else {
             LectraDebugLog("[DocumentSyncCoordinator] Sync process failed: annotated file not found at \(job.annotatedFilePath)")
-            metadata.syncState = .failed
-            metadata.syncErrorMessage = "Saved locally, but the upload file is missing."
+            metadata.markUploadFailed(
+                message: "Saved locally, but the upload file is missing.",
+                nextRetryAt: nil
+            )
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
             publish(documentId: job.documentId, metadata: metadata)
             pendingJobs.removeValue(forKey: job.documentId)
@@ -895,10 +1094,7 @@ final class DocumentSyncCoordinator {
                 currentItemData: job.itemData
             )
 
-            metadata.syncState = .synced
-            metadata.syncErrorMessage = nil
-            metadata.lastRemoteSyncAt = Date()
-            metadata.dirtyPageIndexes = []
+            metadata.markUploadSucceeded(at: Date())
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
             publish(documentId: job.documentId, metadata: metadata)
             pendingJobs.removeValue(forKey: job.documentId)
@@ -913,8 +1109,10 @@ final class DocumentSyncCoordinator {
             pendingJobs[job.documentId] = failedJob
             repository.savePendingSyncJobs(Array(pendingJobs.values))
 
-            metadata.syncState = .failed
-            metadata.syncErrorMessage = error.localizedDescription
+            metadata.markUploadFailed(
+                message: error.localizedDescription,
+                nextRetryAt: failedJob.nextRetryAt
+            )
             repository.saveLocalMetadata(metadata, documentId: job.documentId)
             publish(documentId: job.documentId, metadata: metadata)
         }
@@ -938,13 +1136,31 @@ final class DocumentSyncCoordinator {
         guard resolvedOriginalURL != nil || resolvedAnnotatedURL != nil else { return }
 
         Task(priority: .utility) {
-            try? await ICloudDocumentStore.shared.mirrorDocument(
-                documentId: documentId,
-                title: title,
-                originalPDFURL: resolvedOriginalURL,
-                annotatedPDFURL: resolvedAnnotatedURL,
-                metadata: metadata
-            )
+            do {
+                try await ICloudDocumentStore.shared.mirrorDocument(
+                    documentId: documentId,
+                    title: title,
+                    originalPDFURL: resolvedOriginalURL,
+                    annotatedPDFURL: resolvedAnnotatedURL,
+                    metadata: metadata
+                )
+                var updatedMetadata = repository.loadLocalMetadata(documentId: documentId)
+                updatedMetadata.iCloudMirrorState = .mirrored
+                updatedMetadata.lastICloudMirrorAt = Date()
+                updatedMetadata.iCloudMirrorErrorMessage = nil
+                repository.saveLocalMetadata(updatedMetadata, documentId: documentId)
+                await MainActor.run {
+                    self.publish(documentId: documentId, metadata: updatedMetadata)
+                }
+            } catch {
+                var updatedMetadata = repository.loadLocalMetadata(documentId: documentId)
+                updatedMetadata.iCloudMirrorState = .failed
+                updatedMetadata.iCloudMirrorErrorMessage = error.localizedDescription
+                repository.saveLocalMetadata(updatedMetadata, documentId: documentId)
+                await MainActor.run {
+                    self.publish(documentId: documentId, metadata: updatedMetadata)
+                }
+            }
         }
     }
 }

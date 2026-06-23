@@ -187,7 +187,7 @@ struct DocumentBrowserView: View {
     @State private var selectedDocumentIDs: Set<UUID> = []
     @State private var showBulkDeleteConfirm = false
     @State private var showBulkMoveSheet = false
-    @State private var showNotebooks = false
+    @State private var notebookRoute: NotebookDocument?
     @State private var crossAskInput: CrossAskInput?
 
     @State private var featureNotice: String?
@@ -869,8 +869,12 @@ struct DocumentBrowserView: View {
             .sheet(item: $crossAskInput) { input in
                 CrossDocumentAskSheet(input: input)
             }
-            .sheet(isPresented: $showNotebooks) {
-                NotebookLibraryView()
+            .fullScreenCover(item: $notebookRoute) { notebook in
+                NotebookView(document: notebook, onTitleChange: { newTitle in
+                    if let doc = documents.first(where: { $0.id == notebook.id }) {
+                        persistTitleRename(for: doc, newTitle: newTitle)
+                    }
+                })
             }
             .fullScreenCover(item: $editorRoute) { route in
                 if let doc = document(for: route.documentId) {
@@ -1279,7 +1283,6 @@ struct DocumentBrowserView: View {
             selectButton
             newButton(compact: false)
             viewModeButton
-            notebooksButton
             cloudButton
             searchButton
             avatarButton
@@ -1290,28 +1293,10 @@ struct DocumentBrowserView: View {
     private var compactTrailingControls: some View {
         HStack(spacing: 8) {
             newButton(compact: true)
-            notebooksButton
             cloudButton
             compactOverflowMenu
             avatarButton
         }
-    }
-
-    private var notebooksButton: some View {
-        Button {
-            LectraHaptics.tap()
-            showNotebooks = true
-        } label: {
-            Image(systemName: "book.closed")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(LectraColor.textPrimary)
-                .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
-                .background(controlSurface)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Notebooks")
-        .accessibilityHint("Open and create Python notebooks.")
-        .accessibilityIdentifier("library.notebooks")
     }
 
     private var searchButton: some View {
@@ -2040,9 +2025,9 @@ struct DocumentBrowserView: View {
                     showCreateMenu = false
                     createBlankLocalDocument(title: "Notebook")
                 },
-                onTextDoc: {
+                onPythonNotebook: {
                     showCreateMenu = false
-                    createBlankLocalDocument(title: "Text Doc")
+                    createPythonNotebook()
                 },
                 onWhiteboard: {
                     showCreateMenu = false
@@ -2056,15 +2041,6 @@ struct DocumentBrowserView: View {
                 onFolder: {
                     showCreateMenu = false
                     showCreateFolderAlert = true
-                },
-                onQuickNote: {
-                    showCreateMenu = false
-                    createBlankLocalDocument(title: "QuickNote")
-                },
-                onImage: {
-                    showCreateMenu = false
-                    filePickerContentTypes = [.image]
-                    showFilePicker = true
                 }
             )
             .presentationCompactAdaptation(.popover)
@@ -3868,6 +3844,14 @@ struct DocumentBrowserView: View {
             return
         }
 
+        // Notebook documents open in the notebook editor, not the PDF editor.
+        if NotebookStore.shared.exists(id: doc.id) {
+            LectraHaptics.tap()
+            notebookRoute = NotebookStore.shared.load(id: doc.id)
+                ?? NotebookStore.shared.newEmpty(id: doc.id, title: doc.title)
+            return
+        }
+
         guard doc.localPDFURL != nil else {
             // Fast path: the wake-time prefetch usually already wrote this PDF to
             // disk. Open immediately instead of re-downloading or waiting.
@@ -4059,7 +4043,23 @@ struct DocumentBrowserView: View {
     }
 
     private func createBlankLocalDocument(title: String) {
-        guard canModifyContents(of: currentFolderId) else { return }
+        guard let doc = makeLocalDocument(title: title) else { return }
+        openEditor(documentId: doc.id)
+    }
+
+    /// Creates a Python notebook as a library document in the current folder
+    /// (so it lives alongside PDFs), then opens it in the notebook editor.
+    private func createPythonNotebook() {
+        guard let doc = makeLocalDocument(title: "Notebook") else { return }
+        let notebook = NotebookStore.shared.newEmpty(id: doc.id, title: doc.title)
+        NotebookStore.shared.save(notebook)
+        notebookRoute = notebook
+    }
+
+    /// Creates a blank local document (placeholder PDF + folder metadata) and
+    /// returns it. Shared by the blank-document and notebook creation paths.
+    private func makeLocalDocument(title: String) -> LocalDocument? {
+        guard canModifyContents(of: currentFolderId) else { return nil }
         let doc = LocalDocument(title: title, localURL: URL(fileURLWithPath: "/tmp/placeholder.pdf"))
         let localFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("pdfs", isDirectory: true)
@@ -4090,10 +4090,10 @@ struct DocumentBrowserView: View {
                 createdAt: doc.createdAt,
                 updatedAt: doc.updatedAt
             )
-
-            openEditor(documentId: doc.id)
+            return doc
         } catch {
             featureNotice = "Could not create a new file: \(error.localizedDescription)"
+            return nil
         }
     }
 
@@ -5056,59 +5056,141 @@ private struct GenericEmptyStateView: View {
 
 private struct CreateMenuPopoverView: View {
     let onNotebook: () -> Void
-    let onTextDoc: () -> Void
+    let onPythonNotebook: () -> Void
     let onWhiteboard: () -> Void
     let onImport: () -> Void
     let onFolder: () -> Void
-    let onQuickNote: () -> Void
-    let onImage: () -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Create")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(LectraColor.textPrimary)
-
-            VStack(spacing: 0) {
-                PopoverActionRow(title: "Notebook", icon: "book.closed", action: onNotebook)
-                PopoverActionRow(title: "Text Doc", icon: "doc.text", action: onTextDoc)
-                PopoverActionRow(title: "Whiteboard", icon: "square.grid.3x3", action: onWhiteboard)
-                PopoverActionRow(title: "Folder", icon: "folder", showDivider: false, action: onFolder)
-            }
-            .background(LectraColor.surfaceFloating.opacity(0.82))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            Text("Import")
-                .font(.system(size: 13, weight: .medium))
+            Text("CREATE")
+                .font(LectraTypography.footnoteBold)
+                .kerning(1.2)
                 .foregroundColor(LectraColor.textTertiary)
+                .padding(.leading, 2)
 
-            VStack(spacing: 0) {
-                PopoverActionRow(title: "Import PDF", icon: "square.and.arrow.down", action: onImport)
-                PopoverActionRow(title: "Image", icon: "photo", showDivider: false, action: onImage)
+            LazyVGrid(columns: columns, spacing: 10) {
+                CreateTile(title: "Notebook", icon: "book.closed",
+                           tint: LectraColor.accentSoft, action: onNotebook)
+                CreateTile(title: "Python Notebook", icon: "chevron.left.forwardslash.chevron.right",
+                           tint: LectraColor.info, action: onPythonNotebook)
+                CreateTile(title: "Whiteboard", icon: "square.grid.2x2",
+                           tint: LectraColor.warning, action: onWhiteboard)
+                CreateTile(title: "Folder", icon: "folder",
+                           tint: LectraColor.accentCool, action: onFolder)
             }
-            .background(LectraColor.surfaceFloating.opacity(0.82))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("Quick Actions")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(LectraColor.textTertiary)
-
-            VStack(spacing: 0) {
-                PopoverActionRow(title: "QuickNote", icon: "square.and.pencil", showDivider: false, action: onQuickNote)
-            }
-            .background(LectraColor.surfaceFloating.opacity(0.82))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            CreateWideRow(title: "Import PDF", subtitle: "From Files",
+                          icon: "square.and.arrow.down", action: onImport)
+                .padding(.top, 2)
         }
-        .padding(14)
-        .frame(width: 322)
+        .padding(16)
+        .frame(width: 300)
         .background(
             RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
-                .fill(LectraColor.surfaceElevated.opacity(0.96))
+                .fill(LectraColor.surfaceElevated.opacity(0.98))
                 .overlay(
                     RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
                         .stroke(LectraColor.edgeStroke, lineWidth: 1)
                 )
         )
+    }
+}
+
+/// A square tile in the create grid: a tinted glyph above its label.
+private struct CreateTile: View {
+    let title: String
+    let icon: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            LectraHaptics.selection()
+            action()
+        } label: {
+            VStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .fill(tint.opacity(0.16))
+                    Image(systemName: icon)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
+                .frame(width: 48, height: 48)
+
+                Text(title)
+                    .font(LectraTypography.captionMedium)
+                    .foregroundStyle(LectraColor.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 104)
+            .background(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .fill(LectraColor.surfaceFloating.opacity(0.7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                            .stroke(LectraColor.edgeStroke, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A full-width action row used for imports — visually distinct from the tiles.
+private struct CreateWideRow: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            LectraHaptics.selection()
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                        .fill(LectraColor.paper.opacity(0.10))
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(LectraColor.textSecondary)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(LectraTypography.bodyEmphasis)
+                        .foregroundStyle(LectraColor.textPrimary)
+                    Text(subtitle)
+                        .font(LectraTypography.footnote)
+                        .foregroundStyle(LectraColor.textTertiary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(LectraColor.textTertiary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 56)
+            .background(
+                RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                    .fill(LectraColor.surfaceFloating.opacity(0.7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous)
+                            .stroke(LectraColor.edgeStroke, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

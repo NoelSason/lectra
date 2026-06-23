@@ -38,6 +38,8 @@ struct EditorTopBar: View {
     let onSetSqueezeAction: (PencilSqueezeAction) -> Void
     let onExportCanvascope: () -> Void
     let onShare: () -> Void
+    let onShareOriginal: () -> Void
+    let onShareEditable: () -> Void
     let onShowIntelligence: () -> Void
     var isTitleFocused: FocusState<Bool>.Binding
 
@@ -343,7 +345,12 @@ struct EditorTopBar: View {
         Button("Document Intelligence", systemImage: "sparkles", action: onShowIntelligence)
         Button("Export to Canvascope", systemImage: "arrow.up.forward.app", action: onExportCanvascope)
             .disabled(isSaving || isExportingToCanvascope)
-        Button("Share PDF", systemImage: "square.and.arrow.up", action: onShare)
+        Divider()
+        Button("Share Editable Lectra Package", systemImage: "doc.badge.gearshape", action: onShareEditable)
+            .disabled(isSaving || isExportingToCanvascope)
+        Button("Share Flattened PDF", systemImage: "square.and.arrow.up", action: onShare)
+            .disabled(isSaving || isExportingToCanvascope)
+        Button("Share Original PDF", systemImage: "doc", action: onShareOriginal)
             .disabled(isSaving || isExportingToCanvascope)
     }
 

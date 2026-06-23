@@ -80,7 +80,7 @@ final class LectraModelRouter {
     /// on-device window are routed to Private Cloud Compute when it's available
     /// (iOS 27+), and otherwise fall back to the on-device model.
     func makeSession(instructions: String, approxTokens: Int = 0) -> LanguageModelSession {
-        #if canImport(FoundationModels)
+        #if canImport(FoundationModels) && LECTRA_ENABLE_PCC
         if #available(iOS 27.0, *),
            preferredTier(forApproxTokens: approxTokens) == .privateCloudCompute {
             // Construct once: PCC won't run in the Simulator (FB177684296) and

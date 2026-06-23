@@ -22,8 +22,9 @@ import UIKit
 struct PyodideRunResult {
     var stdout: String
     var stderr: String
-    var result: String?   // repr of the last expression, Jupyter-style
-    var error: String?    // formatted traceback, if the cell raised
+    var result: String?      // repr of the last expression, Jupyter-style
+    var error: String?       // formatted traceback, if the cell raised
+    var images: [String] = []  // base64-encoded PNGs (matplotlib figures)
 }
 
 @MainActor
@@ -39,11 +40,6 @@ final class PyodideRuntime: NSObject, ObservableObject {
     @Published private(set) var status: KernelStatus = .idle
 
     private var webView: WKWebView?
-    /// A dedicated, non-key host window for the kernel's WKWebView. Keeping the
-    /// web context in its own window (never made key) lets it load and run while
-    /// staying out of the editor's responder chain — otherwise WKWebView
-    /// swallows hardware-keyboard commands (Shift, ⌘A, …) from the text view.
-    private var kernelWindow: UIWindow?
     private var startContinuation: CheckedContinuation<Void, Error>?
     private var runContinuations: [String: CheckedContinuation<PyodideRunResult, Never>] = [:]
 
@@ -116,7 +112,6 @@ final class PyodideRuntime: NSObject, ObservableObject {
     /// notebook screen closes so the WASM runtime is released.
     func shutdown() {
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "lectra")
-        webView?.removeFromSuperview()
         webView = nil
         status = .idle
     }
@@ -128,30 +123,14 @@ final class PyodideRuntime: NSObject, ObservableObject {
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(PyodideSchemeHandler(), forURLScheme: Self.scheme)
         config.userContentController.add(self, name: "lectra")
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
-        webView.isHidden = true
-        // Keep the web context out of the responder chain — otherwise the
-        // off-screen WKWebView intercepts hardware-keyboard events (e.g. the
-        // Shift modifier) from the SwiftUI editor above it.
-        webView.isUserInteractionEnabled = false
-        // Attach behind everything in the key window so the JS/WASM context
-        // runs reliably while the notebook is open.
-        if let window = Self.keyWindow {
-            window.insertSubview(webView, at: 0)
-        }
+        // Deliberately NOT added to any window. An attached WKWebView puts its
+        // content view in the key window's responder chain, where it swallows
+        // hardware-keyboard modifiers (Shift, ⌘) from the editor. Off-window it
+        // still executes JS/WASM (we only need execution, not rendering), so it
+        // can't interfere with text input.
+        let webView = KernelWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: config)
         self.webView = webView
         return webView
-    }
-
-    private static var keyWindow: UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-            .first { $0.isKeyWindow } ??
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-            .first
     }
 
     private static func jsString(_ s: String) -> String {
@@ -197,13 +176,22 @@ extension PyodideRuntime: WKScriptMessageHandler {
                 stdout: (body["stdout"] as? String) ?? "",
                 stderr: (body["stderr"] as? String) ?? "",
                 result: body["result"] as? String,
-                error: body["error"] as? String))
+                error: body["error"] as? String,
+                images: (body["images"] as? [String]) ?? []))
         case "reset":
             break
         default:
             break
         }
     }
+}
+
+// MARK: - Kernel web view
+
+/// A WKWebView that never accepts first-responder status, so it can't capture
+/// hardware-keyboard input even if it ends up in a responder chain.
+private final class KernelWebView: WKWebView {
+    override var canBecomeFirstResponder: Bool { false }
 }
 
 // MARK: - Bundled-asset scheme handler
