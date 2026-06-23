@@ -1,8 +1,18 @@
+# macOS
 .DS_Store
-*.xcuserstate
-xcuserdata/
+
+# Xcode user-specific
+**/xcuserdata/
+**/*.xcuserstate
+
+# Swift / build output
+.build/
 DerivedData/
 
-# Local clone of the supabase-swift package (build uses the remote SwiftPM package, not this folder)
-supabase-swift/
+# Local env
+.env
+.env.*
 
+# Local clone of the supabase-swift package
+# (the build uses the remote SwiftPM package, not this folder)
+supabase-swift/
