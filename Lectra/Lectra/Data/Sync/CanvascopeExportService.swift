@@ -9,6 +9,8 @@
 import Foundation
 import Supabase
 
+typealias CanvascopeDeliveryProgressHandler = @Sendable (CanvascopeUploadStatusReceipt) async -> Void
+
 struct CanvascopeUploadReceipt: Decodable {
     let ok: Bool
     let uploadId: String
@@ -26,17 +28,29 @@ struct CanvascopeUploadStatusReceipt: Decodable {
     let createdAt: String?
     let downloadedAt: String?
     let expiresAt: String?
+    let receipts: [CanvascopeUploadReceiptEvent]?
+}
+
+struct CanvascopeUploadReceiptEvent: Decodable {
+    let stage: String
+    let source: String?
+    let detail: [String: AnyJSON]?
+    let createdAt: String?
 }
 
 nonisolated private struct CanvascopeUploadStatusEnvelope: Decodable {
     struct Payload: Decodable {
         let uploadId: String?
         let status: String?
+        let stage: String?
+        let sentAt: String?
     }
 
     let payload: Payload?
     let uploadId: String?
     let status: String?
+    let stage: String?
+    let sentAt: String?
 }
 
 enum CanvascopeExportError: LocalizedError {
@@ -138,7 +152,8 @@ final class CanvascopeExportService {
     /// realtime is connected, and still resolves via polling if it isn't.
     func awaitTerminalStatus(
         uploadId: String,
-        timeoutSeconds: TimeInterval = 120
+        timeoutSeconds: TimeInterval = 120,
+        onProgress: CanvascopeDeliveryProgressHandler? = nil
     ) async throws -> CanvascopeUploadStatusReceipt? {
         let userId = try? await resolveUserId()
 
@@ -148,13 +163,18 @@ final class CanvascopeExportService {
                     await self.awaitRealtimeStatus(
                         uploadId: uploadId,
                         userId: userId,
-                        timeoutSeconds: timeoutSeconds
+                        timeoutSeconds: timeoutSeconds,
+                        onProgress: onProgress
                     )
                 }
             }
 
             group.addTask {
-                try await self.awaitPolledStatus(uploadId: uploadId, timeoutSeconds: timeoutSeconds)
+                try await self.awaitPolledStatus(
+                    uploadId: uploadId,
+                    timeoutSeconds: timeoutSeconds,
+                    onProgress: onProgress
+                )
             }
 
             // First branch to produce a terminal receipt wins; nil results (a
@@ -176,7 +196,8 @@ final class CanvascopeExportService {
     private func awaitRealtimeStatus(
         uploadId: String,
         userId: UUID,
-        timeoutSeconds: TimeInterval
+        timeoutSeconds: TimeInterval,
+        onProgress: CanvascopeDeliveryProgressHandler?
     ) async -> CanvascopeUploadStatusReceipt? {
         let client = SupabaseManager.shared.client
         let topic = "dropbridge:user:\(userId.uuidString):device:\(senderDeviceId.uuidString)"
@@ -203,16 +224,25 @@ final class CanvascopeExportService {
                 for await message in stream {
                     guard let envelope = Self.decodeStatusEnvelope(message) else { continue }
                     guard (envelope.uploadId ?? envelope.payload?.uploadId) == uploadId else { continue }
-                    let status = envelope.status ?? envelope.payload?.status
-                    if status == "downloaded" || status == "canceled" {
-                        return CanvascopeUploadStatusReceipt(
-                            ok: true,
-                            uploadId: uploadId,
-                            status: status ?? "downloaded",
-                            createdAt: nil,
-                            downloadedAt: status == "downloaded" ? ISO8601DateFormatter().string(from: Date()) : nil,
-                            expiresAt: nil
-                        )
+                    let rawStatus = envelope.status
+                        ?? envelope.payload?.status
+                        ?? envelope.stage
+                        ?? envelope.payload?.stage
+                    guard let status = Self.normalizeDeliveryStatus(rawStatus) else { continue }
+                    let receipt = CanvascopeUploadStatusReceipt(
+                        ok: true,
+                        uploadId: uploadId,
+                        status: status,
+                        createdAt: envelope.sentAt ?? envelope.payload?.sentAt,
+                        downloadedAt: status == "downloaded" ? ISO8601DateFormatter().string(from: Date()) : nil,
+                        expiresAt: nil,
+                        receipts: nil
+                    )
+                    if let onProgress {
+                        await onProgress(receipt)
+                    }
+                    if Self.isTerminalDeliveryStatus(status) {
+                        return receipt
                     }
                 }
                 return nil
@@ -236,12 +266,15 @@ final class CanvascopeExportService {
 
     private func awaitPolledStatus(
         uploadId: String,
-        timeoutSeconds: TimeInterval
+        timeoutSeconds: TimeInterval,
+        onProgress: CanvascopeDeliveryProgressHandler?
     ) async throws -> CanvascopeUploadStatusReceipt? {
         let pollCadenceSeconds: [TimeInterval] = [0.4, 1.0, 1.8, 2.5]
         let deadline = Date().addingTimeInterval(max(timeoutSeconds, pollCadenceSeconds[0]))
         var accessToken = try await resolveAccessToken()
         var pollCount = 0
+        var reportedStatuses = Set<String>()
+        var reportedReceiptKeys = Set<String>()
 
         while Date() < deadline {
             var result = try await performStatusCheck(uploadId: uploadId, accessToken: accessToken)
@@ -255,8 +288,38 @@ final class CanvascopeExportService {
 
             switch parsed {
             case .success(let statusReceipt):
-                if statusReceipt.status == "downloaded" || statusReceipt.status == "canceled" {
-                    return statusReceipt
+                if let normalizedStatus = Self.normalizeDeliveryStatus(statusReceipt.status) {
+                    let normalizedReceipt = Self.statusReceipt(
+                        from: statusReceipt,
+                        status: normalizedStatus
+                    )
+                    if reportedStatuses.insert(normalizedStatus).inserted, let onProgress {
+                        await onProgress(normalizedReceipt)
+                    }
+                    if Self.isTerminalDeliveryStatus(normalizedStatus) {
+                        return normalizedReceipt
+                    }
+                }
+
+                for receiptEvent in statusReceipt.receipts ?? [] {
+                    guard let normalizedStatus = Self.normalizeDeliveryStatus(receiptEvent.stage) else { continue }
+                    let receiptKey = "\(receiptEvent.stage)|\(receiptEvent.createdAt ?? "")"
+                    guard reportedReceiptKeys.insert(receiptKey).inserted else { continue }
+                    let progressReceipt = CanvascopeUploadStatusReceipt(
+                        ok: true,
+                        uploadId: uploadId,
+                        status: normalizedStatus,
+                        createdAt: receiptEvent.createdAt,
+                        downloadedAt: normalizedStatus == "downloaded" ? receiptEvent.createdAt : nil,
+                        expiresAt: statusReceipt.expiresAt,
+                        receipts: statusReceipt.receipts
+                    )
+                    if let onProgress {
+                        await onProgress(progressReceipt)
+                    }
+                    if Self.isTerminalDeliveryStatus(normalizedStatus) {
+                        return progressReceipt
+                    }
                 }
             case .authExpired:
                 throw CanvascopeExportError.notAuthenticated
@@ -283,6 +346,45 @@ final class CanvascopeExportService {
         }
 
         return nil
+    }
+
+    nonisolated private static func statusReceipt(
+        from receipt: CanvascopeUploadStatusReceipt,
+        status: String
+    ) -> CanvascopeUploadStatusReceipt {
+        CanvascopeUploadStatusReceipt(
+            ok: receipt.ok,
+            uploadId: receipt.uploadId,
+            status: status,
+            createdAt: receipt.createdAt,
+            downloadedAt: status == "downloaded" ? receipt.downloadedAt : nil,
+            expiresAt: receipt.expiresAt,
+            receipts: receipt.receipts
+        )
+    }
+
+    nonisolated private static func normalizeDeliveryStatus(_ rawStatus: String?) -> String? {
+        let status = (rawStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch status {
+        case "queued", "wake_broadcasted", "wake_emitted":
+            return "queued"
+        case "claiming", "claimed":
+            return "claimed"
+        case "signed_url_issued":
+            return "signed_url_issued"
+        case "downloading":
+            return "downloading"
+        case "downloaded":
+            return "downloaded"
+        case "canceled", "cancelled":
+            return "canceled"
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func isTerminalDeliveryStatus(_ status: String) -> Bool {
+        status == "downloaded" || status == "canceled"
     }
 
     private enum ParsedUploadResponse {

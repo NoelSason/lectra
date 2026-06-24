@@ -66,6 +66,7 @@ struct EditorRoute: Identifiable, Equatable {
 
 private enum LibrarySection: String, CaseIterable, Identifiable {
     case documents
+    case projects
     case favorites
     case shared
 
@@ -74,6 +75,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .documents: return "Documents"
+        case .projects: return "Projects"
         case .favorites: return "Favorites"
         case .shared: return "Shared"
         }
@@ -82,6 +84,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .documents: return "folder"
+        case .projects: return "chevron.left.forwardslash.chevron.right"
         case .favorites: return "bookmark"
         case .shared: return "person.2"
         }
@@ -188,10 +191,16 @@ struct DocumentBrowserView: View {
     @State private var showBulkDeleteConfirm = false
     @State private var showBulkMoveSheet = false
     @State private var notebookRoute: NotebookDocument?
-    @State private var showGitHub = false
     @State private var showTerminal = false
-    @State private var terminalCommand: String?
-    @State private var pendingCloneCommand: String?
+    // Projects tab state: code folders/repos live on disk under Documents/Projects;
+    // notebooks live in NotebookStore but are surfaced here instead of Documents.
+    @State private var projects: [Project] = []
+    @State private var selectedProjectPaths: Set<String> = []
+    @State private var openProjectFolder: Project?
+    @State private var showProjectsCreateMenu = false
+    @State private var showCloneSheet = false
+    @State private var showCreateProjectFolderAlert = false
+    @State private var newProjectFolderName = ""
     @State private var crossAskInput: CrossAskInput?
 
     @State private var featureNotice: String?
@@ -262,7 +271,7 @@ struct DocumentBrowserView: View {
     }
 
     private var visibleSidebarSections: [LibrarySection] {
-        [.documents]
+        [.documents, .projects]
     }
 
     private var expandedSidebarContentMaxWidth: CGFloat {
@@ -294,7 +303,29 @@ struct DocumentBrowserView: View {
         if let importedRootFolderId, currentFolderId == importedRootFolderId {
             return []
         }
-        return documents.filter { folderId(for: $0) == currentFolderId }
+        // Notebooks now live in the Projects tab, not the Documents grid.
+        return documents.filter { folderId(for: $0) == currentFolderId && !isNotebookDocument($0) }
+    }
+
+    /// A library document that is backed by a `.ipynb` notebook (shown in Projects).
+    private func isNotebookDocument(_ doc: LocalDocument) -> Bool {
+        NotebookStore.shared.exists(id: doc.id)
+    }
+
+    /// All notebooks, surfaced in the Projects tab regardless of which folder they
+    /// were created in.
+    private var projectNotebooks: [LocalDocument] {
+        let notebooks = documents.filter { isNotebookDocument($0) }
+        switch sortMode {
+        case .dateCreated:
+            return notebooks.sorted { $0.createdAt > $1.createdAt }
+        case .lastModified:
+            return notebooks.sorted { $0.updatedAt > $1.updatedAt }
+        case .name:
+            return notebooks.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .type:
+            return notebooks.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        }
     }
 
     private var filteredFolders: [LocalFolder] {
@@ -660,8 +691,21 @@ struct DocumentBrowserView: View {
     }
 
     private func handleActiveSectionChange(_ newSection: LibrarySection) {
-        if newSection != LibrarySection.documents && isSelectionMode {
+        if isSelectionMode {
             exitSelectionMode()
+        }
+        showCreateMenu = false
+        showProjectsCreateMenu = false
+        showViewMenu = false
+        showSearchOverlay = false
+
+        if newSection != .documents {
+            currentFolderId = nil
+            documentFilter = .all
+        }
+
+        if newSection == .projects {
+            loadProjects()
         }
     }
 
@@ -835,18 +879,6 @@ struct DocumentBrowserView: View {
                     importPickedFile(from: url, folderId: currentFolderId)
                 }
             }
-            .sheet(isPresented: $showGitHub, onDismiss: {
-                // If the user chose "Clone in Terminal", open the terminal once the
-                // GitHub sheet has fully dismissed, queueing the clone command.
-                if let cmd = pendingCloneCommand {
-                    pendingCloneCommand = nil
-                    terminalCommand = cmd
-                    showTerminal = true
-                }
-            }) {
-                GitHubBrowserView(onCloneInTerminal: { pendingCloneCommand = $0 })
-                    .presentationDetents([.large])
-            }
             .sheet(item: $selectedDocumentForOptions) { doc in
                 DocumentOptionsSheetView(
                     documentTitle: doc.title,
@@ -885,8 +917,23 @@ struct DocumentBrowserView: View {
             .sheet(item: $crossAskInput) { input in
                 CrossDocumentAskSheet(input: input)
             }
-            .fullScreenCover(isPresented: $showTerminal, onDismiss: { terminalCommand = nil }) {
-                TerminalView(initialCommand: terminalCommand, onClose: { showTerminal = false })
+            .sheet(isPresented: $showCloneSheet, onDismiss: { loadProjects() }) {
+                CloneRepoSheet { project in
+                    showCloneSheet = false
+                    loadProjects()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        openProjectFolder = project
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showTerminal) {
+                TerminalView(onClose: { showTerminal = false })
+            }
+            .fullScreenCover(item: $openProjectFolder, onDismiss: { loadProjects() }) { project in
+                ProjectWorkspaceView(project: project, onClose: {
+                    openProjectFolder = nil
+                    loadProjects()
+                })
             }
             .fullScreenCover(item: $notebookRoute) { notebook in
                 NotebookView(document: notebook, onTitleChange: { newTitle in
@@ -920,6 +967,16 @@ struct DocumentBrowserView: View {
                 }
             } message: {
                 Text("Add a new folder.")
+            }
+            .alert("Create Project Folder", isPresented: $showCreateProjectFolderAlert) {
+                TextField("Folder name", text: $newProjectFolderName)
+                Button("Cancel", role: .cancel) { newProjectFolderName = "" }
+                Button("Create") {
+                    createProjectFolder(named: newProjectFolderName)
+                    newProjectFolderName = ""
+                }
+            } message: {
+                Text("Add a folder to Projects.")
             }
             .alert(
                 featureNoticeTitle,
@@ -1205,6 +1262,8 @@ struct DocumentBrowserView: View {
         switch activeSection {
         case .documents:
             return AnyView(documentsPane)
+        case .projects:
+            return AnyView(projectsPane)
         case .favorites:
             return AnyView(favoritesPane)
         case .shared:
@@ -1359,14 +1418,6 @@ struct DocumentBrowserView: View {
             } label: {
                 Label(isSelectionMode ? "Cancel Selection" : "Select", systemImage: isSelectionMode ? "xmark.circle" : "checkmark.circle")
             }
-
-            Button {
-                showTerminal = true
-            } label: {
-                Label("Terminal", systemImage: "terminal")
-            }
-
-            Divider()
 
             if currentFolderId == nil {
                 Menu("Filter") {
@@ -1584,6 +1635,281 @@ struct DocumentBrowserView: View {
             .frame(maxWidth: .infinity)
             Spacer()
         }
+    }
+
+    // MARK: - Projects pane
+
+    private var projectsPane: AnyView {
+        AnyView(
+            VStack(alignment: .leading, spacing: 0) {
+                projectsTopBar
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+
+                if projects.isEmpty && projectNotebooks.isEmpty {
+                    Spacer()
+                    GenericEmptyStateView(
+                        symbol: "chevron.left.forwardslash.chevron.right",
+                        title: "Start a project",
+                        subtitle: "Clone a repo, make a folder, or create a Python notebook to begin coding."
+                    )
+                    .frame(maxWidth: .infinity)
+                    Spacer()
+                } else if viewMode == .grid {
+                    projectsGridView
+                } else {
+                    projectsListView
+                }
+            }
+            .frame(
+                maxWidth: usesFullWidthContent ? .infinity : expandedSidebarContentMaxWidth,
+                alignment: .leading
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: usesFullWidthContent ? .topLeading : .top)
+            .onAppear { loadProjects() }
+            .safeAreaInset(edge: .bottom) {
+                if isSelectionMode {
+                    projectsSelectionActionBar
+                        .padding(.horizontal, 18)
+                        .padding(.top, 10)
+                        .padding(.bottom, 12)
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    LectraColor.background.opacity(0.02),
+                                    LectraColor.background.opacity(0.86),
+                                    LectraColor.background.opacity(0.98)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+            }
+        )
+    }
+
+    private var projectsTopBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Text("Projects")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(LectraColor.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+                    .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
+                ViewThatFits(in: .horizontal) {
+                    projectsFullTrailingControls
+                    projectsCompactTrailingControls
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(LectraColor.edgeStroke)
+                .frame(height: 1)
+        }
+    }
+
+    private var projectsFullTrailingControls: some View {
+        HStack(spacing: 10) {
+            selectButton
+            newButton(compact: false)
+            viewModeButton
+            cloudButton
+            avatarButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var projectsCompactTrailingControls: some View {
+        HStack(spacing: 8) {
+            newButton(compact: true)
+            Menu {
+                Button {
+                    if isSelectionMode { exitSelectionMode() } else { enterSelectionMode() }
+                } label: {
+                    Label(isSelectionMode ? "Cancel Selection" : "Select", systemImage: isSelectionMode ? "xmark.circle" : "checkmark.circle")
+                }
+                Button { viewMode = viewMode == .grid ? .list : .grid } label: {
+                    Label(viewMode == .grid ? "List View" : "Grid View", systemImage: viewMode == .grid ? "list.bullet" : "square.grid.2x2")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(LectraColor.textPrimary)
+                    .frame(width: LectraSizing.minHitTarget, height: LectraSizing.minHitTarget)
+                    .background(controlSurface)
+            }
+            avatarButton
+        }
+    }
+
+    private var projectsGridView: some View {
+        let metrics = libraryGridMetrics
+        return ScrollView {
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: metrics.documentGridSpacing) {
+                ForEach(projects) { project in
+                    projectFolderCard(for: project)
+                }
+                ForEach(projectNotebooks) { doc in
+                    documentGridCard(for: doc)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 44)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var projectsListView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                ForEach(projects) { project in
+                    Button {
+                        if isSelectionMode { toggleProjectSelection(project) }
+                        else { openProjectFolder = project }
+                    } label: {
+                        HStack(spacing: 12) {
+                            if isSelectionMode {
+                                LibrarySelectionIndicatorView(isSelected: selectedProjectPaths.contains(project.id))
+                            }
+                            Image(systemName: project.isGitRepo ? "arrow.triangle.branch" : "folder.fill")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(LectraColor.accentSoft)
+                                .frame(width: 30)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(project.name)
+                                    .font(LectraTypography.headlineMedium)
+                                    .foregroundColor(LectraColor.textPrimary)
+                                Text(project.isGitRepo ? "Git repository" : "Folder")
+                                    .font(LectraTypography.captionMedium)
+                                    .foregroundColor(LectraColor.textTertiary)
+                            }
+                            Spacer(minLength: 0)
+                            if !isSelectionMode {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(LectraColor.textTertiary)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 58)
+                        .background(
+                            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                                .fill(LectraColor.surfaceElevated.opacity(0.58))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                                .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(projectNotebooks) { doc in
+                    documentListRow(for: doc)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 60)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    @ViewBuilder
+    private func projectFolderCard(for project: Project) -> some View {
+        let metrics = libraryGridMetrics
+        let isRepo = project.isGitRepo
+        VaultFolderCardView(
+            folderName: project.name,
+            subtitle: isRepo ? "Git repository" : "Folder",
+            metrics: metrics,
+            accent: isRepo ? LectraColor.accentCool : LectraColor.accent,
+            iconSystemName: isRepo ? "arrow.triangle.branch" : "folder.fill",
+            showsOptionsButton: false,
+            isOptionsVisible: false,
+            onOpen: {
+                if isSelectionMode { toggleProjectSelection(project) }
+                else { openProjectFolder = project }
+            },
+            onOptionsTap: {}
+        )
+        .frame(width: metrics.cardWidth, height: metrics.folderTotalHeight, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            if isSelectionMode {
+                LibrarySelectionIndicatorView(isSelected: selectedProjectPaths.contains(project.id))
+                    .padding(10)
+            }
+        }
+    }
+
+    private var projectsSelectionActionBar: some View {
+        let count = selectedProjectPaths.count + selectedDocumentIDs.count
+        return HStack(spacing: 12) {
+            Text("\(count) selected")
+                .font(LectraTypography.bodyEmphasis)
+                .foregroundColor(LectraColor.textSecondary)
+            Spacer(minLength: 0)
+            Button {
+                deleteSelectedProjectsAndNotebooks()
+            } label: {
+                Label("Delete", systemImage: "trash")
+                    .font(LectraTypography.bodyEmphasis)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .frame(height: LectraSizing.minHitTarget)
+                    .background(
+                        RoundedRectangle(cornerRadius: LectraRadius.control, style: .continuous)
+                            .fill(count == 0 ? LectraColor.warning.opacity(0.4) : LectraColor.warning)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(count == 0)
+        }
+    }
+
+    // MARK: Projects actions
+
+    private func loadProjects() {
+        ProjectsStore.shared.reload()
+        projects = ProjectsStore.shared.projects
+    }
+
+    private func toggleProjectSelection(_ project: Project) {
+        if selectedProjectPaths.contains(project.id) {
+            selectedProjectPaths.remove(project.id)
+        } else {
+            selectedProjectPaths.insert(project.id)
+        }
+    }
+
+    private func deleteSelectedProjectsAndNotebooks() {
+        for project in projects where selectedProjectPaths.contains(project.id) {
+            ProjectsStore.shared.delete(project)
+        }
+        let notebookIDs = selectedDocumentIDs
+        for id in notebookIDs {
+            if let doc = documents.first(where: { $0.id == id }) {
+                removeDocument(doc)
+            }
+        }
+        loadProjects()
+        exitSelectionMode()
+    }
+
+    private func createProjectFolder(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let dir = ProjectsStore.projectsRoot.appendingPathComponent(trimmed, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        loadProjects()
     }
 
     private func genericTopBar(title: String, filterTitle: String, includeSearch: Bool) -> some View {
@@ -2011,7 +2337,11 @@ struct DocumentBrowserView: View {
 
     private func newButton(compact: Bool) -> some View {
         Button {
-            showCreateMenu = true
+            if activeSection == .projects {
+                showProjectsCreateMenu = true
+            } else {
+                showCreateMenu = true
+            }
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "plus")
@@ -2050,10 +2380,6 @@ struct DocumentBrowserView: View {
                     showCreateMenu = false
                     createBlankLocalDocument(title: "Notebook")
                 },
-                onPythonNotebook: {
-                    showCreateMenu = false
-                    createPythonNotebook()
-                },
                 onWhiteboard: {
                     showCreateMenu = false
                     createBlankLocalDocument(title: "Whiteboard")
@@ -2066,10 +2392,27 @@ struct DocumentBrowserView: View {
                 onFolder: {
                     showCreateMenu = false
                     showCreateFolderAlert = true
+                }
+            )
+            .presentationCompactAdaptation(.popover)
+        }
+        .popover(isPresented: $showProjectsCreateMenu, arrowEdge: .top) {
+            ProjectsCreateMenuPopoverView(
+                onFolder: {
+                    showProjectsCreateMenu = false
+                    showCreateProjectFolderAlert = true
                 },
-                onGitHub: {
-                    showCreateMenu = false
-                    showGitHub = true
+                onPythonNotebook: {
+                    showProjectsCreateMenu = false
+                    createPythonNotebook()
+                },
+                onCloneProject: {
+                    showProjectsCreateMenu = false
+                    showCloneSheet = true
+                },
+                onTerminal: {
+                    showProjectsCreateMenu = false
+                    showTerminal = true
                 }
             )
             .presentationCompactAdaptation(.popover)
@@ -2453,6 +2796,7 @@ struct DocumentBrowserView: View {
     private func clearSelection() {
         selectedFolderIDs.removeAll()
         selectedDocumentIDs.removeAll()
+        selectedProjectPaths.removeAll()
     }
 
     private func toggleSelectAll() {
@@ -4076,8 +4420,8 @@ struct DocumentBrowserView: View {
         openEditor(documentId: doc.id)
     }
 
-    /// Creates a Python notebook as a library document in the current folder
-    /// (so it lives alongside PDFs), then opens it in the notebook editor.
+    /// Creates a Python notebook as a library-backed document and opens it in
+    /// the notebook editor. Notebook rows are surfaced from the Projects tab.
     private func createPythonNotebook() {
         guard let doc = makeLocalDocument(title: "Notebook") else { return }
         let notebook = NotebookStore.shared.newEmpty(id: doc.id, title: doc.title)
@@ -4515,6 +4859,9 @@ struct DocumentBrowserView: View {
 
         removeSavedLocalDocument(documentId: doc.id)
         removeTitleOverride(documentId: doc.id)
+        if NotebookStore.shared.exists(id: doc.id) {
+            NotebookStore.shared.delete(id: doc.id)
+        }
         ThumbnailCache.shared.invalidate(documentId: doc.id)
         
         if doc.isRemoteBacked {
@@ -5085,11 +5432,9 @@ private struct GenericEmptyStateView: View {
 
 private struct CreateMenuPopoverView: View {
     let onNotebook: () -> Void
-    let onPythonNotebook: () -> Void
     let onWhiteboard: () -> Void
     let onImport: () -> Void
     let onFolder: () -> Void
-    let onGitHub: () -> Void
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -5107,20 +5452,60 @@ private struct CreateMenuPopoverView: View {
             LazyVGrid(columns: columns, spacing: 10) {
                 CreateTile(title: "Notebook", icon: "book.closed",
                            tint: LectraColor.accentSoft, action: onNotebook)
-                CreateTile(title: "Python Notebook", icon: "chevron.left.forwardslash.chevron.right",
-                           tint: LectraColor.info, action: onPythonNotebook)
                 CreateTile(title: "Whiteboard", icon: "square.grid.2x2",
                            tint: LectraColor.warning, action: onWhiteboard)
                 CreateTile(title: "Folder", icon: "folder",
                            tint: LectraColor.accentCool, action: onFolder)
+                CreateTile(title: "Import PDF", icon: "square.and.arrow.down",
+                           tint: LectraColor.info, action: onImport)
+            }
+        }
+        .padding(16)
+        .frame(width: 300)
+        .background(
+            RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                .fill(LectraColor.surfaceElevated.opacity(0.98))
+                .overlay(
+                    RoundedRectangle(cornerRadius: LectraRadius.panel, style: .continuous)
+                        .stroke(LectraColor.edgeStroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+/// The "+ New" menu for the Projects tab: code-focused creation entry points.
+private struct ProjectsCreateMenuPopoverView: View {
+    let onFolder: () -> Void
+    let onPythonNotebook: () -> Void
+    let onCloneProject: () -> Void
+    let onTerminal: () -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("CREATE")
+                .font(LectraTypography.footnoteBold)
+                .kerning(1.2)
+                .foregroundColor(LectraColor.textTertiary)
+                .padding(.leading, 2)
+
+            LazyVGrid(columns: columns, spacing: 10) {
+                CreateTile(title: "Folder", icon: "folder",
+                           tint: LectraColor.accentCool, action: onFolder)
+                CreateTile(title: "Python Notebook", icon: "chevron.left.forwardslash.chevron.right",
+                           tint: LectraColor.info, action: onPythonNotebook)
             }
 
-            CreateWideRow(title: "Import PDF", subtitle: "From Files",
-                          icon: "square.and.arrow.down", action: onImport)
+            CreateWideRow(title: "Clone a Repo", subtitle: "Full editor + terminal",
+                          icon: "arrow.down.doc", action: onCloneProject)
                 .padding(.top, 2)
 
-            CreateWideRow(title: "Pull from GitHub", subtitle: "Notebooks, data, and code",
-                          icon: "chevron.left.forwardslash.chevron.right", action: onGitHub)
+            CreateWideRow(title: "Terminal", subtitle: "Shell + git",
+                          icon: "terminal", action: onTerminal)
         }
         .padding(16)
         .frame(width: 300)

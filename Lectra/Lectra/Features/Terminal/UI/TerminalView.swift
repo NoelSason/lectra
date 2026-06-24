@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct TerminalView: View {
-    @StateObject private var session = TerminalSession()
+    @StateObject private var session: TerminalSession
     @State private var input = ""
     @State private var ranInitial = false
     @FocusState private var inputFocused: Bool
@@ -17,6 +17,12 @@ struct TerminalView: View {
     /// `git clone` queued from the GitHub browser).
     var initialCommand: String?
     var onClose: (() -> Void)?
+
+    init(startDirectory: URL? = nil, initialCommand: String? = nil, onClose: (() -> Void)? = nil) {
+        _session = StateObject(wrappedValue: TerminalSession(startDirectory: startDirectory))
+        self.initialCommand = initialCommand
+        self.onClose = onClose
+    }
 
     var body: some View {
         VStack(spacing: 0) {

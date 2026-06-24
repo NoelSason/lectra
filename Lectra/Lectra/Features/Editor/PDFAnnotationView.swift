@@ -957,7 +957,7 @@ struct PDFAnnotationView: View {
 
         do {
             let receipt = try await canvascopeExportService.uploadToCanvascope(fileURL: exportURL)
-            setToast("Queued for Canvascope download", style: .success, autoHideAfter: 2.8)
+            setToast("Queued for Canvascope", style: .success, autoHideAfter: 2.2)
             trackCanvascopeDelivery(uploadId: receipt.uploadId)
         } catch let exportError as CanvascopeExportError {
             switch exportError {
@@ -983,7 +983,15 @@ struct PDFAnnotationView: View {
         canvascopeDeliveryTask?.cancel()
         canvascopeDeliveryTask = Task {
             do {
-                guard let status = try await canvascopeExportService.awaitTerminalStatus(uploadId: uploadId) else {
+                guard let status = try await canvascopeExportService.awaitTerminalStatus(
+                    uploadId: uploadId,
+                    onProgress: { progress in
+                        guard !Task.isCancelled else { return }
+                        await MainActor.run {
+                            showCanvascopeDeliveryProgress(status: progress.status)
+                        }
+                    }
+                ) else {
                     return
                 }
                 if Task.isCancelled { return }
@@ -1000,6 +1008,18 @@ struct PDFAnnotationView: View {
             } catch {
                 // Ignore background status polling failures to avoid noisy toasts.
             }
+        }
+    }
+
+    @MainActor
+    private func showCanvascopeDeliveryProgress(status: String) {
+        switch status {
+        case "claimed", "downloading":
+            setToast("Canvascope is downloading", style: .info, autoHideAfter: 2.2)
+        case "signed_url_issued":
+            setToast("Download starting on your laptop", style: .info, autoHideAfter: 2.2)
+        default:
+            break
         }
     }
 

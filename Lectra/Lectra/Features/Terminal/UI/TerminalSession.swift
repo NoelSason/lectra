@@ -17,7 +17,7 @@ final class TerminalSession: ObservableObject {
     @Published var isRunning = false
     @Published private(set) var prompt = "$ "
 
-    let env = ShellEnvironment()
+    let env: ShellEnvironment
     let git = GitRuntime()
     private lazy var executor = ShellExecutor(env: env, git: git)
 
@@ -25,7 +25,8 @@ final class TerminalSession: ObservableObject {
     private var historyIndex = 0
     private let maxTranscript = 200_000
 
-    init() {
+    init(startDirectory: URL? = nil) {
+        self.env = ShellEnvironment(startDirectory: startDirectory)
         append("Lectra terminal — type `help` for commands.\n", color: LectraColor.textTertiary)
         refreshPrompt()
     }
