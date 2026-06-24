@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  git_host.html — runs real git (isomorphic-git) inside a hidden WKWebView.
+
+  Mirrors the Pyodide host pattern: assets are served over the custom
+  `lectragit://` scheme (file:// would trip WebKit's fetch/CORS rules), and the
+  Swift side drives commands via `window.lectraGit(...)` while results come back
+  over `webkit.messageHandlers.lectragit`.
+
+  The novel part vs. Pyodide: git needs a filesystem and a network transport.
+  Both are bridged to native Swift so the app sandbox is the single source of
+  truth and GitHub requests go through URLSession (no browser CORS wall):
+    - fs  -> webkit.messageHandlers.gitfs   (WKScriptMessageHandlerWithReply)
+    - http-> webkit.messageHandlers.githttp (WKScriptMessageHandlerWithReply)
+-->
+<script src="lectragit:///isomorphic-git.umd.min.js"></script>
+</head>
+<body>
+<script>
+"use strict";
+
+// isomorphic-git's UMD bundle exports as `git` and bundles its own Buffer/process
+// polyfills, so no extra shims are needed in WKWebView.
+const git = self.git;
+
+function post(msg) { window.webkit.messageHandlers.lectragit.postMessage(msg); }
+
+// ---- base64 <-> bytes -------------------------------------------------------
+function bytesToB64(bytes) {
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// ---- fs adapter (bridges to native FileManager) -----------------------------
+async function fsCall(op, payload) {
+  const reply = await window.webkit.messageHandlers.gitfs.postMessage(Object.assign({ op }, payload));
+  if (!reply || reply.ok !== true) {
+    const e = new Error((reply && reply.message) || ("fs " + op + " failed"));
+    e.code = (reply && reply.code) || "EIO";
+    throw e;
+  }
+  return reply;
+}
+
+function makeStat(s) {
+  // isomorphic-git derives `type` from the is*() methods, and reads the numeric
+  // fields directly. Times come back as milliseconds from Swift.
+  const isSym = s.type === "symlink";
+  const isDir = s.type === "dir";
+  return {
+    type: s.type,
+    mode: s.mode,
+    size: s.size,
+    ino: s.ino || 0,
+    mtimeMs: s.mtimeMs || 0,
+    ctimeMs: s.ctimeMs || s.mtimeMs || 0,
+    uid: 1, gid: 1, dev: 1,
+    isFile: () => !isDir && !isSym,
+    isDirectory: () => isDir,
+    isSymbolicLink: () => isSym,
+  };
+}
+
+const fs = {
+  promises: {
+    async readFile(filepath, opts) {
+      const encoding = typeof opts === "string" ? opts : (opts && opts.encoding);
+      const reply = await fsCall("readFile", { path: filepath });
+      const bytes = b64ToBytes(reply.dataB64 || "");
+      return encoding === "utf8" ? new TextDecoder().decode(bytes) : bytes;
+    },
+    async writeFile(filepath, data, opts) {
+      let bytes;
+      if (typeof data === "string") {
+        const encoding = typeof opts === "string" ? opts : (opts && opts.encoding);
+        bytes = encoding === "hex" ? hexToBytes(data) : new TextEncoder().encode(data);
+      } else {
+        bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      }
+      const mode = (opts && typeof opts === "object" && opts.mode) ? opts.mode : 0o644;
+      await fsCall("writeFile", { path: filepath, dataB64: bytesToB64(bytes), mode });
+    },
+    async unlink(filepath) { await fsCall("unlink", { path: filepath }); },
+    async readdir(filepath) { return (await fsCall("readdir", { path: filepath })).entries; },
+    async mkdir(filepath) { await fsCall("mkdir", { path: filepath }); },
+    async rmdir(filepath) { await fsCall("rmdir", { path: filepath }); },
+    async stat(filepath) { return makeStat(await fsCall("stat", { path: filepath })); },
+    async lstat(filepath) { return makeStat(await fsCall("lstat", { path: filepath })); },
+    async readlink(filepath) { return (await fsCall("readlink", { path: filepath })).target; },
+    async symlink(target, filepath) { await fsCall("symlink", { path: filepath, target }); },
+    async chmod() { /* no-op: iOS sandbox has no meaningful unix mode bits */ },
+  },
+};
+
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+// ---- http adapter (bridges to native URLSession; injects GitHub auth) -------
+const http = {
+  async request({ url, method, headers, body }) {
+    let bodyB64 = null;
+    if (body) {
+      // body is an async iterable of Uint8Array; collect it.
+      const chunks = [];
+      let total = 0;
+      for await (const chunk of body) { chunks.push(chunk); total += chunk.length; }
+      const merged = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { merged.set(c, off); off += c.length; }
+      bodyB64 = bytesToB64(merged);
+    }
+    const reply = await window.webkit.messageHandlers.githttp.postMessage({
+      url, method: method || "GET", headers: headers || {}, bodyB64,
+    });
+    if (!reply || reply.ok !== true) {
+      throw new Error((reply && reply.message) || "Network request failed");
+    }
+    const respBytes = reply.bodyB64 ? b64ToBytes(reply.bodyB64) : new Uint8Array(0);
+    return {
+      url: reply.url || url,
+      method: method || "GET",
+      statusCode: reply.statusCode,
+      statusMessage: reply.statusMessage || "",
+      headers: reply.headers || {},
+      body: [respBytes], // one-shot async-iterable
+    };
+  },
+};
+
+// ---- porcelain: parse argv and call isomorphic-git --------------------------
+async function readAuthor(dir) {
+  const name = (await git.getConfig({ fs, dir, path: "user.name" })) || "Lectra";
+  const email = (await git.getConfig({ fs, dir, path: "user.email" })) || "lectra@local";
+  return { name, email };
+}
+
+// Parse a tiny flag set: returns {flags:Set, opts:{}, positionals:[]}
+function parseArgs(args, valueFlags = []) {
+  const flags = new Set(), opts = {}, positionals = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--") && a.includes("=")) {
+      const [k, v] = a.slice(2).split(/=(.*)/s); opts[k] = v;
+    } else if (valueFlags.includes(a)) {
+      opts[a.replace(/^-+/, "")] = args[++i];
+    } else if (a.startsWith("-")) {
+      flags.add(a);
+    } else {
+      positionals.push(a);
+    }
+  }
+  return { flags, opts, positionals };
+}
+
+const STATUS_LABELS = {
+  // statusMatrix row = [filepath, HEAD, WORKDIR, STAGE]
+};
+
+async function gitStatus(dir) {
+  const matrix = await git.statusMatrix({ fs, dir });
+  const staged = [], unstaged = [], untracked = [];
+  for (const [filepath, head, workdir, stage] of matrix) {
+    if (head === 0 && workdir === 2 && stage === 0) { untracked.push(filepath); continue; }
+    if (head === 0 && stage === 2) staged.push(["new file:   ", filepath]);
+    else if (head === 1 && stage === 0) staged.push(["deleted:    ", filepath]);
+    else if (head === 1 && stage === 3 && workdir === 1) {} // staged==head no-op
+    else if (head === 1 && stage === 2 && workdir === 2) staged.push(["modified:   ", filepath]);
+    if (workdir === 0 && head === 1) unstaged.push(["deleted:    ", filepath]);
+    else if (workdir === 2 && stage !== 2) unstaged.push(["modified:   ", filepath]);
+    else if (workdir === 2 && stage === 2 && head === 1) {} // already counted
+  }
+  let branch = "(no branch)";
+  try { branch = (await git.currentBranch({ fs, dir, fullname: false })) || "(no commits yet)"; } catch (e) {}
+  let out = "On branch " + branch + "\n";
+  if (staged.length) {
+    out += "\nChanges to be committed:\n";
+    for (const [label, f] of staged) out += "\t" + label + f + "\n";
+  }
+  if (unstaged.length) {
+    out += "\nChanges not staged for commit:\n";
+    for (const [label, f] of unstaged) out += "\t" + label + f + "\n";
+  }
+  if (untracked.length) {
+    out += "\nUntracked files:\n";
+    for (const f of untracked) out += "\t" + f + "\n";
+  }
+  if (!staged.length && !unstaged.length && !untracked.length) out += "\nnothing to commit, working tree clean\n";
+  return out;
+}
+
+async function gitLog(dir, args) {
+  const { opts } = parseArgs(args, []);
+  const depth = opts.n ? parseInt(opts.n) : 20;
+  const commits = await git.log({ fs, dir, depth });
+  let out = "";
+  for (const c of commits) {
+    const a = c.commit.author;
+    const date = new Date(a.timestamp * 1000).toString();
+    out += "commit " + c.oid + "\n";
+    out += "Author: " + a.name + " <" + a.email + ">\n";
+    out += "Date:   " + date + "\n\n";
+    out += "    " + c.commit.message.trim().replace(/\n/g, "\n    ") + "\n\n";
+  }
+  return out || "no commits yet\n";
+}
+
+// Add a filepath or glob-ish "." to the index.
+async function gitAdd(dir, args) {
+  const { positionals } = parseArgs(args, []);
+  if (!positionals.length) throw new Error("Nothing specified, nothing added.");
+  for (const p of positionals) {
+    if (p === "." || p === "-A" || p === "*") {
+      await git.add({ fs, dir, filepath: ".", parallel: true });
+    } else {
+      // Stage deletions too: if missing on disk, use remove.
+      try {
+        await fsCall("stat", { path: dir.replace(/\/$/, "") + "/" + p });
+        await git.add({ fs, dir, filepath: p });
+      } catch (e) {
+        await git.remove({ fs, dir, filepath: p });
+      }
+    }
+  }
+  return "";
+}
+
+async function runGit(argv, dir) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "init": {
+      const { opts } = parseArgs(rest, []);
+      await git.init({ fs, dir, defaultBranch: opts.b || "main" });
+      return "Initialized empty Git repository in " + dir + "/.git/\n";
+    }
+    case "add": return await gitAdd(dir, rest);
+    case "rm": {
+      const { positionals } = parseArgs(rest, []);
+      for (const p of positionals) { await git.remove({ fs, dir, filepath: p }); await fsCall("unlink", { path: dir.replace(/\/$/, "") + "/" + p }).catch(() => {}); }
+      return positionals.map(p => "rm '" + p + "'").join("\n") + "\n";
+    }
+    case "status": return await gitStatus(dir);
+    case "commit": {
+      const { opts } = parseArgs(rest, ["-m", "--message"]);
+      const message = opts.m || opts.message;
+      if (!message) throw new Error("Aborting commit due to empty commit message (use -m).");
+      const author = await readAuthor(dir);
+      const oid = await git.commit({ fs, dir, message, author });
+      let branch = "main";
+      try { branch = await git.currentBranch({ fs, dir }) || "main"; } catch (e) {}
+      return "[" + branch + " " + oid.slice(0, 7) + "] " + message.split("\n")[0] + "\n";
+    }
+    case "log": return await gitLog(dir, rest);
+    case "branch": {
+      const { positionals, flags } = parseArgs(rest, []);
+      if (flags.has("-d") || flags.has("-D")) {
+        for (const b of positionals) await git.deleteBranch({ fs, dir, ref: b });
+        return "";
+      }
+      if (positionals.length) { await git.branch({ fs, dir, ref: positionals[0] }); return ""; }
+      const branches = await git.listBranches({ fs, dir });
+      let current = ""; try { current = await git.currentBranch({ fs, dir }) || ""; } catch (e) {}
+      return branches.map(b => (b === current ? "* " : "  ") + b).join("\n") + "\n";
+    }
+    case "checkout": {
+      const { positionals, flags } = parseArgs(rest, []);
+      const ref = positionals[0];
+      if (flags.has("-b")) { await git.branch({ fs, dir, ref, checkout: true }); return "Switched to a new branch '" + ref + "'\n"; }
+      await git.checkout({ fs, dir, ref });
+      return "Switched to branch '" + ref + "'\n";
+    }
+    case "switch": {
+      const { positionals, flags } = parseArgs(rest, ["-c"]);
+      const ref = positionals[0] || rest[rest.indexOf("-c") + 1];
+      if (flags.has("-c") || rest.includes("-c")) { await git.branch({ fs, dir, ref, checkout: true }); return "Switched to a new branch '" + ref + "'\n"; }
+      await git.checkout({ fs, dir, ref });
+      return "Switched to branch '" + ref + "'\n";
+    }
+    case "clone": {
+      const { positionals, opts } = parseArgs(rest, ["--depth", "-b", "--branch"]);
+      const url = positionals[0];
+      if (!url) throw new Error("You must specify a repository to clone.");
+      const target = positionals[1] || (url.split("/").pop() || "repo").replace(/\.git$/, "");
+      const cloneDir = dir.replace(/\/$/, "") + "/" + target;
+      await fsCall("mkdir", { path: cloneDir }).catch(() => {});
+      const args = { fs, http, dir: cloneDir, url, singleBranch: false,
+        onProgress: (e) => post({ type: "gitProgress", line: e.phase + (e.total ? " " + Math.round(100 * e.loaded / e.total) + "%" : "") }) };
+      if (opts.depth) args.depth = parseInt(opts.depth);
+      if (opts.b || opts.branch) { args.ref = opts.b || opts.branch; args.singleBranch = true; }
+      await git.clone(args);
+      return "Cloning into '" + target + "'...\ndone.\n";
+    }
+    case "fetch": {
+      const remote = rest[0] || "origin";
+      await git.fetch({ fs, http, dir, remote, singleBranch: false,
+        onProgress: (e) => post({ type: "gitProgress", line: e.phase }) });
+      return "";
+    }
+    case "pull": {
+      const author = await readAuthor(dir);
+      await git.pull({ fs, http, dir, author, singleBranch: false,
+        onProgress: (e) => post({ type: "gitProgress", line: e.phase }) });
+      return "Already up to date.\n";
+    }
+    case "push": {
+      const { positionals, flags } = parseArgs(rest, []);
+      const remote = positionals[0] || "origin";
+      const ref = positionals[1] || (await git.currentBranch({ fs, dir })) || "main";
+      const result = await git.push({ fs, http, dir, remote, ref, force: flags.has("-f") || flags.has("--force"),
+        onProgress: (e) => post({ type: "gitProgress", line: e.phase }) });
+      if (result.ok) return "To " + (result.url || remote) + "\n   " + ref + " -> " + ref + "\n";
+      throw new Error((result.error) || "push rejected");
+    }
+    case "remote": {
+      const { positionals } = parseArgs(rest, []);
+      if (positionals[0] === "add") { await git.addRemote({ fs, dir, remote: positionals[1], url: positionals[2] }); return ""; }
+      if (positionals[0] === "remove" || positionals[0] === "rm") { await git.deleteRemote({ fs, dir, remote: positionals[1] }); return ""; }
+      const remotes = await git.listRemotes({ fs, dir });
+      if (rest.includes("-v")) return remotes.map(r => r.remote + "\t" + r.url + " (fetch)\n" + r.remote + "\t" + r.url + " (push)").join("\n") + "\n";
+      return remotes.map(r => r.remote).join("\n") + "\n";
+    }
+    case "config": {
+      const { positionals } = parseArgs(rest, []);
+      if (positionals.length >= 2) { await git.setConfig({ fs, dir, path: positionals[0], value: positionals.slice(1).join(" ") }); return ""; }
+      if (positionals.length === 1) { return ((await git.getConfig({ fs, dir, path: positionals[0] })) || "") + "\n"; }
+      return "";
+    }
+    case "diff": {
+      // Lightweight: list changed files (name + status), not full unified diff.
+      const matrix = await git.statusMatrix({ fs, dir });
+      let out = "";
+      for (const [filepath, head, workdir, stage] of matrix) {
+        if (head !== workdir || head !== stage) {
+          const tag = head === 0 ? "A" : workdir === 0 ? "D" : "M";
+          out += tag + "\t" + filepath + "\n";
+        }
+      }
+      return out;
+    }
+    case "rev-parse": {
+      const { positionals } = parseArgs(rest, []);
+      const ref = positionals[0] || "HEAD";
+      return (await git.resolveRef({ fs, dir, ref })) + "\n";
+    }
+    case "version": case "--version":
+      return "git version 1.0.0 (lectra/isomorphic-git)\n";
+    default:
+      throw new Error("git: '" + sub + "' is not supported in Lectra's terminal.");
+  }
+}
+
+// ---- entry point driven from Swift ------------------------------------------
+window.lectraGit = function (reqID, argvJSON, cwd) {
+  let argv;
+  try { argv = JSON.parse(argvJSON); } catch (e) { argv = []; }
+  // dir is the working tree root; isomorphic-git wants an absolute path.
+  const dir = cwd;
+  (async () => {
+    try {
+      const stdout = await runGit(argv, dir);
+      post({ type: "gitResult", reqID, exitCode: 0, stdout: stdout || "", stderr: "" });
+    } catch (err) {
+      post({ type: "gitResult", reqID, exitCode: 1, stdout: "",
+             stderr: (err && err.message ? err.message : String(err)) + "\n" });
+    }
+  })();
+};
+
+post({ type: "ready" });
+</script>
+</body>
+</html>

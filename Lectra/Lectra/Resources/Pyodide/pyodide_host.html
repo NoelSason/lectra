@@ -116,6 +116,66 @@ def __lectra_reset():
     post({ type: "reset" });
   };
 
+  // --- Package install + file injection bridges -------------------------------
+  //
+  // The kernel ships a fixed wheel set; these let Swift install extra packages
+  // from PyPI via micropip and drop data files (CSV/TSV) into the in-memory FS.
+
+  let micropipReady = null;
+  async function ensureMicropip() {
+    if (!micropipReady) {
+      micropipReady = (async () => {
+        await pyodide.loadPackage("micropip");
+        return pyodide.pyimport("micropip");
+      })();
+    }
+    return micropipReady;
+  }
+
+  // Write a file into Pyodide's FS from base64 bytes, creating parent dirs.
+  // Synchronous; returns true/false to the evaluateJavaScript completion.
+  window.lectraWriteFile = function (path, b64) {
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const slash = path.lastIndexOf("/");
+      if (slash > 0) { try { pyodide.FS.mkdirTree(path.substring(0, slash)); } catch (e) {} }
+      pyodide.FS.writeFile(path, bytes);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // Install a package from PyPI. On success returns micropip's freeze() lockfile
+  // (JSON) so Swift can mirror the resolved wheel URLs into its offline cache.
+  window.lectraInstall = async function (reqID, name) {
+    try {
+      const micropip = await ensureMicropip();
+      await micropip.install(name);
+      const freeze = micropip.freeze();
+      post({ type: "installed", reqID, name, freeze });
+    } catch (e) {
+      post({ type: "installError", reqID, name,
+             error: String(e && e.message ? e.message : e) });
+    }
+  };
+
+  // Install already-downloaded wheels from the FS (offline re-install at boot).
+  // `pathsJson` is a JSON array of emfs paths; deps are off (closure is cached).
+  window.lectraInstallLocal = async function (reqID, pathsJson) {
+    try {
+      const micropip = await ensureMicropip();
+      const urls = JSON.parse(pathsJson).map((p) => "emfs:" + p);
+      if (urls.length) { await micropip.install.callKwargs(urls, { deps: false }); }
+      post({ type: "installedLocal", reqID });
+    } catch (e) {
+      post({ type: "installError", reqID,
+             error: String(e && e.message ? e.message : e) });
+    }
+  };
+
   init();
 </script>
 </body>

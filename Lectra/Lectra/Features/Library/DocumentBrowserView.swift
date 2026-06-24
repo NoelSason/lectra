@@ -188,6 +188,10 @@ struct DocumentBrowserView: View {
     @State private var showBulkDeleteConfirm = false
     @State private var showBulkMoveSheet = false
     @State private var notebookRoute: NotebookDocument?
+    @State private var showGitHub = false
+    @State private var showTerminal = false
+    @State private var terminalCommand: String?
+    @State private var pendingCloneCommand: String?
     @State private var crossAskInput: CrossAskInput?
 
     @State private var featureNotice: String?
@@ -831,6 +835,18 @@ struct DocumentBrowserView: View {
                     importPickedFile(from: url, folderId: currentFolderId)
                 }
             }
+            .sheet(isPresented: $showGitHub, onDismiss: {
+                // If the user chose "Clone in Terminal", open the terminal once the
+                // GitHub sheet has fully dismissed, queueing the clone command.
+                if let cmd = pendingCloneCommand {
+                    pendingCloneCommand = nil
+                    terminalCommand = cmd
+                    showTerminal = true
+                }
+            }) {
+                GitHubBrowserView(onCloneInTerminal: { pendingCloneCommand = $0 })
+                    .presentationDetents([.large])
+            }
             .sheet(item: $selectedDocumentForOptions) { doc in
                 DocumentOptionsSheetView(
                     documentTitle: doc.title,
@@ -868,6 +884,9 @@ struct DocumentBrowserView: View {
             }
             .sheet(item: $crossAskInput) { input in
                 CrossDocumentAskSheet(input: input)
+            }
+            .fullScreenCover(isPresented: $showTerminal, onDismiss: { terminalCommand = nil }) {
+                TerminalView(initialCommand: terminalCommand, onClose: { showTerminal = false })
             }
             .fullScreenCover(item: $notebookRoute) { notebook in
                 NotebookView(document: notebook, onTitleChange: { newTitle in
@@ -1339,6 +1358,12 @@ struct DocumentBrowserView: View {
                 }
             } label: {
                 Label(isSelectionMode ? "Cancel Selection" : "Select", systemImage: isSelectionMode ? "xmark.circle" : "checkmark.circle")
+            }
+
+            Button {
+                showTerminal = true
+            } label: {
+                Label("Terminal", systemImage: "terminal")
             }
 
             Divider()
@@ -2041,6 +2066,10 @@ struct DocumentBrowserView: View {
                 onFolder: {
                     showCreateMenu = false
                     showCreateFolderAlert = true
+                },
+                onGitHub: {
+                    showCreateMenu = false
+                    showGitHub = true
                 }
             )
             .presentationCompactAdaptation(.popover)
@@ -5060,6 +5089,7 @@ private struct CreateMenuPopoverView: View {
     let onWhiteboard: () -> Void
     let onImport: () -> Void
     let onFolder: () -> Void
+    let onGitHub: () -> Void
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -5088,6 +5118,9 @@ private struct CreateMenuPopoverView: View {
             CreateWideRow(title: "Import PDF", subtitle: "From Files",
                           icon: "square.and.arrow.down", action: onImport)
                 .padding(.top, 2)
+
+            CreateWideRow(title: "Pull from GitHub", subtitle: "Notebooks, data, and code",
+                          icon: "chevron.left.forwardslash.chevron.right", action: onGitHub)
         }
         .padding(16)
         .frame(width: 300)

@@ -27,6 +27,19 @@ struct PyodideRunResult {
     var images: [String] = []  // base64-encoded PNGs (matplotlib figures)
 }
 
+/// Outcome of a `micropip` install requested from Swift.
+struct PyodideInstallResult {
+    var success: Bool
+    var error: String?
+}
+
+/// Raw payload returned by the JS install bridge: either micropip's freeze()
+/// lockfile (on success) or an error string.
+private struct InstallRaw {
+    var freeze: String?
+    var error: String?
+}
+
 @MainActor
 final class PyodideRuntime: NSObject, ObservableObject {
 
@@ -42,6 +55,8 @@ final class PyodideRuntime: NSObject, ObservableObject {
     private var webView: WKWebView?
     private var startContinuation: CheckedContinuation<Void, Error>?
     private var runContinuations: [String: CheckedContinuation<PyodideRunResult, Never>] = [:]
+    private var installContinuations: [String: CheckedContinuation<InstallRaw, Never>] = [:]
+    private var installLocalContinuations: [String: CheckedContinuation<Void, Never>] = [:]
 
     private static let scheme = "lectrapy"
     private static let hostPage = "lectrapy:///pyodide_host.html"
@@ -103,6 +118,83 @@ final class PyodideRuntime: NSObject, ObservableObject {
         }
     }
 
+    // MARK: Packages & files
+
+    /// Installs `name` from PyPI via micropip, then mirrors the resolved wheels
+    /// into the offline cache so later sessions install it without a network.
+    /// Never throws — failures come back in `PyodideInstallResult.error`.
+    func install(_ name: String) async -> PyodideInstallResult {
+        do { try await start() } catch {
+            return PyodideInstallResult(success: false,
+                error: "Python couldn't start: \(error.localizedDescription)")
+        }
+        guard let webView else { return PyodideInstallResult(success: false, error: "No kernel.") }
+
+        let reqID = UUID().uuidString
+        let raw: InstallRaw = await withCheckedContinuation { cont in
+            installContinuations[reqID] = cont
+            let js = "window.lectraInstall(\(Self.jsString(reqID)), \(Self.jsString(name))); undefined;"
+            webView.evaluateJavaScript(js) { [weak self] _, error in
+                guard let self, error != nil else { return }
+                if let pending = self.installContinuations.removeValue(forKey: reqID) {
+                    pending.resume(returning: InstallRaw(freeze: nil, error: "Execution failed."))
+                }
+            }
+        }
+
+        if let err = raw.error {
+            return PyodideInstallResult(success: false, error: Self.friendlyInstallError(err, name: name))
+        }
+        if let freeze = raw.freeze {
+            let wheels = Self.wheelRefs(fromFreeze: freeze)
+            await PackageCache.shared.store(topLevel: name, wheels: wheels)
+        }
+        return PyodideInstallResult(success: true, error: nil)
+    }
+
+    /// Writes raw bytes into the kernel's in-memory filesystem at `path`
+    /// (creating parent dirs). Used to drop data files and cached wheels in.
+    @discardableResult
+    func writeFile(path: String, base64: String) async -> Bool {
+        guard let webView else { return false }
+        let js = "window.lectraWriteFile(\(Self.jsString(path)), \(Self.jsString(base64)));"
+        return await withCheckedContinuation { cont in
+            webView.evaluateJavaScript(js) { result, _ in
+                cont.resume(returning: (result as? NSNumber)?.boolValue ?? (result as? Bool) ?? false)
+            }
+        }
+    }
+
+    /// Re-installs every cached wheel from disk into a freshly-booted kernel,
+    /// so packages added in a previous session are available offline.
+    private func reinstallCachedPackages() async {
+        let paths = await PackageCache.shared.cachedWheelPaths()
+        guard !paths.isEmpty, let webView else { return }
+        var emfsPaths: [String] = []
+        for url in paths {
+            guard let data = try? Data(contentsOf: url) else { continue }
+            let emfs = "/lectra_pkgs/\(url.lastPathComponent)"
+            if await writeFile(path: emfs, base64: data.base64EncodedString()) {
+                emfsPaths.append(emfs)
+            }
+        }
+        guard !emfsPaths.isEmpty,
+              let data = try? JSONEncoder().encode(emfsPaths),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let reqID = UUID().uuidString
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            installLocalContinuations[reqID] = cont
+            let js = "window.lectraInstallLocal(\(Self.jsString(reqID)), \(Self.jsString(json))); undefined;"
+            webView.evaluateJavaScript(js) { [weak self] _, error in
+                guard let self, error != nil else { return }
+                if let pending = self.installLocalContinuations.removeValue(forKey: reqID) {
+                    pending.resume()
+                }
+            }
+        }
+    }
+
     /// Clears the kernel namespace (a lightweight "restart").
     func restart() {
         webView?.evaluateJavaScript("window.lectraReset && window.lectraReset();")
@@ -140,6 +232,36 @@ final class PyodideRuntime: NSObject, ObservableObject {
         return json
     }
 
+    /// Turns a raw micropip error into a message that explains the on-device
+    /// limitation rather than leaking a Python traceback.
+    private static func friendlyInstallError(_ raw: String, name: String) -> String {
+        let lower = raw.lowercased()
+        if lower.contains("can't find a pure python")
+            || lower.contains("no matching distribution")
+            || lower.contains("pure python wheel") {
+            return "“\(name)” isn’t available for on-device Python (no compatible wheel)."
+        }
+        return raw
+    }
+
+    /// Extracts the network-fetched wheels from micropip's freeze() lockfile.
+    /// Bundled packages carry relative file names, so filtering on an http(s)
+    /// prefix naturally selects only the wheels we should mirror to disk.
+    private static func wheelRefs(fromFreeze json: String) -> [WheelRef] {
+        guard let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let packages = root["packages"] as? [String: Any] else { return [] }
+        var refs: [WheelRef] = []
+        for (_, value) in packages {
+            guard let pkg = value as? [String: Any],
+                  let fileName = pkg["file_name"] as? String,
+                  fileName.hasPrefix("http"),
+                  let url = URL(string: fileName) else { continue }
+            refs.append(WheelRef(fileName: url.lastPathComponent, url: url))
+        }
+        return refs
+    }
+
     enum PyodideError: LocalizedError {
         case boot(String)
         var errorDescription: String? {
@@ -161,9 +283,33 @@ extension PyodideRuntime: WKScriptMessageHandler {
     private func handle(type: String, body: [String: Any]) {
         switch type {
         case "ready":
-            status = .ready
-            startContinuation?.resume()
-            startContinuation = nil
+            // Re-install any packages cached from prior sessions before the
+            // kernel is reported ready, so offline imports just work.
+            Task { [weak self] in
+                guard let self else { return }
+                await self.reinstallCachedPackages()
+                self.status = .ready
+                self.startContinuation?.resume()
+                self.startContinuation = nil
+            }
+        case "installed":
+            guard let reqID = body["reqID"] as? String,
+                  let cont = installContinuations.removeValue(forKey: reqID) else { return }
+            cont.resume(returning: InstallRaw(freeze: body["freeze"] as? String, error: nil))
+        case "installedLocal":
+            if let reqID = body["reqID"] as? String,
+               let cont = installLocalContinuations.removeValue(forKey: reqID) {
+                cont.resume()
+            }
+        case "installError":
+            if let reqID = body["reqID"] as? String {
+                if let cont = installContinuations.removeValue(forKey: reqID) {
+                    cont.resume(returning: InstallRaw(
+                        freeze: nil, error: (body["error"] as? String) ?? "Install failed."))
+                } else if let cont = installLocalContinuations.removeValue(forKey: reqID) {
+                    cont.resume()
+                }
+            }
         case "fatal":
             let msg = (body["error"] as? String) ?? "Python failed to start."
             status = .failed(msg)

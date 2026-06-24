@@ -29,6 +29,9 @@ WHEELS=(
   python_dateutil-2.9.0.post0-py2.py3-none-any.whl
   pytz-2024.1-py2.py3-none-any.whl
   six-1.16.0-py2.py3-none-any.whl
+  # micropip lets the notebook install additional pure-Python / Pyodide-built
+  # packages from PyPI at runtime (its only extra dep, packaging, is above).
+  micropip-0.6.0-py3-none-any.whl
 )
 
 cd "$(dirname "$0")"
