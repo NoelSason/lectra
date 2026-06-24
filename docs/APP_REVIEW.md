@@ -1,4 +1,5 @@
 # App Review — Submission Checklist & Notes
+I AM ADDING SOMETHING RIGHT HERE
 
 Operational companion to the code changes that brought Lectra/Canvascope into
 line with the App Review Guidelines. Items marked **[ASC]** are configured in
