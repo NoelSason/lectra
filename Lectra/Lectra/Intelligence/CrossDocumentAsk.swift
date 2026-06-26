@@ -64,6 +64,7 @@ final class CrossDocumentAsk: ObservableObject {
     }
 
     func ask(_ question: String) async throws -> String {
+        try await LectraAIRateLimiter.shared.acquire()
         let active = session ?? {
             let fresh = LectraModelRouter.shared.makeSession(instructions: Self.instructions)
             session = fresh

@@ -121,6 +121,13 @@ final class PythonSyntaxHighlightingTests: XCTestCase {
         XCTAssertEqual(attr.attribute(.font, at: 0, effectiveRange: nil) as? UIFont, font)
     }
 
+    @MainActor func testCodeEditorPythonUsesNotebookPalette() {
+        let attr = SyntaxHighlighter.attributed("print(42) # note", language: .python)
+        XCTAssertEqual(attr.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, builtinColor)
+        XCTAssertEqual(attr.attribute(.foregroundColor, at: 6, effectiveRange: nil) as? UIColor, numberColor)
+        XCTAssertEqual(attr.attribute(.foregroundColor, at: 10, effectiveRange: nil) as? UIColor, commentColor)
+    }
+
     // MARK: Helpers
 
     @MainActor

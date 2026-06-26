@@ -77,8 +77,40 @@ final class ProjectsStore: ObservableObject {
         return projects.first { $0.name == finalTarget }
     }
 
+    /// Commits any local changes, pulls remote work, and pushes the project to its
+    /// `origin` remote in one pass via the shared git runtime. The repo's GitHub
+    /// remote is the cloud, so this is how a project travels between devices.
+    /// Returns a short human-readable summary; throws `ProjectSyncError` on failure.
+    @discardableResult
+    func sync(_ project: Project, message: String? = nil) async throws -> String {
+        guard project.isGitRepo else { throw ProjectSyncError.notARepo }
+
+        var argv = ["sync"]
+        if let message, !message.isEmpty { argv += ["-m", message] }
+
+        let result = await git.run(argv: argv, cwd: project.url.path)
+        if result.exitCode != 0 {
+            throw ProjectSyncError.git(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func delete(_ project: Project) {
         try? FileManager.default.removeItem(at: project.url)
         reload()
+    }
+}
+
+enum ProjectSyncError: LocalizedError {
+    case notARepo
+    case git(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notARepo:
+            return "This project isn't a git repository, so there's nothing to sync."
+        case .git(let message):
+            return message.isEmpty ? "Sync failed. Please try again." : message
+        }
     }
 }

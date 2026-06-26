@@ -305,6 +305,10 @@ nonisolated enum LectraLocalAccountData {
     static let localFoldersDefaultsKey = "lectra_local_folders"
     static let documentFolderMapDefaultsKey = "lectra_document_folder_map"
     static let titleOverridesDefaultsKey = "lectra_document_title_overrides"
+    /// id.uuidString → display title for every document the library has seen
+    /// (local and synced). Lets the terminal name PDF folders by their title
+    /// without an owner check or a network fetch.
+    static let documentTitleCacheDefaultsKey = "lectra_document_title_cache"
     static let recentDocumentsDefaultsKey = "lectra_recently_opened_documents"
     static let cloudSyncEnabledDefaultsKey = "lectra_cloud_sync_enabled"
     static let autoBackupEnabledDefaultsKey = "lectra_auto_backup_enabled"
@@ -337,6 +341,7 @@ nonisolated enum LectraLocalAccountData {
             localFoldersDefaultsKey,
             documentFolderMapDefaultsKey,
             titleOverridesDefaultsKey,
+            documentTitleCacheDefaultsKey,
             recentDocumentsDefaultsKey,
             cloudSyncEnabledDefaultsKey,
             autoBackupEnabledDefaultsKey,

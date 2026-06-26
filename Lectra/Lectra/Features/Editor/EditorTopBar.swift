@@ -106,17 +106,19 @@ struct EditorTopBar: View {
         }
     }
 
-    // Narrow (portrait): inline flow so nothing overlaps; the flexible title
-    // centers in the space between the button clusters and truncates as needed.
+    // Narrow (portrait): the bar is too tight to hold back + undo + redo + a
+    // legible title + the sync chip + overflow without crowding, so undo, redo,
+    // and the sync status fold into the overflow menu and the title takes the
+    // reclaimed space. Read Mode stays inline since it only appears in hand mode.
     private var narrowCompactLayout: some View {
         HStack(spacing: 10) {
             backButton(showsLabel: false)
-            undoButton
-            redoButton
             titleSection
             Spacer(minLength: 4)
-            statusSection
-            compactOverflowMenu
+            if isReadMode {
+                statusChip(title: "Read Mode", color: LectraColor.accentCool, action: nil)
+            }
+            narrowOverflowMenu
         }
     }
 
@@ -255,6 +257,67 @@ struct EditorTopBar: View {
         .buttonStyle(.plain)
         .accessibilityLabel("More actions")
         .accessibilityIdentifier("editor.more")
+    }
+
+    // Portrait overflow: also carries undo, redo, and the sync status that the
+    // narrow bar no longer has room to show inline.
+    private var narrowOverflowMenu: some View {
+        Menu {
+            Button("Undo", systemImage: "arrow.uturn.backward") {
+                LectraHaptics.tap()
+                onUndo()
+            }
+            .disabled(!canUndo)
+
+            Button("Redo", systemImage: "arrow.uturn.forward") {
+                LectraHaptics.tap()
+                onRedo()
+            }
+            .disabled(!canRedo)
+
+            if let syncStatus {
+                Divider()
+                syncMenuRow(syncStatus)
+            }
+
+            Divider()
+            utilityActions
+            Divider()
+            exportActions
+        } label: {
+            iconButtonLabel(symbol: "ellipsis.circle")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("More actions")
+        .accessibilityIdentifier("editor.more")
+    }
+
+    @ViewBuilder
+    private func syncMenuRow(_ status: EditorSyncStatusDescriptor) -> some View {
+        if let action = status.action {
+            // Actionable states (e.g. failed → "Retry") stay tappable.
+            Button(status.title, systemImage: syncSymbol(for: status.title)) {
+                LectraHaptics.selection()
+                action()
+            }
+        } else {
+            // Informational states (Synced, Saving, …) render as a disabled row.
+            Button(status.title, systemImage: syncSymbol(for: status.title)) {}
+                .disabled(true)
+        }
+    }
+
+    private func syncSymbol(for title: String) -> String {
+        switch title {
+        case "Synced": return "checkmark.icloud"
+        case "Saving": return "arrow.triangle.2.circlepath"
+        case "Queued": return "clock"
+        case "Uploading": return "arrow.up.circle"
+        case "Retry": return "arrow.clockwise.icloud"
+        case "Needs Review": return "exclamationmark.triangle"
+        case "Needs OCR": return "text.viewfinder"
+        default: return "icloud"
+        }
     }
 
     private var intelligenceButton: some View {

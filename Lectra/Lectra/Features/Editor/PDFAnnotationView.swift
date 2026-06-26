@@ -194,6 +194,7 @@ struct PDFAnnotationView: View {
                 }
             }
             .onAppear {
+                LectraPerformanceTrace.setActiveSurface(.annotation)
                 currentPage = initialPage ?? max(document.lastOpenedPage, 0)
                 outlineItems = loadOutlineItems()
                 updateDockState(for: rootProxy.size)
@@ -243,6 +244,7 @@ struct PDFAnnotationView: View {
         .onDisappear {
             indicatorTask?.cancel()
             canvascopeDeliveryTask?.cancel()
+            LectraPerformanceTrace.setActiveSurface(.unknown)
             if isRenamingTitle {
                 commitTitleRename()
             }
@@ -1953,6 +1955,7 @@ final class VectorInkCanvasView: UIView {
     private struct LassoSelection {
         let strokeIndexes: [Int]
         let sourceStrokes: [InkStroke]
+        let sourcePointGroups: [[CGPoint]]
         let bounds: CGRect
     }
 
@@ -1983,14 +1986,24 @@ final class VectorInkCanvasView: UIView {
     private(set) var drawing = InkPageDrawing()
 
     private var strokeLayers: [CAShapeLayer] = []
+    private var strokeBoundsCache: [CGRect] = []
+    // Stroke paths live in point-space; they only need rebuilding when the canvas
+    // bounds change, not on every zoom step (zoom only adjusts contentsScale).
+    private var lastPathBuildBounds: CGRect = .null
     private var activeStrokePoints: [InkPoint] = []
     private var activeStrokeDisplayPoints: [CGPoint] = []
     private var activeStrokeWidth: CGFloat = 1.0
     private var activeStrokeColor = InkColorComponents(red: 0, green: 0, blue: 0, alpha: 1)
     private var activeBlendMode: InkBlendMode = .normal
-    private var activeStrokeLayer: CAShapeLayer?
-    private var committedActivePath: UIBezierPath?
-    private var lastCommittedPointIndex: Int = 0
+    // Live drawing splits the in-progress stroke into a set of sealed, fixed-size
+    // "chunk" layers (already-drawn geometry that never changes) plus one short
+    // "tail" layer that follows the pencil. Because a CAShapeLayer re-rasterizes
+    // its whole path whenever `.path` changes, keeping the per-frame tail bounded
+    // makes drawing cost O(1) per frame instead of O(stroke length).
+    private var activeStrokeLayer: CAShapeLayer?              // the live tail
+    private var activeStrokeChunkLayers: [CAShapeLayer] = []  // sealed, immutable chunks
+    private var sealedPointIndex: Int = 0                     // display points [0...sealedPointIndex] are sealed
+    private let activeStrokeChunkSize = 64
     private var activeStrokeDisplayLink: CADisplayLink?
     private var needsActiveStrokeDisplayUpdate = false
     private let eraserPreviewLayer = CAShapeLayer()
@@ -2008,6 +2021,8 @@ final class VectorInkCanvasView: UIView {
     private var activeSelection: LassoSelection?
     private var lassoInteraction: LassoInteraction?
     private var previewSelectionPoints: [Int: [CGPoint]] = [:]
+    private var isBatchingEraserChanges = false
+    private var hasPendingEraserDrawingChange = false
 
     private lazy var pencilGesture: PencilStrokeGestureRecognizer = {
         let gesture = PencilStrokeGestureRecognizer(target: self, action: #selector(handlePencilGesture(_:)))
@@ -2058,7 +2073,9 @@ final class VectorInkCanvasView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        rebuildStrokePaths()
+        if bounds != lastPathBuildBounds {
+            rebuildStrokePaths()
+        }
         if tool.mode == .eraser, let center = eraserPreviewCenter {
             updateEraserPreview(at: center)
         }
@@ -2116,7 +2133,9 @@ final class VectorInkCanvasView: UIView {
     }
 
     func testingSelectWithLassoPolygon(_ points: [CGPoint]) {
-        let selectedIndexes = drawing.strokes.enumerated().compactMap { index, stroke -> Int? in
+        let queryBounds = LassoGeometry.boundingRect(for: [points]) ?? .null
+        let selectedIndexes = candidateStrokeIndexes(intersecting: queryBounds).compactMap { index -> Int? in
+            let stroke = drawing.strokes[index]
             let strokePoints = denormalizedPoints(for: stroke)
             return LassoGeometry.strokeIntersectsPolygon(stroke: strokePoints, polygon: points) ? index : nil
         }
@@ -2162,6 +2181,7 @@ final class VectorInkCanvasView: UIView {
                 strokeLayer.shouldRasterize = false
             }
             activeStrokeLayer?.contentsScale = targetScale
+            activeStrokeChunkLayers.forEach { $0.contentsScale = targetScale }
             lassoPreviewLayer.contentsScale = targetScale
             selectionOutlineLayer.contentsScale = targetScale
             previewStrokeLayers.forEach {
@@ -2172,7 +2192,9 @@ final class VectorInkCanvasView: UIView {
                 handleLayer.contentsScale = targetScale
                 handleLayer.shouldRasterize = false
             }
-            if forceRedraw {
+            // Only a genuine bounds change requires rebuilding the (point-space)
+            // stroke paths; a contentsScale change alone re-rasterizes for free.
+            if forceRedraw, bounds != lastPathBuildBounds {
                 rebuildStrokePaths()
             }
         }
@@ -2180,6 +2202,9 @@ final class VectorInkCanvasView: UIView {
 
     @objc
     private func handlePencilGesture(_ gesture: PencilStrokeGestureRecognizer) {
+        let trace = LectraPerformanceTrace.begin(.annotation, "PencilGesture")
+        defer { LectraPerformanceTrace.end(trace) }
+
         let samples = pencilSamples(from: gesture)
         switch gesture.state {
         case .began:
@@ -2187,6 +2212,7 @@ final class VectorInkCanvasView: UIView {
             if tool.mode == .hand {
                 cancelLassoInteraction(keepSelection: false)
             } else if tool.mode == .eraser {
+                beginEraserInteraction()
                 updateEraserPreview(at: first.point)
                 erase(at: first.point)
             } else if tool.mode == .lasso {
@@ -2206,6 +2232,7 @@ final class VectorInkCanvasView: UIView {
             if tool.mode == .hand {
                 return
             } else if tool.mode == .eraser {
+                beginEraserInteraction()
                 for sample in samples {
                     updateEraserPreview(at: sample.point)
                     erase(at: sample.point)
@@ -2228,6 +2255,8 @@ final class VectorInkCanvasView: UIView {
                     updateLassoInteraction(to: lastPoint)
                 }
                 finishLassoInteraction()
+            } else if tool.mode == .eraser {
+                finishEraserInteraction()
             } else if tool.mode != .eraser && tool.mode != .hand {
                 for sample in samples {
                     appendStroke(at: sample.point, force: sample.force)
@@ -2238,6 +2267,8 @@ final class VectorInkCanvasView: UIView {
             hideEraserPreview()
             if tool.mode == .lasso {
                 cancelLassoInteraction(keepSelection: true)
+            } else if tool.mode == .eraser {
+                finishEraserInteraction()
             } else {
                 discardActiveStroke()
             }
@@ -2472,7 +2503,10 @@ final class VectorInkCanvasView: UIView {
 
         switch lassoInteraction {
         case .drawingPath:
-            let selectedIndexes = drawing.strokes.enumerated().compactMap { index, stroke -> Int? in
+            let queryBounds = (LassoGeometry.boundingRect(for: [activeLassoPoints]) ?? bounds)
+                .insetBy(dx: -2, dy: -2)
+            let selectedIndexes = candidateStrokeIndexes(intersecting: queryBounds).compactMap { index -> Int? in
+                let stroke = drawing.strokes[index]
                 let points = denormalizedPoints(for: stroke)
                 return LassoGeometry.strokeIntersectsPolygon(stroke: points, polygon: activeLassoPoints) ? index : nil
             }
@@ -2537,7 +2571,12 @@ final class VectorInkCanvasView: UIView {
             return nil
         }
 
-        return LassoSelection(strokeIndexes: uniqueIndexes, sourceStrokes: strokes, bounds: bounds.insetBy(dx: -8, dy: -8))
+        return LassoSelection(
+            strokeIndexes: uniqueIndexes,
+            sourceStrokes: strokes,
+            sourcePointGroups: pointGroups,
+            bounds: bounds.insetBy(dx: -8, dy: -8)
+        )
     }
 
     private func updateSelectionOverlay() {
@@ -2613,7 +2652,9 @@ final class VectorInkCanvasView: UIView {
     private func previewSelection(_ selection: LassoSelection, transformedBounds: CGRect) {
         for (offset, stroke) in selection.sourceStrokes.enumerated() {
             guard previewStrokeLayers.indices.contains(offset) else { continue }
-            let sourcePoints = denormalizedPoints(for: stroke)
+            let sourcePoints = selection.sourcePointGroups.indices.contains(offset)
+                ? selection.sourcePointGroups[offset]
+                : denormalizedPoints(for: stroke)
             let transformedPoints = LassoGeometry.scaled(
                 points: sourcePoints,
                 from: selection.bounds,
@@ -2627,6 +2668,7 @@ final class VectorInkCanvasView: UIView {
         activeSelection = LassoSelection(
             strokeIndexes: selection.strokeIndexes,
             sourceStrokes: selection.sourceStrokes,
+            sourcePointGroups: selection.sourcePointGroups,
             bounds: transformedBounds
         )
         updateSelectionOverlay()
@@ -2681,8 +2723,7 @@ final class VectorInkCanvasView: UIView {
     @objc
     private func handleDuplicateSelection() {
         guard let selection = activeSelection else { return }
-        let pointGroups = selection.sourceStrokes.map { denormalizedPoints(for: $0) }
-        let translatedGroups = LassoGeometry.duplicated(pointGroups: pointGroups)
+        let translatedGroups = LassoGeometry.duplicated(pointGroups: selection.sourcePointGroups)
 
         var duplicatedStrokes: [InkStroke] = []
         duplicatedStrokes.reserveCapacity(selection.sourceStrokes.count)
@@ -2740,9 +2781,7 @@ final class VectorInkCanvasView: UIView {
         activeStrokePoints.append(normalized)
         activeStrokeDisplayPoints.append(point)
 
-        committedActivePath = UIBezierPath()
-        committedActivePath?.move(to: point)
-        lastCommittedPointIndex = 0
+        sealedPointIndex = 0
 
         activeStrokeWidth = tool.mode == .pen
             ? max(tool.width * pressureFactor(for: force), 0.4)
@@ -2750,12 +2789,12 @@ final class VectorInkCanvasView: UIView {
         activeStrokeColor = InkColorComponents(color: tool.color)
         activeBlendMode = tool.blendMode
 
-        let strokeLayer = makeStrokeLayer(
+        let tailLayer = makeStrokeLayer(
             color: activeStrokeColor.uiColor,
             lineWidth: activeStrokeWidth
         )
-        layer.addSublayer(strokeLayer)
-        activeStrokeLayer = strokeLayer
+        layer.addSublayer(tailLayer)
+        activeStrokeLayer = tailLayer
         updateActiveStrokePath()
         startActiveStrokeDisplayLink()
     }
@@ -2797,36 +2836,56 @@ final class VectorInkCanvasView: UIView {
     }
 
     private func finishStroke() {
-        guard let strokeLayer = activeStrokeLayer,
+        let trace = LectraPerformanceTrace.begin(.annotation, "FinishStroke")
+        defer { LectraPerformanceTrace.end(trace) }
+
+        guard activeStrokeLayer != nil,
               let stroke = activeStrokeSnapshot() else {
             discardActiveStroke()
             return
         }
 
+        // Replace the transient tail + sealed chunk layers with a single permanent
+        // layer carrying the full, continuous stroke path.
+        let permanent = makeStrokeLayer(
+            color: activeStrokeColor.uiColor,
+            lineWidth: activeStrokeWidth
+        )
+        performWithoutLayerActions {
+            permanent.path = strokePath(for: stroke).cgPath
+        }
+        layer.addSublayer(permanent)
+
         drawing.strokes.append(stroke)
-        flushActiveStrokeDisplayUpdate()
-        strokeLayers.append(strokeLayer)
+        strokeLayers.append(permanent)
+        strokeBoundsCache.append(strokeBounds(for: stroke))
         onDrawingChanged?(drawing)
 
+        clearActiveStrokeLayers()
         invalidateActiveStrokeDisplayLink()
-        activeStrokeLayer = nil
-        committedActivePath = nil
-        lastCommittedPointIndex = 0
         activeStrokePoints.removeAll(keepingCapacity: true)
         activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
     }
 
     private func discardActiveStroke() {
-        activeStrokeLayer?.removeFromSuperlayer()
+        clearActiveStrokeLayers()
         invalidateActiveStrokeDisplayLink()
-        activeStrokeLayer = nil
-        committedActivePath = nil
-        lastCommittedPointIndex = 0
         activeStrokePoints.removeAll(keepingCapacity: true)
         activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
     }
 
+    private func clearActiveStrokeLayers() {
+        activeStrokeLayer?.removeFromSuperlayer()
+        activeStrokeLayer = nil
+        activeStrokeChunkLayers.forEach { $0.removeFromSuperlayer() }
+        activeStrokeChunkLayers.removeAll(keepingCapacity: true)
+        sealedPointIndex = 0
+    }
+
     private func erase(at point: CGPoint) {
+        let trace = LectraPerformanceTrace.begin(.annotation, "EraseSample")
+        defer { LectraPerformanceTrace.end(trace) }
+
         switch tool.eraserMode {
         case .stroke:
             eraseByStroke(at: point)
@@ -2835,40 +2894,84 @@ final class VectorInkCanvasView: UIView {
         }
     }
 
+    private func beginEraserInteraction() {
+        isBatchingEraserChanges = true
+    }
+
+    private func finishEraserInteraction() {
+        guard isBatchingEraserChanges else { return }
+        isBatchingEraserChanges = false
+        if hasPendingEraserDrawingChange {
+            hasPendingEraserDrawingChange = false
+            onDrawingChanged?(drawing)
+        }
+    }
+
+    private func notifyDrawingChangedAfterMutation() {
+        if isBatchingEraserChanges {
+            hasPendingEraserDrawingChange = true
+        } else {
+            onDrawingChanged?(drawing)
+        }
+    }
+
     private func eraseByStroke(at point: CGPoint) {
         guard !drawing.strokes.isEmpty, drawing.strokes.count == strokeLayers.count else { return }
+        ensureStrokeBoundsCache()
 
         let radius = tool.eraserRadius
+        let queryRect = eraserQueryRect(centeredAt: point, radius: radius)
+        let candidateIndexes = candidateStrokeIndexes(intersecting: queryRect)
+        guard !candidateIndexes.isEmpty else { return }
+
+        var removedIndexes = Set<Int>()
+        for index in candidateIndexes where drawing.strokes.indices.contains(index) {
+            if strokeIntersectsEraser(drawing.strokes[index], point: point, radius: radius) {
+                removedIndexes.insert(index)
+            }
+        }
+        guard !removedIndexes.isEmpty else { return }
+
         var keptStrokes: [InkStroke] = []
         var keptLayers: [CAShapeLayer] = []
-        var removedAny = false
+        var keptBounds: [CGRect] = []
 
         for (index, stroke) in drawing.strokes.enumerated() {
-            if strokeIntersectsEraser(stroke, point: point, radius: radius) {
+            if removedIndexes.contains(index) {
                 strokeLayers[index].removeFromSuperlayer()
-                removedAny = true
                 continue
             }
             keptStrokes.append(stroke)
             keptLayers.append(strokeLayers[index])
+            if strokeBoundsCache.indices.contains(index) {
+                keptBounds.append(strokeBoundsCache[index])
+            } else {
+                keptBounds.append(strokeBounds(for: stroke))
+            }
         }
-
-        guard removedAny else { return }
 
         drawing.strokes = keptStrokes
         strokeLayers = keptLayers
-        onDrawingChanged?(drawing)
+        strokeBoundsCache = keptBounds
+        notifyDrawingChangedAfterMutation()
     }
 
     private func eraseByClassic(at point: CGPoint) {
         guard !drawing.strokes.isEmpty else { return }
+        ensureStrokeBoundsCache()
 
         let radius = tool.eraserRadius
+        let queryRect = eraserQueryRect(centeredAt: point, radius: radius)
         var updatedStrokes: [InkStroke] = []
         updatedStrokes.reserveCapacity(drawing.strokes.count)
         var removedAny = false
 
-        for stroke in drawing.strokes {
+        for (index, stroke) in drawing.strokes.enumerated() {
+            if strokeBoundsCache.indices.contains(index), !strokeBoundsCache[index].intersects(queryRect) {
+                updatedStrokes.append(stroke)
+                continue
+            }
+
             let segments = strokeSegments(afterErasing: stroke, at: point, radius: radius)
             if segments.count != 1 || segments.first?.points.count != stroke.points.count {
                 removedAny = true
@@ -2880,7 +2983,7 @@ final class VectorInkCanvasView: UIView {
 
         drawing.strokes = updatedStrokes
         rebuildStrokeLayers()
-        onDrawingChanged?(drawing)
+        notifyDrawingChangedAfterMutation()
     }
 
     private func strokeSegments(afterErasing stroke: InkStroke, at point: CGPoint, radius: CGFloat) -> [InkStroke] {
@@ -2927,6 +3030,65 @@ final class VectorInkCanvasView: UIView {
         }
 
         return segments
+    }
+
+    private func eraserQueryRect(centeredAt point: CGPoint, radius: CGFloat) -> CGRect {
+        let diameter = max(radius, 1) * 2.0
+        return CGRect(
+            x: point.x - radius,
+            y: point.y - radius,
+            width: diameter,
+            height: diameter
+        ).insetBy(dx: -2, dy: -2)
+    }
+
+    private func candidateStrokeIndexes(intersecting queryRect: CGRect) -> [Int] {
+        ensureStrokeBoundsCache()
+        guard !queryRect.isNull, !queryRect.isInfinite else {
+            return Array(drawing.strokes.indices)
+        }
+
+        var indexes: [Int] = []
+        indexes.reserveCapacity(min(strokeBoundsCache.count, 32))
+        for (index, strokeBounds) in strokeBoundsCache.enumerated() where strokeBounds.intersects(queryRect) {
+            indexes.append(index)
+        }
+        return indexes
+    }
+
+    private func ensureStrokeBoundsCache() {
+        guard strokeBoundsCache.count != drawing.strokes.count else { return }
+        rebuildStrokeBoundsCache()
+    }
+
+    private func rebuildStrokeBoundsCache() {
+        strokeBoundsCache = drawing.strokes.map { strokeBounds(for: $0) }
+    }
+
+    private func strokeBounds(for stroke: InkStroke) -> CGRect {
+        guard let first = stroke.points.first else { return .null }
+
+        var minX = first.x * bounds.width
+        var maxX = minX
+        var minY = first.y * bounds.height
+        var maxY = minY
+
+        for point in stroke.points.dropFirst() {
+            let x = point.x * bounds.width
+            let y = point.y * bounds.height
+            minX = min(minX, x)
+            maxX = max(maxX, x)
+            minY = min(minY, y)
+            maxY = max(maxY, y)
+        }
+
+        let padding = max(stroke.width * 0.5, 1.0) + 2.0
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: max(maxX - minX, 0.01),
+            height: max(maxY - minY, 0.01)
+        ).insetBy(dx: -padding, dy: -padding)
     }
 
     private func strokeIntersectsEraser(_ stroke: InkStroke, point: CGPoint, radius: CGFloat) -> Bool {
@@ -2977,14 +3139,14 @@ final class VectorInkCanvasView: UIView {
     }
 
     private func rebuildStrokeLayers() {
-        activeStrokeLayer?.removeFromSuperlayer()
-        activeStrokeLayer = nil
+        clearActiveStrokeLayers()
         activeStrokePoints.removeAll(keepingCapacity: true)
         activeStrokeDisplayPoints.removeAll(keepingCapacity: true)
         invalidateActiveStrokeDisplayLink()
 
         strokeLayers.forEach { $0.removeFromSuperlayer() }
         strokeLayers.removeAll(keepingCapacity: true)
+        strokeBoundsCache.removeAll(keepingCapacity: true)
 
         for stroke in drawing.strokes {
             let layer = makeStrokeLayer(
@@ -2994,15 +3156,13 @@ final class VectorInkCanvasView: UIView {
             layer.path = strokePath(for: stroke).cgPath
             self.layer.addSublayer(layer)
             strokeLayers.append(layer)
+            strokeBoundsCache.append(strokeBounds(for: stroke))
         }
+        lastPathBuildBounds = bounds
         updateSelectionOverlay()
     }
 
     private func rebuildStrokePaths() {
-        if activeStrokeLayer != nil {
-            rebuildCommittedActivePath()
-        }
-
         guard drawing.strokes.count == strokeLayers.count else {
             rebuildStrokeLayers()
             return
@@ -3012,6 +3172,8 @@ final class VectorInkCanvasView: UIView {
             strokeLayers[index].path = strokePath(for: stroke).cgPath
             strokeLayers[index].lineWidth = stroke.width
         }
+        rebuildStrokeBoundsCache()
+        lastPathBuildBounds = bounds
 
         if activeStrokeLayer != nil {
             updateActiveStrokePath()
@@ -3019,105 +3181,77 @@ final class VectorInkCanvasView: UIView {
         updateSelectionOverlay()
     }
 
-    private func updateActiveStrokePath() {
-        guard let activeStrokeLayer else { return }
-        let stroke = InkStroke(
-            points: activeStrokePoints,
-            width: activeStrokeWidth,
-            color: activeStrokeColor,
-            blendMode: activeBlendMode
-        )
-        performWithoutLayerActions {
-            activeStrokeLayer.lineWidth = activeStrokeWidth
-            activeStrokeLayer.path = strokePath(for: stroke).cgPath
-        }
+    // Opaque strokes (pen) are chunked so per-frame work stays bounded. Translucent
+    // strokes (highlighter) keep a single layer: they're short, and overlapping
+    // chunk layers would double-blend at the seams into visible darker dots.
+    private var activeStrokeIsChunked: Bool {
+        activeStrokeColor.alpha >= 0.99
     }
 
+    /// Full rebuild of the active stroke's layers from the current points. Used at
+    /// stroke start and whenever the canvas bounds change (zoom/layout).
+    private func updateActiveStrokePath() {
+        guard activeStrokeLayer != nil else { return }
+        activeStrokeChunkLayers.forEach { $0.removeFromSuperlayer() }
+        activeStrokeChunkLayers.removeAll(keepingCapacity: true)
+        sealedPointIndex = 0
+        // Force-recompute: this path runs on bounds/zoom changes where display
+        // coordinates change but the point count does not.
+        activeStrokeDisplayPoints = activeStrokePoints.map { denormalizedPoint(for: $0) }
+        sealStableChunksIfNeeded()
+        updateActiveTailPath()
+    }
+
+    /// Per-frame update: seal any newly-stable chunks, then redraw only the short tail.
     private func updateActiveStrokePathIncremental() {
-        guard let activeStrokeLayer, let committed = committedActivePath else {
-            updateActiveStrokePath()
-            return
-        }
+        guard activeStrokeLayer != nil, !activeStrokePoints.isEmpty else { return }
+        syncActiveStrokeDisplayPoints()
+        sealStableChunksIfNeeded()
+        updateActiveTailPath()
+    }
 
-        let count = activeStrokePoints.count
-        guard count > 0 else { return }
-
+    private func syncActiveStrokeDisplayPoints() {
         if activeStrokeDisplayPoints.count != activeStrokePoints.count {
             activeStrokeDisplayPoints = activeStrokePoints.map { denormalizedPoint(for: $0) }
         }
+    }
+
+    private func sealStableChunksIfNeeded() {
+        guard activeStrokeIsChunked else { return }
         let points = activeStrokeDisplayPoints
-
-        if lastCommittedPointIndex >= count {
-            lastCommittedPointIndex = 0
-            committed.removeAllPoints()
-            if let first = points.first {
-                committed.move(to: first)
+        let count = points.count
+        // Leave the trailing `activeStrokeChunkSize` points live in the tail; seal
+        // everything before that into immutable layers. Consecutive chunks share a
+        // boundary point so the stroke reads as continuous (round caps hide the seam
+        // for opaque ink).
+        while count - 1 - sealedPointIndex > activeStrokeChunkSize {
+            let start = sealedPointIndex
+            let end = sealedPointIndex + activeStrokeChunkSize
+            let chunkLayer = makeStrokeLayer(
+                color: activeStrokeColor.uiColor,
+                lineWidth: activeStrokeWidth
+            )
+            performWithoutLayerActions {
+                chunkLayer.path = previewPath(for: Array(points[start...end])).cgPath
             }
-        }
-
-        // Commit new stable segments
-        if count >= 3 {
-            let start = lastCommittedPointIndex + 1
-            let end = count - 2
-            if start <= end {
-                for index in start...end {
-                    let current = points[index]
-                    let next = points[index + 1]
-                    let midpoint = CGPoint(
-                        x: (current.x + next.x) * 0.5,
-                        y: (current.y + next.y) * 0.5
-                    )
-                    committed.addQuadCurve(to: midpoint, controlPoint: current)
-                }
-                lastCommittedPointIndex = end
+            if let tail = activeStrokeLayer {
+                layer.insertSublayer(chunkLayer, below: tail)
+            } else {
+                layer.addSublayer(chunkLayer)
             }
-        }
-
-        // Create the display path by copying the committed path and appending unstable parts
-        let displayPath = UIBezierPath()
-        displayPath.cgPath = committed.cgPath.copy() ?? committed.cgPath
-
-        if count == 1 {
-            let center = points[0]
-            displayPath.addLine(to: CGPoint(x: center.x + 0.01, y: center.y + 0.01))
-        } else if count == 2 {
-            displayPath.addLine(to: points[1])
-        } else {
-            if let last = points.last {
-                displayPath.addLine(to: last)
-            }
-        }
-
-        performWithoutLayerActions {
-            activeStrokeLayer.lineWidth = activeStrokeWidth
-            activeStrokeLayer.path = displayPath.cgPath
+            activeStrokeChunkLayers.append(chunkLayer)
+            sealedPointIndex = end
         }
     }
 
-    private func rebuildCommittedActivePath() {
-        guard activeStrokeLayer != nil else { return }
-        activeStrokeDisplayPoints = activeStrokePoints.map { denormalizedPoint(for: $0) }
-        committedActivePath = UIBezierPath()
-        lastCommittedPointIndex = 0
-
-        let count = activeStrokePoints.count
-        guard count > 0 else { return }
-
+    private func updateActiveTailPath() {
+        guard let activeStrokeLayer else { return }
         let points = activeStrokeDisplayPoints
-        committedActivePath?.move(to: points[0])
-
-        if count >= 3 {
-            let end = count - 2
-            for index in 1...end {
-                let current = points[index]
-                let next = points[index + 1]
-                let midpoint = CGPoint(
-                    x: (current.x + next.x) * 0.5,
-                    y: (current.y + next.y) * 0.5
-                )
-                committedActivePath?.addQuadCurve(to: midpoint, controlPoint: current)
-            }
-            lastCommittedPointIndex = end
+        guard !points.isEmpty else { return }
+        let tailPoints = Array(points[sealedPointIndex...])
+        performWithoutLayerActions {
+            activeStrokeLayer.lineWidth = activeStrokeWidth
+            activeStrokeLayer.path = previewPath(for: tailPoints).cgPath
         }
     }
 
@@ -3254,6 +3388,14 @@ private final class PageView: UIView {
     let canvasView = VectorInkCanvasView()
     private(set) var isRendered = false
     let pageIndex: Int
+
+    // Serializes off-main PDF preview rasterization so a page turn never blocks
+    // the main thread on `pdfPage.draw`. A per-view token drops stale renders.
+    private static let previewRenderQueue = DispatchQueue(
+        label: "com.canvascope.lectra.page-preview",
+        qos: .userInitiated
+    )
+    private var renderToken: Int = 0
     
     init(pageIndex: Int) {
         self.pageIndex = pageIndex
@@ -3299,20 +3441,36 @@ private final class PageView: UIView {
     func render(pdfPage: PDFPage) {
         if isRendered { return }
         isRendered = true
-        previewImageView.image = Self.previewImage(for: pdfPage, targetSize: bounds.size)
         pdfPageView.setPage(pdfPage)
+
+        // Rasterize the placeholder preview off the main thread. The CATiledLayer
+        // (pdfPageView) sits above the preview and fills in detail asynchronously,
+        // so a slightly-late preview is fine; what matters is never blocking the
+        // main thread on a full-page `pdfPage.draw` during a scroll/page turn.
+        let targetSize = bounds.size
+        renderToken &+= 1
+        let token = renderToken
+        Self.previewRenderQueue.async { [weak self] in
+            let image = Self.previewImage(for: pdfPage, targetSize: targetSize)
+            DispatchQueue.main.async {
+                guard let self, self.isRendered, self.renderToken == token else { return }
+                self.previewImageView.image = image
+            }
+        }
     }
 
     func renderBlank(pageBounds: CGRect) {
         if isRendered { return }
         isRendered = true
+        renderToken &+= 1
         previewImageView.image = nil
         pdfPageView.setBlankPage(bounds: pageBounds)
     }
-    
+
     func clear() {
         if !isRendered { return }
         isRendered = false
+        renderToken &+= 1
         previewImageView.image = nil
         pdfPageView.setPage(nil)
     }
@@ -3417,6 +3575,9 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
     private var lastLaidOutViewportSize: CGSize = .zero
     private var undoStack: [DrawingHistoryStep] = []
     private var redoStack: [DrawingHistoryStep] = []
+    // Each step holds full-page drawing snapshots, so an uncapped stack grows
+    // ~O(strokes²) over a session and drives intermittent allocator stalls. Cap it.
+    private let maxHistorySteps = 100
     private var isApplyingHistoryChange = false
     private var lastAutoAppendedBlankPageIndex: Int?
     private var lastCanvasResolutionRefreshZoomScale: CGFloat = 1.0
@@ -4433,6 +4594,9 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
                 updated: updatedDrawing
             )
         )
+        if undoStack.count > maxHistorySteps {
+            undoStack.removeFirst(undoStack.count - maxHistorySteps)
+        }
         redoStack.removeAll(keepingCapacity: true)
         reportUndoRedoState()
         scheduleRecoverySnapshotSave()
@@ -4512,6 +4676,9 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
 
     @MainActor
     func prepareSaveResult() async throws -> DocumentSaveResult {
+        let trace = LectraPerformanceTrace.begin(.save, "PrepareSaveResult")
+        defer { LectraPerformanceTrace.end(trace) }
+
         recoverySaveWorkItem?.cancel()
         recoverySaveWorkItem = nil
         hasPendingRecoverySnapshotChanges = false
@@ -4523,14 +4690,6 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
             pages: snapshotDrawings.filter { !$0.value.isEmpty }
         )
         let localEditAt = Date()
-        let encodedDrawings = try JSONEncoder().encode(drawingsPayload)
-        let encodedAnnotations = try JSONEncoder().encode(
-            LectraAnnotationStore(
-                documentId: documentId,
-                migrating: drawingsPayload,
-                migratedAt: localEditAt
-            )
-        )
         let displayScalesSnapshot = displayScales
         let descriptorsSnapshot = pageDescriptors.map { descriptor in
             switch descriptor.kind {
@@ -4545,6 +4704,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         let annotationsURL = repository.localAnnotationsURL(for: documentId)
         let currentPage = currentPageIndex
         let pdfURL = self.pdfURL!
+        let saveDocumentId = documentId!
         let recoveryPayload = makeRecoveryPayload(
             drawings: snapshotDrawings,
             lastOpenedPage: currentPage,
@@ -4552,19 +4712,33 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         )
 
         let annotatedFilePath = try await Task.detached(priority: .userInitiated) { () -> String? in
-            try FileManager.default.createDirectory(
-                at: drawingsURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try encodedDrawings.write(to: drawingsURL, options: [.atomic])
-            try encodedAnnotations.write(to: annotationsURL, options: [.atomic])
+            try LectraPerformanceTrace.withSignpost(.save, "EncodeAnnotationSidecars") {
+                let encodedDrawings = try JSONEncoder().encode(drawingsPayload)
+                let encodedAnnotations = try JSONEncoder().encode(
+                    LectraAnnotationStore(
+                        documentId: saveDocumentId,
+                        migrating: drawingsPayload,
+                        migratedAt: localEditAt
+                    )
+                )
 
-            guard let annotatedData = Self.createFlattenedPDF(
-                pdfURL: pdfURL,
-                pageDescriptors: descriptorsSnapshot,
-                pageDrawings: snapshotDrawings,
-                displayScales: displayScalesSnapshot
-            ) else {
+                try FileManager.default.createDirectory(
+                    at: drawingsURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try encodedDrawings.write(to: drawingsURL, options: [.atomic])
+                try encodedAnnotations.write(to: annotationsURL, options: [.atomic])
+            }
+
+            let annotatedData = LectraPerformanceTrace.withSignpost(.save, "FlattenPDF") {
+                Self.createFlattenedPDF(
+                    pdfURL: pdfURL,
+                    pageDescriptors: descriptorsSnapshot,
+                    pageDrawings: snapshotDrawings,
+                    displayScales: displayScalesSnapshot
+                )
+            }
+            guard let annotatedData else {
                 return nil
             }
 
@@ -4579,7 +4753,7 @@ class PageAnnotationViewController: UIViewController, UIScrollViewDelegate {
         }
 
         return DocumentSaveResult(
-            documentId: documentId,
+            documentId: saveDocumentId,
             annotatedFilePath: annotatedFilePath,
             localEditAt: localEditAt,
             lastOpenedPage: currentPage,

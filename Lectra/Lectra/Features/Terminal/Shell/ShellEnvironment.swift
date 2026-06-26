@@ -45,7 +45,9 @@ final class ShellEnvironment {
         let url: URL
         if p.hasPrefix("/") { url = URL(fileURLWithPath: p) }
         else { url = cwd.appendingPathComponent(p) }
-        let std = url.standardizedFileURL
+        // Documents are presented in the terminal under their title; map that
+        // friendly name back to the real on-disk UUID path (no-op otherwise).
+        let std = TerminalDocuments.resolveVirtual(url.standardizedFileURL)
 
         let root = sandboxRoot.path.hasSuffix("/") ? sandboxRoot.path : sandboxRoot.path + "/"
         guard std.path == sandboxRoot.path || std.path.hasPrefix(root) else { return nil }

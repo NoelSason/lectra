@@ -82,6 +82,7 @@ final class DocumentSummarizer: ObservableObject {
     }
 
     func ask(_ question: String) async throws -> String {
+        try await LectraAIRateLimiter.shared.acquire()
         let session = chatSession ?? {
             let fresh = LectraModelRouter.shared.makeSession(instructions: Self.askInstructions)
             chatSession = fresh

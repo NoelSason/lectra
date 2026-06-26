@@ -54,6 +54,9 @@ final class GitRuntime: NSObject, ObservableObject {
     // MARK: Lifecycle
 
     func start() async throws {
+        let trace = LectraPerformanceTrace.begin(.web, "GitRuntimeStart")
+        defer { LectraPerformanceTrace.end(trace) }
+
         switch status {
         case .ready: return
         case .starting:
@@ -80,6 +83,9 @@ final class GitRuntime: NSObject, ObservableObject {
     /// ["commit", "-m", "msg"]); `cwd` is the absolute working-tree directory.
     /// Progress lines (clone/fetch/push) stream through `onProgress`.
     func run(argv: [String], cwd: String, onProgress: ((String) -> Void)? = nil) async -> GitResult {
+        let trace = LectraPerformanceTrace.begin(.web, "GitCommand")
+        defer { LectraPerformanceTrace.end(trace) }
+
         do { try await start() } catch {
             return GitResult(stdout: "", stderr: "git couldn't start: \(error.localizedDescription)\n", exitCode: 1)
         }
@@ -205,6 +211,9 @@ extension GitRuntime: WKScriptMessageHandlerWithReply {
     }
 
     private func handleFS(_ body: [String: Any], reply: @escaping (Any?, String?) -> Void) {
+        let trace = LectraPerformanceTrace.begin(.web, "GitFSOperation")
+        defer { LectraPerformanceTrace.end(trace) }
+
         guard let op = body["op"] as? String, let path = body["path"] as? String else {
             reply(["ok": false, "code": "EINVAL", "message": "missing op/path"], nil); return
         }
@@ -285,7 +294,9 @@ extension GitRuntime: WKScriptMessageHandlerWithReply {
     }
 
     private func handleHTTP(_ body: [String: Any], reply: @escaping (Any?, String?) -> Void) {
+        let trace = LectraPerformanceTrace.begin(.web, "GitHTTPRequest")
         guard let urlStr = body["url"] as? String, let url = URL(string: urlStr) else {
+            LectraPerformanceTrace.end(trace)
             reply(["ok": false, "message": "bad url"], nil); return
         }
         let method = (body["method"] as? String) ?? "GET"
@@ -312,6 +323,7 @@ extension GitRuntime: WKScriptMessageHandlerWithReply {
         urlSession.dataTask(with: request) { data, response, error in
             if let error {
                 DispatchQueue.main.async { reply(["ok": false, "message": error.localizedDescription], nil) }
+                LectraPerformanceTrace.end(trace)
                 return
             }
             let http = response as? HTTPURLResponse
@@ -328,6 +340,7 @@ extension GitRuntime: WKScriptMessageHandlerWithReply {
                 "bodyB64": (data ?? Data()).base64EncodedString(),
             ]
             DispatchQueue.main.async { reply(payload, nil) }
+            LectraPerformanceTrace.end(trace)
         }.resume()
     }
 }

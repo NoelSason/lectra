@@ -64,6 +64,13 @@ struct EditorRoute: Identifiable, Equatable {
     let initialPage: Int?
 }
 
+/// An open request from the terminal that has to wait for the terminal's
+/// full-screen cover to finish dismissing before the destination can present.
+private enum PendingTerminalOpen {
+    case document(UUID)
+    case project(URL)
+}
+
 private enum LibrarySection: String, CaseIterable, Identifiable {
     case documents
     case projects
@@ -192,6 +199,7 @@ struct DocumentBrowserView: View {
     @State private var showBulkMoveSheet = false
     @State private var notebookRoute: NotebookDocument?
     @State private var showTerminal = false
+    @State private var pendingTerminalOpen: PendingTerminalOpen?
     // Projects tab state: code folders/repos live on disk under Documents/Projects;
     // notebooks live in NotebookStore but are surfaced here instead of Documents.
     @State private var projects: [Project] = []
@@ -601,12 +609,14 @@ struct DocumentBrowserView: View {
         let iCloudPublisher = NotificationCenter.default.publisher(for: .lectraICloudSyncDidChange)
         let remoteDocumentsPublisher = NotificationCenter.default.publisher(for: .lectraRemoteDocumentsDidChange)
         let openDocumentPublisher = NotificationCenter.default.publisher(for: .lectraOpenDocumentRequest)
+        let openProjectPublisher = NotificationCenter.default.publisher(for: .lectraOpenProjectRequest)
 
         return presentedContent
             .onReceive(syncPublisher, perform: handleDocumentSyncNotification)
             .onReceive(iCloudPublisher, perform: handleICloudSyncNotification)
             .onReceive(remoteDocumentsPublisher, perform: handleRemoteDocumentsNotification)
             .onReceive(openDocumentPublisher, perform: handleOpenDocumentRequest)
+            .onReceive(openProjectPublisher, perform: handleOpenProjectRequest)
             .onChange(of: backgroundSyncToast) { _, newValue in
                 guard let newValue else { return }
                 postAccessibilityAnnouncement(newValue)
@@ -926,7 +936,7 @@ struct DocumentBrowserView: View {
                     }
                 }
             }
-            .fullScreenCover(isPresented: $showTerminal) {
+            .fullScreenCover(isPresented: $showTerminal, onDismiss: applyPendingTerminalOpen) {
                 TerminalView(onClose: { showTerminal = false })
             }
             .fullScreenCover(item: $openProjectFolder, onDismiss: { loadProjects() }) { project in
@@ -1510,14 +1520,70 @@ struct DocumentBrowserView: View {
                 .accessibilityLabel("Back to \(backNavigationLabel)")
             }
 
-            Text(libraryHeaderTitle)
-                .font(.system(size: currentFolderId == nil ? 28 : 24, weight: .bold, design: .rounded))
-                .foregroundStyle(LectraColor.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.74)
-                .layoutPriority(1)
+            if currentFolderId == nil {
+                // At the vault root the title is the section switcher on iPhone.
+                sectionSwitchingTitle(libraryHeaderTitle, fontSize: 28, weight: .bold)
+            } else {
+                // Inside a folder the title names the folder; the back button
+                // (above) handles navigation, so it stays plain text.
+                Text(libraryHeaderTitle)
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundStyle(LectraColor.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+                    .layoutPriority(1)
+            }
         }
         .frame(minHeight: 38, alignment: .leading)
+    }
+
+    /// The library title doubles as the section switcher on iPhone, where the
+    /// permanent sidebar is gone. On regular layouts the sidebar owns section
+    /// switching, so the title stays plain text.
+    @ViewBuilder
+    private func sectionSwitchingTitle(
+        _ label: String,
+        fontSize: CGFloat = 28,
+        weight: Font.Weight = .bold
+    ) -> some View {
+        let titleText = Text(label)
+            .font(.system(size: fontSize, weight: weight, design: .rounded))
+            .foregroundStyle(LectraColor.textPrimary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.74)
+
+        if isCompactLayout {
+            Menu {
+                Picker(
+                    "Section",
+                    selection: Binding(
+                        get: { activeSection },
+                        set: { selectSection($0) }
+                    )
+                ) {
+                    ForEach(LibrarySection.allCases) { section in
+                        Label(section.title, systemImage: section.icon)
+                            .tag(section)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 6) {
+                    titleText
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: max(12, fontSize * 0.46), weight: .bold))
+                        .foregroundStyle(LectraColor.textTertiary)
+                }
+                .layoutPriority(1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(label), library section")
+            .accessibilityHint("Switch between Documents, Projects, Favorites, and Shared")
+            .accessibilityIdentifier("library.sectionSwitcher")
+        } else {
+            titleText.layoutPriority(1)
+        }
     }
 
     private var workspaceStatusStrip: some View {
@@ -1692,12 +1758,7 @@ struct DocumentBrowserView: View {
     private var projectsTopBar: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
-                Text("Projects")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(LectraColor.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.74)
-                    .layoutPriority(1)
+                sectionSwitchingTitle("Projects", fontSize: 28, weight: .bold)
 
                 Spacer(minLength: 8)
 
@@ -1915,11 +1976,7 @@ struct DocumentBrowserView: View {
     private func genericTopBar(title: String, filterTitle: String, includeSearch: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
-                Text(title)
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .foregroundColor(LectraColor.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                sectionSwitchingTitle(title, fontSize: 28, weight: .semibold)
 
                 Spacer(minLength: 0)
 
@@ -4080,20 +4137,69 @@ struct DocumentBrowserView: View {
         editorRoute = EditorRoute(documentId: documentId, initialPage: initialPage)
     }
 
-    /// Routes an OpenDocumentIntent (Siri / Shortcuts) to the editor.
+    /// Routes an open request (Siri / Shortcuts intent, or the terminal's `open`)
+    /// to the right editor. When the terminal is up, the request waits for it to
+    /// dismiss first — two full-screen covers can't be presented at once.
     private func handleOpenDocumentRequest(_ notification: Notification) {
         guard let idString = notification.userInfo?["documentId"] as? String,
               let documentId = UUID(uuidString: idString) else { return }
 
+        if showTerminal {
+            pendingTerminalOpen = .document(documentId)
+            showTerminal = false
+            return
+        }
+        routeOpenDocument(documentId)
+    }
+
+    private func routeOpenDocument(_ documentId: UUID) {
         if activeSection != .documents {
             activeSection = .documents
         }
 
         if let doc = document(for: documentId) {
             handleDocumentTap(doc)
+        } else if NotebookStore.shared.exists(id: documentId) {
+            // Not merged into the library list yet, but its notebook file is here.
+            notebookRoute = NotebookStore.shared.load(id: documentId)
         } else {
             // Document may not be merged into memory yet — open by id directly.
             openEditor(documentId: documentId)
+        }
+    }
+
+    /// Routes the terminal's `open` of a project file to the IDE.
+    private func handleOpenProjectRequest(_ notification: Notification) {
+        guard let path = notification.userInfo?["path"] as? String else { return }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+
+        if showTerminal {
+            pendingTerminalOpen = .project(url)
+            showTerminal = false
+            return
+        }
+        routeOpenProject(url)
+    }
+
+    private func routeOpenProject(_ url: URL) {
+        if activeSection != .projects {
+            activeSection = .projects
+        }
+        loadProjects()
+        openProjectFolder = Project(url: url)
+    }
+
+    /// Applied after the terminal cover finishes dismissing: present the editor
+    /// the `open` command asked for. The brief delay lets the dismissal settle so
+    /// the new cover reliably presents.
+    private func applyPendingTerminalOpen() {
+        guard let pending = pendingTerminalOpen else { return }
+        pendingTerminalOpen = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            switch pending {
+            case .document(let id): routeOpenDocument(id)
+            case .project(let url): routeOpenProject(url)
+            }
         }
     }
 
@@ -4171,10 +4277,25 @@ struct DocumentBrowserView: View {
 
         let folderMap = folderNameByDocumentID()
         DocumentSearchIndex.shared.refresh(documents: documents, folderNameByDocumentID: folderMap)
+        cacheDocumentTitlesForTerminal()
 
         if reloadRecoverySnapshots {
             loadRecoverySnapshots()
         }
+    }
+
+    /// Persists an id → title map for every known document so the terminal can
+    /// show PDF folders under their title instead of a UUID. Merged into any
+    /// existing cache, so titles seen in earlier sessions survive even when a
+    /// later load is offline (and thus has fewer documents).
+    private func cacheDocumentTitlesForTerminal() {
+        var cache = (UserDefaults.standard.dictionary(forKey: LectraLocalAccountData.documentTitleCacheDefaultsKey) as? [String: String]) ?? [:]
+        for doc in documents {
+            let title = doc.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { continue }
+            cache[doc.id.uuidString] = title
+        }
+        UserDefaults.standard.set(cache, forKey: LectraLocalAccountData.documentTitleCacheDefaultsKey)
     }
 
     private func runGlobalSearch() {
@@ -5057,21 +5178,21 @@ private struct VaultFolderCardView: View {
             .contentShape(RoundedRectangle(cornerRadius: LectraRadius.card, style: .continuous))
             .onTapGesture(perform: onOpen)
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(folderName)
                     .font(LectraTypography.bodyEmphasis)
                     .foregroundColor(LectraColor.textPrimary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .multilineTextAlignment(.leading)
-                    .minimumScaleFactor(0.9)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .minimumScaleFactor(0.85)
                     .onTapGesture(perform: onOpen)
-                .frame(height: 42, alignment: .topLeading)
 
                 Text(subtitle)
                     .font(LectraTypography.captionMedium)
                     .foregroundColor(LectraColor.textTertiary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)

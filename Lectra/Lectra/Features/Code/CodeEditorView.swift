@@ -198,6 +198,10 @@ enum SyntaxHighlighter {
     private static let heading = UIColor(red: 1.0, green: 0.42, blue: 0.36, alpha: 1)
 
     static func attributed(_ text: String, language: CodeLanguage) -> NSAttributedString {
+        if language == .python {
+            return PythonSyntax.highlighted(text, font: font)
+        }
+
         let full = NSRange(text.startIndex..., in: text)
         let result = NSMutableAttributedString(string: text, attributes: [
             .font: font, .foregroundColor: base
@@ -251,7 +255,8 @@ struct HighlightedCodeTextView: UIViewRepresentable {
         view.smartQuotesType = .no
         view.smartDashesType = .no
         view.spellCheckingType = .no
-        view.keyboardType = .asciiCapable
+        // Leave keyboardType at .default: .asciiCapable drops hardware-keyboard
+        // shifted symbols (e.g. Shift+9 inserts "9" instead of "(").
         view.backgroundColor = UIColor(LectraColor.surfaceOverlay)
         view.alwaysBounceVertical = true
         view.attributedText = SyntaxHighlighter.attributed(text, language: language)
@@ -259,6 +264,10 @@ struct HighlightedCodeTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: LineNumberTextView, context: Context) {
+        // Keep the coordinator's parent current so language/onChange don't go
+        // stale across file switches (Python highlighting + auto-indent depend on
+        // the live language).
+        context.coordinator.parent = self
         // Only push external changes; avoid clobbering the user's cursor mid-typing.
         if view.text != text {
             let selected = view.selectedRange
@@ -270,7 +279,7 @@ struct HighlightedCodeTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        private let parent: HighlightedCodeTextView
+        var parent: HighlightedCodeTextView
         init(_ parent: HighlightedCodeTextView) { self.parent = parent }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -282,6 +291,25 @@ struct HighlightedCodeTextView: UIViewRepresentable {
             textView.selectedRange = selected
             parent.onChange()
             (textView as? LineNumberTextView)?.setNeedsDisplay()
+        }
+
+        func textView(_ textView: UITextView,
+                      shouldChangeTextIn range: NSRange,
+                      replacementText replacement: String) -> Bool {
+            guard parent.language == .python, replacement == "\n" else { return true }
+            let ns = textView.text as NSString
+            let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
+            let currentLine = ns.substring(with: lineRange)
+            let insertion = "\n" + PythonSyntax.nextLineIndent(currentLine: currentLine)
+            let updated = ns.replacingCharacters(in: range, with: insertion)
+            let selected = NSRange(location: range.location + (insertion as NSString).length, length: 0)
+
+            parent.text = updated
+            textView.attributedText = SyntaxHighlighter.attributed(updated, language: parent.language)
+            textView.selectedRange = selected
+            parent.onChange()
+            (textView as? LineNumberTextView)?.setNeedsDisplay()
+            return false
         }
     }
 }

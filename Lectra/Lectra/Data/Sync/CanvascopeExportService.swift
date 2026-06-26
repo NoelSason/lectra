@@ -53,6 +53,45 @@ nonisolated private struct CanvascopeUploadStatusEnvelope: Decodable {
     let sentAt: String?
 }
 
+private func makeCanvascopeStatusReceipt(
+    from receipt: CanvascopeUploadStatusReceipt,
+    status: String
+) -> CanvascopeUploadStatusReceipt {
+    CanvascopeUploadStatusReceipt(
+        ok: receipt.ok,
+        uploadId: receipt.uploadId,
+        status: status,
+        createdAt: receipt.createdAt,
+        downloadedAt: status == "downloaded" ? receipt.downloadedAt : nil,
+        expiresAt: receipt.expiresAt,
+        receipts: receipt.receipts
+    )
+}
+
+nonisolated private func normalizeCanvascopeDeliveryStatus(_ rawStatus: String?) -> String? {
+    let status = (rawStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch status {
+    case "queued", "wake_broadcasted", "wake_emitted":
+        return "queued"
+    case "claiming", "claimed":
+        return "claimed"
+    case "signed_url_issued":
+        return "signed_url_issued"
+    case "downloading":
+        return "downloading"
+    case "downloaded":
+        return "downloaded"
+    case "canceled", "cancelled":
+        return "canceled"
+    default:
+        return nil
+    }
+}
+
+nonisolated private func isTerminalCanvascopeDeliveryStatus(_ status: String) -> Bool {
+    status == "downloaded" || status == "canceled"
+}
+
 enum CanvascopeExportError: LocalizedError {
     case notAuthenticated
     case noActiveReceiver
@@ -228,7 +267,7 @@ final class CanvascopeExportService {
                         ?? envelope.payload?.status
                         ?? envelope.stage
                         ?? envelope.payload?.stage
-                    guard let status = Self.normalizeDeliveryStatus(rawStatus) else { continue }
+                    guard let status = normalizeCanvascopeDeliveryStatus(rawStatus) else { continue }
                     let receipt = CanvascopeUploadStatusReceipt(
                         ok: true,
                         uploadId: uploadId,
@@ -241,7 +280,7 @@ final class CanvascopeExportService {
                     if let onProgress {
                         await onProgress(receipt)
                     }
-                    if Self.isTerminalDeliveryStatus(status) {
+                    if isTerminalCanvascopeDeliveryStatus(status) {
                         return receipt
                     }
                 }
@@ -288,21 +327,21 @@ final class CanvascopeExportService {
 
             switch parsed {
             case .success(let statusReceipt):
-                if let normalizedStatus = Self.normalizeDeliveryStatus(statusReceipt.status) {
-                    let normalizedReceipt = Self.statusReceipt(
+                if let normalizedStatus = normalizeCanvascopeDeliveryStatus(statusReceipt.status) {
+                    let normalizedReceipt = makeCanvascopeStatusReceipt(
                         from: statusReceipt,
                         status: normalizedStatus
                     )
                     if reportedStatuses.insert(normalizedStatus).inserted, let onProgress {
                         await onProgress(normalizedReceipt)
                     }
-                    if Self.isTerminalDeliveryStatus(normalizedStatus) {
+                    if isTerminalCanvascopeDeliveryStatus(normalizedStatus) {
                         return normalizedReceipt
                     }
                 }
 
                 for receiptEvent in statusReceipt.receipts ?? [] {
-                    guard let normalizedStatus = Self.normalizeDeliveryStatus(receiptEvent.stage) else { continue }
+                    guard let normalizedStatus = normalizeCanvascopeDeliveryStatus(receiptEvent.stage) else { continue }
                     let receiptKey = "\(receiptEvent.stage)|\(receiptEvent.createdAt ?? "")"
                     guard reportedReceiptKeys.insert(receiptKey).inserted else { continue }
                     let progressReceipt = CanvascopeUploadStatusReceipt(
@@ -317,7 +356,7 @@ final class CanvascopeExportService {
                     if let onProgress {
                         await onProgress(progressReceipt)
                     }
-                    if Self.isTerminalDeliveryStatus(normalizedStatus) {
+                    if isTerminalCanvascopeDeliveryStatus(normalizedStatus) {
                         return progressReceipt
                     }
                 }
@@ -346,45 +385,6 @@ final class CanvascopeExportService {
         }
 
         return nil
-    }
-
-    nonisolated private static func statusReceipt(
-        from receipt: CanvascopeUploadStatusReceipt,
-        status: String
-    ) -> CanvascopeUploadStatusReceipt {
-        CanvascopeUploadStatusReceipt(
-            ok: receipt.ok,
-            uploadId: receipt.uploadId,
-            status: status,
-            createdAt: receipt.createdAt,
-            downloadedAt: status == "downloaded" ? receipt.downloadedAt : nil,
-            expiresAt: receipt.expiresAt,
-            receipts: receipt.receipts
-        )
-    }
-
-    nonisolated private static func normalizeDeliveryStatus(_ rawStatus: String?) -> String? {
-        let status = (rawStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        switch status {
-        case "queued", "wake_broadcasted", "wake_emitted":
-            return "queued"
-        case "claiming", "claimed":
-            return "claimed"
-        case "signed_url_issued":
-            return "signed_url_issued"
-        case "downloading":
-            return "downloading"
-        case "downloaded":
-            return "downloaded"
-        case "canceled", "cancelled":
-            return "canceled"
-        default:
-            return nil
-        }
-    }
-
-    nonisolated private static func isTerminalDeliveryStatus(_ status: String) -> Bool {
-        status == "downloaded" || status == "canceled"
     }
 
     private enum ParsedUploadResponse {

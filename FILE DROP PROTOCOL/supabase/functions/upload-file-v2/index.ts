@@ -2,8 +2,9 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, sanitizeFileName } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 import { broadcastWakeHint } from "../_shared/dropbridge-v2.ts";
+import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
 
-const FILE_DROP_EVENT = "file_drop";
+const FILE_DROP_EVENT = "upload_queued";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -127,14 +128,45 @@ Deno.serve(async (request) => {
       throw new Error(`Failed to record upload metadata: ${rowError.message}`);
     }
 
+    await recordDropBridgeReceipt({
+      uploadId,
+      userId: user.id,
+      deviceId: receiver.id,
+      stage: "queued",
+      detail: {
+        receiverKind,
+        senderKind: senderKind || null,
+        fileName,
+        sizeBytes: file.size,
+        mimeType: contentType,
+      },
+    });
+
     // Wake the receiver instantly over realtime so it can download without
     // waiting for its next poll. Best effort — the receiver's poll/list-pending
     // fallback still covers a missed broadcast.
-    await broadcastWakeHint({
+    const realtimeBroadcasted = await broadcastWakeHint({
       userId: user.id,
       deviceId: receiver.id,
       event: FILE_DROP_EVENT,
-      payload: { uploadId, fileName, sizeBytes: file.size },
+      payload: {
+        uploadId,
+        fileName,
+        sizeBytes: file.size,
+        mimeType: contentType,
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    await recordDropBridgeReceipt({
+      uploadId,
+      userId: user.id,
+      deviceId: receiver.id,
+      stage: realtimeBroadcasted ? "wake_broadcasted" : "wake_broadcast_failed",
+      detail: {
+        receiverKind,
+        senderDeviceId: senderDeviceId || null,
+      },
     });
 
     return json({

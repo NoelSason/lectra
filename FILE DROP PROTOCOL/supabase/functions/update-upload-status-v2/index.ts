@@ -2,6 +2,7 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { admin, requireUuid } from "../_shared/device-auth.ts";
 import { HttpError, requireAuthUser } from "../_shared/auth-user.ts";
 import { broadcastWakeHint } from "../_shared/dropbridge-v2.ts";
+import { recordDropBridgeReceipt } from "../_shared/dropbridge-receipts.ts";
 
 const UPLOAD_STATUS_EVENT = "upload_status";
 
@@ -88,6 +89,16 @@ Deno.serve(async (request) => {
       await admin.storage.from("drops").remove([data.object_path]);
     }
 
+    await recordDropBridgeReceipt({
+      uploadId,
+      userId: user.id,
+      deviceId,
+      stage: status,
+      detail: {
+        clientKind: requestedClientKind,
+      },
+    });
+
     // Notify the original sender instantly so it can show "delivered" without
     // polling. Best effort — the sender's poll fallback still resolves status.
     if (
@@ -98,7 +109,15 @@ Deno.serve(async (request) => {
         userId: user.id,
         deviceId: data.sender_device_id,
         event: UPLOAD_STATUS_EVENT,
-        payload: { uploadId, status },
+        payload: {
+          uploadId,
+          status,
+          stage: status,
+          detail: {
+            receiverDeviceId: deviceId,
+            clientKind: requestedClientKind,
+          },
+        },
       });
     }
 

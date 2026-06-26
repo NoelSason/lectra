@@ -72,4 +72,23 @@ final class ShellEngineTests: XCTestCase {
         let out = await run(exec, "cat fruits.txt | grep ban")
         XCTAssertEqual(out.trimmingCharacters(in: .whitespacesAndNewlines), "banana")
     }
+
+    func testWhichReportsPythonCommands() async {
+        let (exec, dir) = makeExecutor(); defer { try? FileManager.default.removeItem(at: dir) }
+        let out = await run(exec, "which python python3")
+        XCTAssertTrue(out.contains("python: built-in (Pyodide Python)"), out)
+        XCTAssertTrue(out.contains("python3: built-in (Pyodide Python)"), out)
+    }
+
+    func testPython3RunsScriptFile() async {
+        let (exec, dir) = makeExecutor(); defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("score.py")
+        try? """
+        for i in range(3):
+            print(i)
+        """.write(to: script, atomically: true, encoding: .utf8)
+
+        let out = await run(exec, "python3 score.py")
+        XCTAssertEqual(out, "0\n1\n2\n")
+    }
 }

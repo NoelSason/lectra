@@ -33,13 +33,18 @@ struct SourceEditorView: UIViewRepresentable {
         tv.smartDashesType = .no
         tv.smartInsertDeleteType = .no
         tv.spellCheckingType = .no
-        tv.keyboardType = .asciiCapable
+        // Leave keyboardType at .default: .asciiCapable drops hardware-keyboard
+        // shifted symbols (e.g. Shift+9 inserts "9" instead of "(").
         tv.text = text
         context.coordinator.highlightNow(tv)
         return container
     }
 
     func updateUIView(_ container: EditorContainerView, context: Context) {
+        // Refresh the coordinator's parent so language/onChange stay current when
+        // switching files; otherwise the captured language goes stale and Python
+        // highlighting + auto-indent never engage for a later-opened .py file.
+        context.coordinator.parent = self
         let tv = container.textView
         if tv.text != text {
             let sel = tv.selectedRange
@@ -51,7 +56,7 @@ struct SourceEditorView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        private let parent: SourceEditorView
+        var parent: SourceEditorView
         private var highlightWork: DispatchWorkItem?
         init(_ parent: SourceEditorView) { self.parent = parent }
 
@@ -89,6 +94,25 @@ struct SourceEditorView: UIViewRepresentable {
             }
             storage.endEditing()
             textView.selectedRange = sel
+        }
+
+        func textView(_ textView: UITextView,
+                      shouldChangeTextIn range: NSRange,
+                      replacementText replacement: String) -> Bool {
+            guard parent.language == .python, replacement == "\n" else { return true }
+            let ns = textView.text as NSString
+            let lineRange = ns.lineRange(for: NSRange(location: range.location, length: 0))
+            let currentLine = ns.substring(with: lineRange)
+            let insertion = "\n" + PythonSyntax.nextLineIndent(currentLine: currentLine)
+            let updated = ns.replacingCharacters(in: range, with: insertion)
+
+            textView.text = updated
+            textView.selectedRange = NSRange(location: range.location + (insertion as NSString).length, length: 0)
+            parent.text = updated
+            parent.onChange()
+            (textView.superview as? EditorContainerView)?.gutter.setNeedsDisplay()
+            highlightNow(textView)
+            return false
         }
     }
 }

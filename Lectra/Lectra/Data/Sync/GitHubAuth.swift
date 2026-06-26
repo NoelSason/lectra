@@ -58,6 +58,20 @@ final class GitHubAuth: NSObject, ObservableObject, ASWebAuthenticationPresentat
         }
 
         do {
+            // Supabase only returns the GitHub provider token at the moment of
+            // linking, and never refreshes or re-issues it. If the keychain token
+            // is lost (reinstall, new device, or a prior disconnect that cleared
+            // the token but left the identity linked), re-linking fails with
+            // "422: Identity is already linked" and the auth sheet closes with no
+            // token captured. Unlink any pre-existing GitHub identity first so the
+            // link flow runs cleanly and hands back a fresh token. Allowed because
+            // the account still has its primary (Google) identity — Supabase only
+            // blocks unlinking the last remaining identity.
+            if let existing = try? await client.auth.userIdentities()
+                .first(where: { $0.provider == "github" }) {
+                try? await client.auth.unlinkIdentity(existing)
+            }
+
             let linkURL = try await client.auth.getLinkIdentityURL(
                 provider: .github,
                 scopes: "repo",

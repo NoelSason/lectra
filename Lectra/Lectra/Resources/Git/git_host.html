@@ -27,6 +27,16 @@
 const git = self.git;
 
 function post(msg) { window.webkit.messageHandlers.lectragit.postMessage(msg); }
+function postProgress(line) {
+  if (line) post({ type: "gitProgress", line });
+}
+function formatProgress(e) {
+  if (!e) return "";
+  const phase = e.phase || "Working";
+  if (e.total) return phase + " " + Math.round(100 * e.loaded / e.total) + "%";
+  if (e.loaded) return phase + " " + e.loaded;
+  return phase;
+}
 
 // ---- base64 <-> bytes -------------------------------------------------------
 function bytesToB64(bytes) {
@@ -185,9 +195,26 @@ async function gitStatus(dir) {
     else if (workdir === 2 && stage !== 2) unstaged.push(["modified:   ", filepath]);
     else if (workdir === 2 && stage === 2 && head === 1) {} // already counted
   }
-  let branch = "(no branch)";
-  try { branch = (await git.currentBranch({ fs, dir, fullname: false })) || "(no commits yet)"; } catch (e) {}
-  let out = "On branch " + branch + "\n";
+  // Report the real HEAD state. currentBranch() returns the branch name for a
+  // normal (attached) HEAD — even in a fresh repo with no commits yet — and
+  // undefined when HEAD is detached. Telling these apart matters: commits made
+  // on a detached HEAD never advance a branch and never push.
+  let branch;
+  try { branch = await git.currentBranch({ fs, dir, fullname: false }); } catch (e) {}
+  let out;
+  if (branch) {
+    let hasCommit = false;
+    try { hasCommit = !!(await git.resolveRef({ fs, dir, ref: branch })); } catch (e) {}
+    out = hasCommit ? ("On branch " + branch + "\n")
+                    : ("On branch " + branch + "\n\nNo commits yet\n");
+  } else {
+    let oid = "";
+    try { oid = (await git.resolveRef({ fs, dir, ref: "HEAD" })) || ""; } catch (e) {}
+    out = oid
+      ? ("HEAD detached at " + oid.slice(0, 7) + "\n" +
+         "  (commits here won't update any branch — run `git switch -c main` to start one)\n")
+      : "On branch main\n\nNo commits yet\n";
+  }
   if (staged.length) {
     out += "\nChanges to be committed:\n";
     for (const [label, f] of staged) out += "\t" + label + f + "\n";
@@ -240,6 +267,76 @@ async function gitAdd(dir, args) {
   return "";
 }
 
+// One-tap project sync: stage every local change (adds, edits, deletions),
+// commit if anything changed, pull remote work, then push — against `origin`.
+// Used by the Projects "Sync" button; composes the same primitives the terminal
+// exposes so the on-disk repo stays the single source of truth.
+async function gitSync(dir, args) {
+  const { opts } = parseArgs(args, ["-m", "--message"]);
+
+  let originURL = "";
+  try { originURL = (await git.getConfig({ fs, dir, path: "remote.origin.url" })) || ""; } catch (e) {}
+  if (!originURL) {
+    throw new Error("This project has no 'origin' remote to sync with. Clone it from GitHub or add a remote first.");
+  }
+
+  const author = await readAuthor(dir);
+  let branch = "main";
+  try { branch = (await git.currentBranch({ fs, dir })) || "main"; } catch (e) {}
+
+  // Stage all working-tree changes. statusMatrix rows are
+  // [filepath, HEAD, WORKDIR, STAGE]; an unchanged file is [_, 1, 1, 1].
+  const matrix = await git.statusMatrix({ fs, dir });
+  let changeCount = 0;
+  for (const [filepath, head, workdir, stage] of matrix) {
+    if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
+    if (workdir === 0) {
+      await git.remove({ fs, dir, filepath }); // deleted on disk -> stage removal
+    } else {
+      await git.add({ fs, dir, filepath });    // new or modified -> stage
+    }
+    changeCount++;
+  }
+
+  let committed = false;
+  if (changeCount > 0) {
+    const message = opts.m || opts.message || ("Sync from Lectra " + new Date().toISOString());
+    await git.commit({ fs, dir, message, author });
+    committed = true;
+  }
+
+  postProgress("Pulling from origin...");
+  try {
+    await git.pull({ fs, http, dir, author, singleBranch: false,
+      onProgress: (e) => postProgress(formatProgress(e)) });
+  } catch (err) {
+    const m = err && err.message ? err.message : String(err);
+    if (/conflict/i.test(m) || (err && err.code === "MergeConflictError")) {
+      throw new Error("Sync paused: changes on GitHub conflict with local edits. Resolve them in the terminal (git status), then sync again.");
+    }
+    throw new Error("Couldn't pull from origin: " + m);
+  }
+
+  postProgress("Pushing " + branch + " to origin...");
+  let result;
+  try {
+    result = await git.push({ fs, http, dir, remote: "origin", ref: branch,
+      onProgress: (e) => postProgress(formatProgress(e)) });
+  } catch (err) {
+    const m = err && err.message ? err.message : String(err);
+    if (m.includes("HTTP Error: 404")) {
+      throw new Error("GitHub returned 404 for " + originURL + ". Reconnect GitHub or use a token with write access to this repo.");
+    }
+    throw err;
+  }
+  if (result && result.ok === false && result.error) throw new Error(result.error);
+
+  const head = committed
+    ? ("Committed " + changeCount + " file" + (changeCount === 1 ? "" : "s"))
+    : "No local changes";
+  return head + " — synced with origin/" + branch + ".\n";
+}
+
 async function runGit(argv, dir) {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -249,6 +346,7 @@ async function runGit(argv, dir) {
       return "Initialized empty Git repository in " + dir + "/.git/\n";
     }
     case "add": return await gitAdd(dir, rest);
+    case "sync": return await gitSync(dir, rest);
     case "rm": {
       const { positionals } = parseArgs(rest, []);
       for (const p of positionals) { await git.remove({ fs, dir, filepath: p }); await fsCall("unlink", { path: dir.replace(/\/$/, "") + "/" + p }).catch(() => {}); }
@@ -261,9 +359,17 @@ async function runGit(argv, dir) {
       if (!message) throw new Error("Aborting commit due to empty commit message (use -m).");
       const author = await readAuthor(dir);
       const oid = await git.commit({ fs, dir, message, author });
-      let branch = "main";
-      try { branch = await git.currentBranch({ fs, dir }) || "main"; } catch (e) {}
-      return "[" + branch + " " + oid.slice(0, 7) + "] " + message.split("\n")[0] + "\n";
+      let branch;
+      try { branch = await git.currentBranch({ fs, dir }); } catch (e) {}
+      const subject = message.split("\n")[0];
+      if (!branch) {
+        // Detached HEAD: the commit is real but not on any branch, so it won't
+        // push. Say so loudly rather than printing a normal-looking line.
+        return "[detached HEAD " + oid.slice(0, 7) + "] " + subject + "\n" +
+               "  warning: this commit is not on a branch and won't push.\n" +
+               "  Keep it on a branch with `git switch -c main`.\n";
+      }
+      return "[" + branch + " " + oid.slice(0, 7) + "] " + subject + "\n";
     }
     case "log": return await gitLog(dir, rest);
     case "branch": {
@@ -276,6 +382,28 @@ async function runGit(argv, dir) {
       const branches = await git.listBranches({ fs, dir });
       let current = ""; try { current = await git.currentBranch({ fs, dir }) || ""; } catch (e) {}
       return branches.map(b => (b === current ? "* " : "  ") + b).join("\n") + "\n";
+    }
+    case "restore": {
+      // git restore [--staged] [--worktree] [--source=<tree>] <pathspec...>
+      // Brings files back to the working tree (recreating deletions) and/or
+      // unstages them. With no flag, the working tree is restored from HEAD.
+      const { positionals, flags, opts } = parseArgs(rest, ["-s", "--source"]);
+      if (!positionals.length) throw new Error("you must specify path(s) to restore");
+      const staged = flags.has("--staged") || flags.has("-S");
+      const worktree = flags.has("--worktree") || flags.has("-W");
+      const source = opts.source || opts.s || "HEAD";
+      const doWorktree = worktree || !staged; // default target is the worktree
+      for (const p of positionals) {
+        if (staged) {
+          // Unstage: reset this path's index entry back to HEAD.
+          await git.resetIndex({ fs, dir, filepath: p });
+        }
+        if (doWorktree) {
+          // Recreate/overwrite the working-tree file from `source` (HEAD default).
+          await git.checkout({ fs, dir, ref: source, filepaths: [p], force: true });
+        }
+      }
+      return "";
     }
     case "checkout": {
       const { positionals, flags } = parseArgs(rest, []);
@@ -298,8 +426,9 @@ async function runGit(argv, dir) {
       const target = positionals[1] || (url.split("/").pop() || "repo").replace(/\.git$/, "");
       const cloneDir = dir.replace(/\/$/, "") + "/" + target;
       await fsCall("mkdir", { path: cloneDir }).catch(() => {});
+      postProgress("Cloning into '" + target + "'...");
       const args = { fs, http, dir: cloneDir, url, singleBranch: false,
-        onProgress: (e) => post({ type: "gitProgress", line: e.phase + (e.total ? " " + Math.round(100 * e.loaded / e.total) + "%" : "") }) };
+        onProgress: (e) => postProgress(formatProgress(e)) };
       if (opts.depth) args.depth = parseInt(opts.depth);
       if (opts.b || opts.branch) { args.ref = opts.b || opts.branch; args.singleBranch = true; }
       await git.clone(args);
@@ -307,29 +436,94 @@ async function runGit(argv, dir) {
     }
     case "fetch": {
       const remote = rest[0] || "origin";
+      postProgress("Fetching " + remote + "...");
       await git.fetch({ fs, http, dir, remote, singleBranch: false,
-        onProgress: (e) => post({ type: "gitProgress", line: e.phase }) });
+        onProgress: (e) => postProgress(formatProgress(e)) });
       return "";
     }
     case "pull": {
       const author = await readAuthor(dir);
+      postProgress("Pulling from origin...");
       await git.pull({ fs, http, dir, author, singleBranch: false,
-        onProgress: (e) => post({ type: "gitProgress", line: e.phase }) });
+        onProgress: (e) => postProgress(formatProgress(e)) });
       return "Already up to date.\n";
     }
     case "push": {
       const { positionals, flags } = parseArgs(rest, []);
       const remote = positionals[0] || "origin";
-      const ref = positionals[1] || (await git.currentBranch({ fs, dir })) || "main";
-      const result = await git.push({ fs, http, dir, remote, ref, force: flags.has("-f") || flags.has("--force"),
-        onProgress: (e) => post({ type: "gitProgress", line: e.phase }) });
+      // Resolve which branch to push. A detached HEAD has no branch, so falling
+      // back to "main" would silently push a stale branch while the user's real
+      // commit sits on the orphaned HEAD — exactly the "push did nothing" trap.
+      let ref = positionals[1];
+      if (!ref) {
+        try { ref = await git.currentBranch({ fs, dir }); } catch (e) {}
+        if (!ref) {
+          throw new Error(
+            "You are in 'detached HEAD' state, so there is no branch to push.\n" +
+            "Start a branch from where you are: `git switch -c main`, then `git push`."
+          );
+        }
+      }
+      // Make sure the branch actually points at a commit. Pushing a branch with
+      // no commits is a no-op that some servers accept silently; surface it.
+      let head = "";
+      try { head = (await git.resolveRef({ fs, dir, ref })) || ""; } catch (e) {}
+      if (!head) {
+        throw new Error(
+          "nothing to push: branch '" + ref + "' has no commits yet.\n" +
+          "Stage and commit first: `git add .` then `git commit -m \"your message\"`."
+        );
+      }
+      postProgress("Pushing " + ref + " to " + remote + "...");
+      let result;
+      try {
+        result = await git.push({ fs, http, dir, remote, ref, force: flags.has("-f") || flags.has("--force"),
+          onProgress: (e) => postProgress(formatProgress(e)) });
+      } catch (err) {
+        let remoteURL = "";
+        try { remoteURL = await git.getConfig({ fs, dir, path: "remote." + remote + ".url" }) || ""; } catch (e) {}
+        const message = err && err.message ? err.message : String(err);
+        if (message.includes("HTTP Error: 404")) {
+          throw new Error(
+            "GitHub returned 404 for " + (remoteURL || remote) + ".\n" +
+            "Check `git remote -v`. If the URL is correct, reconnect GitHub or use a token with repo write access."
+          );
+        }
+        throw err;
+      }
       if (result.ok) return "To " + (result.url || remote) + "\n   " + ref + " -> " + ref + "\n";
       throw new Error((result.error) || "push rejected");
     }
     case "remote": {
       const { positionals } = parseArgs(rest, []);
-      if (positionals[0] === "add") { await git.addRemote({ fs, dir, remote: positionals[1], url: positionals[2] }); return ""; }
-      if (positionals[0] === "remove" || positionals[0] === "rm") { await git.deleteRemote({ fs, dir, remote: positionals[1] }); return ""; }
+      if (positionals[0] === "add") {
+        if (!positionals[1] || !positionals[2]) throw new Error("usage: git remote add <name> <url>");
+        await git.addRemote({ fs, dir, remote: positionals[1], url: positionals[2] });
+        return "";
+      }
+      if (positionals[0] === "set-url") {
+        const remote = positionals[1];
+        const url = positionals[2];
+        if (!remote || !url) throw new Error("usage: git remote set-url <name> <newurl>");
+        const current = await git.getConfig({ fs, dir, path: "remote." + remote + ".url" });
+        if (!current) throw new Error("No such remote '" + remote + "'");
+        await git.setConfig({ fs, dir, path: "remote." + remote + ".url", value: url });
+        return "";
+      }
+      if (positionals[0] === "get-url") {
+        const remote = positionals[1] || "origin";
+        const url = await git.getConfig({ fs, dir, path: "remote." + remote + ".url" });
+        if (!url) throw new Error("No such remote '" + remote + "'");
+        return url + "\n";
+      }
+      if (positionals[0] === "remove" || positionals[0] === "rm") {
+        if (!positionals[1]) throw new Error("usage: git remote remove <name>");
+        await git.deleteRemote({ fs, dir, remote: positionals[1] });
+        return "";
+      }
+      if (positionals[0] && positionals[0] !== "-v") {
+        throw new Error("git remote " + positionals[0] + " is not supported.");
+      }
       const remotes = await git.listRemotes({ fs, dir });
       if (rest.includes("-v")) return remotes.map(r => r.remote + "\t" + r.url + " (fetch)\n" + r.remote + "\t" + r.url + " (push)").join("\n") + "\n";
       return remotes.map(r => r.remote).join("\n") + "\n";

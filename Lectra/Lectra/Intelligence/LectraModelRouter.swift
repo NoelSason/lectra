@@ -103,6 +103,7 @@ final class LectraModelRouter {
         instructions: String,
         maxResponseTokens: Int? = nil
     ) async throws -> String {
+        try await LectraAIRateLimiter.shared.acquire()
         let tokens = Self.estimatedTokens(forChars: prompt.count)
         let session = makeSession(instructions: instructions, approxTokens: tokens)
         let options = GenerationOptions(maximumResponseTokens: maxResponseTokens)
@@ -117,6 +118,7 @@ final class LectraModelRouter {
         instructions: String,
         maxResponseTokens: Int? = nil
     ) async throws -> Content {
+        try await LectraAIRateLimiter.shared.acquire()
         let tokens = Self.estimatedTokens(forChars: prompt.count)
         let session = makeSession(instructions: instructions, approxTokens: tokens)
         let options = GenerationOptions(maximumResponseTokens: maxResponseTokens)

@@ -11,14 +11,14 @@ import SwiftUI
 
 // MARK: - File tree model
 
-struct FileNode: Identifiable, Hashable {
+struct FileNode: Identifiable, Hashable, Sendable {
     let url: URL
     let isDirectory: Bool
     var children: [FileNode]?
-    var id: String { url.path }
-    var name: String { url.lastPathComponent }
+    nonisolated var id: String { url.path }
+    nonisolated var name: String { url.lastPathComponent }
 
-    static func build(_ root: URL, depth: Int = 0) -> [FileNode] {
+    nonisolated static func build(_ root: URL, depth: Int = 0) -> [FileNode] {
         let skip: Set<String> = [".git", "node_modules", ".DS_Store", ".build", "DerivedData"]
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [])) ?? []
@@ -50,33 +50,86 @@ struct ProjectWorkspaceView: View {
     @State private var dirty = false
     @State private var showTree = true
     @State private var showTerminal = false
+    /// Height of the integrated terminal pane, draggable via the handle above it.
+    /// `terminalDragBase` holds the height at the start of the current drag.
+    @State private var terminalHeight: CGFloat = 280
+    @State private var terminalDragBase: CGFloat = 280
+    @State private var showNewFileAlert = false
+    @State private var newFilePath = ""
     /// Debounced autosave: edits flush to disk shortly after typing pauses, and on
     /// file switch / leaving the workspace. Git is the version history, so there's
     /// no manual Save.
-    @State private var autosaveWork: DispatchWorkItem?
+    @State private var autosaveTask: Task<Void, Never>?
+    @State private var treeRefreshTask: Task<Void, Never>?
+    @State private var fileLoadTask: Task<Void, Never>?
+    @State private var editGeneration = 0
+    /// One-tap GitHub sync (commit + pull + push). Git is the cloud for projects.
+    @State private var syncing = false
+    @State private var syncNotice: String?
+    @State private var syncFailed = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().overlay(LectraColor.sidebarDivider)
-            HStack(spacing: 0) {
-                if showTree {
-                    fileTree
-                        .frame(width: 250)
-                        .background(LectraColor.sidebarBackground)
-                    Divider().overlay(LectraColor.sidebarDivider)
-                }
-                editorPane
-            }
-            if showTerminal {
+        GeometryReader { geo in
+            let maxTerminalHeight = max(160, geo.size.height - 220)
+            VStack(spacing: 0) {
+                header
                 Divider().overlay(LectraColor.sidebarDivider)
-                TerminalView(startDirectory: project.url)
-                    .frame(height: 320)
+                HStack(spacing: 0) {
+                    if showTree {
+                        fileTree
+                            .frame(width: 250)
+                            .background(LectraColor.sidebarBackground)
+                        Divider().overlay(LectraColor.sidebarDivider)
+                    }
+                    editorPane
+                }
+                .frame(maxHeight: .infinity)
+                if showTerminal {
+                    terminalResizeHandle(maxHeight: maxTerminalHeight)
+                    TerminalView(startDirectory: project.url, onCommandFinished: { command, exitCode in
+                        handleTerminalCommandFinished(command: command, exitCode: exitCode)
+                    })
+                        .frame(height: min(terminalHeight, maxTerminalHeight))
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .onChange(of: geo.size.height) { _, _ in
+                terminalHeight = min(terminalHeight, maxTerminalHeight)
+                terminalDragBase = terminalHeight
             }
         }
         .background(LectraColor.background.ignoresSafeArea())
-        .onAppear { tree = FileNode.build(project.url) }
-        .onDisappear { saveIfNeeded() }
+        .onAppear {
+            LectraPerformanceTrace.setActiveSurface(.projects)
+            refreshTree()
+        }
+        .onDisappear {
+            saveIfNeeded()
+            treeRefreshTask?.cancel()
+            fileLoadTask?.cancel()
+            LectraPerformanceTrace.setActiveSurface(.unknown)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lectraOpenFileInEditor)) { note in
+            openFileFromTerminal(note)
+        }
+        .alert("New File", isPresented: $showNewFileAlert) {
+            TextField("path/to/file.swift", text: $newFilePath)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Create") { createNewFile() }
+            Button("Cancel", role: .cancel) { newFilePath = "" }
+        } message: {
+            Text("Create a file in this project. Folders in the path will be created.")
+        }
+        .alert(syncFailed ? "Sync" : "Synced", isPresented: syncNoticePresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(syncNotice ?? "")
+        }
+    }
+
+    private var syncNoticePresented: Binding<Bool> {
+        Binding(get: { syncNotice != nil }, set: { if !$0 { syncNotice = nil } })
     }
 
     // MARK: Header
@@ -111,6 +164,18 @@ struct ProjectWorkspaceView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(LectraColor.textTertiary)
             }
+            if syncing {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(LectraColor.accentSoft)
+                    .accessibilityLabel("Syncing")
+            } else {
+                Button { runSync() } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(LectraColor.textSecondary)
+                }
+                .accessibilityLabel("Sync to GitHub")
+            }
             Button { withAnimation(.easeInOut(duration: 0.15)) { showTerminal.toggle() } } label: {
                 Image(systemName: "terminal")
                     .foregroundStyle(showTerminal ? LectraColor.accent : LectraColor.textSecondary)
@@ -123,14 +188,65 @@ struct ProjectWorkspaceView: View {
     // MARK: File tree
 
     private var fileTree: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(tree) { node in
-                    FileTreeRow(node: node, depth: 0, selected: selectedFile) { open($0) }
+        VStack(spacing: 0) {
+            fileTreeToolbar
+            Divider().overlay(LectraColor.sidebarDivider)
+            ScrollView {
+                if tree.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "doc.badge.plus")
+                            .font(.system(size: 24))
+                            .foregroundStyle(LectraColor.textTertiary)
+                        Text("No files yet")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(LectraColor.textTertiary)
+                        Button { showNewFileAlert = true } label: {
+                            Label("New File", systemImage: "plus")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(LectraColor.accentSoft)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 36)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(tree) { node in
+                            FileTreeRow(node: node, depth: 0, selected: selectedFile) { open($0) }
+                        }
+                    }
+                    .padding(.vertical, 8)
                 }
             }
-            .padding(.vertical, 8)
         }
+    }
+
+    private var fileTreeToolbar: some View {
+        HStack(spacing: 8) {
+            Text("Files")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(LectraColor.textSecondary)
+            Spacer(minLength: 0)
+            Button { showNewFileAlert = true } label: {
+                Image(systemName: "doc.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(LectraColor.accentSoft)
+            .accessibilityLabel("New File")
+
+            Button { refreshTree() } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(LectraColor.textTertiary)
+            .accessibilityLabel("Refresh Files")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: Editor
@@ -156,38 +272,226 @@ struct ProjectWorkspaceView: View {
         }
     }
 
+    // MARK: Terminal resize
+
+    /// A draggable grip above the terminal. Dragging up grows the terminal,
+    /// dragging down shrinks it, clamped between a usable minimum and `maxHeight`.
+    private func terminalResizeHandle(maxHeight: CGFloat) -> some View {
+        ZStack {
+            LectraColor.surfaceFloating
+            Capsule()
+                .fill(LectraColor.textTertiary.opacity(0.5))
+                .frame(width: 40, height: 4)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 16)
+        .overlay(Divider().overlay(LectraColor.sidebarDivider), alignment: .top)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    let proposed = terminalDragBase - value.translation.height
+                    terminalHeight = min(max(proposed, 120), maxHeight)
+                }
+                .onEnded { _ in terminalDragBase = terminalHeight }
+        )
+    }
+
+    /// Opens a file requested by the terminal's `nano`/`vi`/`vim` command, as long
+    /// as it lives inside this project, loading it into the editor pane.
+    private func openFileFromTerminal(_ note: Notification) {
+        guard let path = note.userInfo?["path"] as? String else { return }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let root = project.url.standardizedFileURL.path
+        guard url.path == root || url.path.hasPrefix(root + "/") else { return }
+        refreshTree(debounce: 0.1) // a file `nano` just created should show in the tree
+        open(url)
+    }
+
     // MARK: Actions
 
     private func open(_ url: URL) {
-        guard !url.hasDirectoryPath else { return }
+        let fileURL = url.standardizedFileURL
+        guard !fileURL.hasDirectoryPath else { return }
         saveIfNeeded()
-        // Skip obviously binary files.
-        guard let data = try? Data(contentsOf: url), let str = String(data: data, encoding: .utf8) else {
-            fileText = "// Binary or non-text file - can't edit here."
-            selectedFile = url; dirty = false; return
+
+        fileLoadTask?.cancel()
+        fileLoadTask = Task {
+            let loadedText = await Task.detached(priority: .userInitiated) { () -> String? in
+                LectraPerformanceTrace.withSignpost(.projects, "OpenProjectFile") {
+                    guard let data = try? Data(contentsOf: fileURL) else { return nil }
+                    return String(data: data, encoding: .utf8)
+                }
+            }.value
+
+            guard !Task.isCancelled else { return }
+            fileText = loadedText ?? "// Binary or non-text file - can't edit here."
+            selectedFile = fileURL
+            dirty = false
         }
-        fileText = str
-        selectedFile = url
-        dirty = false
+    }
+
+    private func refreshTree(debounce delay: TimeInterval? = nil) {
+        treeRefreshTask?.cancel()
+        let root = project.url
+        treeRefreshTask = Task {
+            if let delay {
+                let nanoseconds = UInt64(delay * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                guard !Task.isCancelled else { return }
+            }
+
+            let nodes = await Task.detached(priority: .utility) {
+                LectraPerformanceTrace.withSignpost(.projects, "BuildProjectTree") {
+                    FileNode.build(root)
+                }
+            }.value
+
+            guard !Task.isCancelled else { return }
+            tree = nodes
+        }
+    }
+
+    private func handleTerminalCommandFinished(command: String, exitCode: Int32) {
+        guard exitCode == 0, terminalCommandMayMutateProject(command) else { return }
+        refreshTree(debounce: 0.35)
+    }
+
+    private func terminalCommandMayMutateProject(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.contains(">") { return true }
+
+        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "|;&"))
+        let tokens = trimmed
+            .components(separatedBy: separators)
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return false }
+
+        let mutatingBuiltins: Set<String> = ["touch", "mkdir", "rmdir", "rm", "cp", "mv"]
+        let readOnlyGitSubcommands: Set<String> = ["status", "log", "diff", "show"]
+
+        for (index, token) in tokens.enumerated() {
+            if mutatingBuiltins.contains(token) {
+                return true
+            }
+            if token == "git" {
+                let subcommand = tokens.dropFirst(index + 1).first { !$0.hasPrefix("-") }
+                guard let subcommand else { return false }
+                return !readOnlyGitSubcommands.contains(subcommand)
+            }
+        }
+
+        return false
+    }
+
+    private func createNewFile() {
+        let rawPath = newFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        newFilePath = ""
+        guard !rawPath.isEmpty else { return }
+
+        let normalizedPath = rawPath.replacingOccurrences(of: "\\", with: "/")
+        guard !normalizedPath.hasPrefix("/"), !normalizedPath.hasSuffix("/") else { return }
+
+        let parts = normalizedPath.split(separator: "/").map(String.init)
+        guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return }
+
+        var fileURL = project.url
+        for part in parts {
+            fileURL.appendPathComponent(part)
+        }
+        fileURL = fileURL.standardizedFileURL
+
+        Task {
+            await Task.detached(priority: .utility) {
+                let parentURL = fileURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+                if !FileManager.default.fileExists(atPath: fileURL.path) {
+                    FileManager.default.createFile(atPath: fileURL.path, contents: Data(), attributes: nil)
+                }
+            }.value
+
+            guard !Task.isCancelled else { return }
+            refreshTree()
+            open(fileURL)
+        }
     }
 
     /// Flush to disk a beat after typing stops (git keeps the history).
     private func scheduleAutosave() {
-        autosaveWork?.cancel()
-        let work = DispatchWorkItem { save() }
-        autosaveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+        guard let url = selectedFile else { return }
+        dirty = true
+        editGeneration &+= 1
+        let generation = editGeneration
+        let text = fileText
+
+        autosaveTask?.cancel()
+        autosaveTask = Task {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            await write(text: text, to: url, generation: generation)
+        }
     }
 
     private func save() {
         guard let url = selectedFile, dirty else { return }
-        try? Data(fileText.utf8).write(to: url, options: .atomic)
+        editGeneration &+= 1
+        let generation = editGeneration
+        let text = fileText
+
+        Task {
+            await write(text: text, to: url, generation: generation)
+        }
+    }
+
+    private func write(text: String, to url: URL, generation: Int) async {
+        let didWrite = await Task.detached(priority: .utility) {
+            LectraPerformanceTrace.withSignpost(.projects, "SaveProjectFile") {
+                do {
+                    try Data(text.utf8).write(to: url, options: .atomic)
+                    return true
+                } catch {
+                    return false
+                }
+            }
+        }.value
+
+        guard didWrite, selectedFile == url, editGeneration == generation else { return }
         dirty = false
     }
 
     private func saveIfNeeded() {
-        autosaveWork?.cancel()
+        autosaveTask?.cancel()
         save()
+    }
+
+    /// Flush the in-flight edit to disk and wait for it, so git stages the latest
+    /// bytes rather than racing the debounced autosave.
+    private func flushPendingWrite() async {
+        autosaveTask?.cancel()
+        guard let url = selectedFile, dirty else { return }
+        editGeneration &+= 1
+        await write(text: fileText, to: url, generation: editGeneration)
+    }
+
+    /// Commit local changes, pull, and push to the project's GitHub remote.
+    private func runSync() {
+        guard !syncing else { return }
+        syncing = true
+        Task {
+            await flushPendingWrite()
+            do {
+                let summary = try await ProjectsStore.shared.sync(project)
+                syncFailed = false
+                syncNotice = summary.isEmpty ? "Synced with GitHub." : summary
+                refreshTree(debounce: 0.1)
+            } catch {
+                syncFailed = true
+                syncNotice = error.localizedDescription
+            }
+            syncing = false
+        }
     }
 }
 

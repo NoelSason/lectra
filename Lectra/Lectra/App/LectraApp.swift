@@ -69,6 +69,7 @@ struct LectraApp: App {
                 .environmentObject(authManager)
                 .task {
                     guard !launchConfiguration.isUITesting else { return }
+                    MainThreadHitchMonitor.shared.start()
                     await LectraWakeService.shared.scenePhaseDidChange(scenePhase)
                     await LectraWakeService.shared.authStateDidChange()
                 }
